@@ -12,63 +12,106 @@ from boot import *
 from configs.config import *
 from configs import parameters as param
 
-
-## Classes
-## MFRC522 driver
-class MFRC522:
-    def __init__(self, sck=param.RFID_SCK_PINOUT, mosi=param.RFID_MOSI_PINOUT, miso=param.RFID_MISO_PINOUT, cs=param.RFID_SDA_PINOUT, rst=param.RFID_RST_PINOUT):
-        self.rst = machine.Pin(rst, machine.Pin.OUT)
-        self.cs = machine.Pin(cs, machine.Pin.OUT)
-        self.rst.value(1)
-        self.cs.value(1)
-        self.spi = machine.SPI(1, baudrate=1_000_000, sck=machine.Pin(sck), mosi=machine.Pin(mosi), miso=machine.Pin(miso))
+## PN532 I2C driver
+class PN532:
+    def __init__(self, sda=param.I2C_SDA_PINOUT, scl=param.I2C_SCL_PINOUT, address=0x24):
+        self.address = address
+        # Use SoftI2C to avoid ESP32 hardware I2C clock stretching quirks
+        self.i2c = machine.SoftI2C(scl=machine.Pin(scl), sda=machine.Pin(sda), freq=100000)
+        self.wakeup()
         self._init()
 
-    def _write(self, reg, val):
-        self.cs.value(0)
-        self.spi.write(bytes([(reg << 1) & 0x7E, val]))
-        self.cs.value(1)
+    def wakeup(self):
+        """Send extended wake-up sequence for PN532 I2C PHY."""
+        try:
+            self.i2c.writeto(self.address, b'\x00\x00\x00\x00\x00\x00\x00\x00')
+        except OSError:
+            pass
+        time.sleep_ms(100)
 
-    def _read(self, reg):
-        self.cs.value(0)
-        self.spi.write(bytes([(reg << 1) & 0x80]))
-        v = self.spi.read(1)[0]
-        self.cs.value(1)
-        return v
+    def _wait_ready(self, timeout=1000):
+        """Poll PN532 until Ready status bit (0x01) is returned."""
+        start = time.ticks_ms()
+        status = bytearray(1)
+        while time.ticks_diff(time.ticks_ms(), start) < timeout:
+            try:
+                self.i2c.readfrom_into(self.address, status)
+                if status[0] & 0x01:
+                    return True
+            except OSError:
+                pass
+            time.sleep_ms(10)
+        return False
 
-    def _set_bit(self, r, b): self._write(r, self._read(r) | b)
-    def _clr_bit(self, r, b): self._write(r, self._read(r) & ~b)
+    def _write_command(self, cmd, params=b''):
+        """Package and send command frame to PN532 over I2C."""
+        length = len(params) + 2
+        checksum = (0xD4 + cmd + sum(params)) & 0xFF
+        dcs = (0x100 - checksum) & 0xFF
+
+        frame = bytearray([
+            0x00, 0x00, 0xFF,
+            length, (~length + 1) & 0xFF,
+            0xD4, cmd
+        ])
+        frame.extend(params)
+        frame.extend([dcs, 0x00])
+
+        self.wakeup()
+        self.i2c.writeto(self.address, frame)
+
+        if not self._wait_ready(timeout=500):
+            return False
+
+        # Read 7 bytes (1 status byte + 6 ACK bytes)
+        try:
+            ack_buf = self.i2c.readfrom(self.address, 7)[1:]
+            return ack_buf == b'\x00\x00\xff\x00\xff\x00'
+        except OSError:
+            return False
+
+    def _read_response(self, expected_len, timeout=1000):
+        """Wait for response ready signal and read data payload."""
+        if not self._wait_ready(timeout):
+            return None
+
+        try:
+            raw = self.i2c.readfrom(self.address, expected_len + 1)[1:]
+            return raw
+        except OSError:
+            return None
 
     def _init(self):
-        self._write(0x02, 0x00); self._write(0x04, 0x00)
-        self._write(0x0A, 0x6B); self._write(0x2B, 0xFF)
-        self._write(0x21, 0x00); self._write(0x13, 0x30)
-        self._write(0x26, 0x37); self._write(0x15, 0x40)
-        self._write(0x11, 0xA6); self._write(0x0D, 0x3E)
-        self._write(0x0C, 0x40); self._set_bit(0x08, 0x80)
-        self._write(0x01, 0x0F)
-
-    def _cmd(self, cmd, data):
-        self._write(0x0D, 0x00); self._clr_bit(0x04, 0x80)
-        for b in data: self._write(0x09, b)
-        self._set_bit(0x04, 0x80); self._write(0x0D, cmd)
-        for _ in range(100):
-            if self._read(0x06) & 0x01: break
-        st = self._read(0x04)
-        self._clr_bit(0x04, 0x80)
-        return st
+        """Configure standard SAM (Security Access Module) configuration."""
+        if self._write_command(0x14, b'\x01\x14\x01'):
+            self._read_response(8)
 
     def request(self):
-        self._write(0x0D, 0x01)
-        return self._cmd(0x0C, [0x26]) == 0x00
+        """Main check to see if the PN532 responds to communication."""
+        try:
+            if self._write_command(0x02):  # GetFirmwareVersion command
+                resp = self._read_response(12)
+                return resp is not None and len(resp) >= 10 and resp[0:3] == b'\x00\x00\xff'
+        except Exception:
+            pass
+        return False
 
     def get_uid(self):
-        if not self.request():
-            return None
-        self._write(0x0D, 0x02)
-        if self._cmd(0x0C, [0x93, 0x20]) != 0x00:
-            return None
-        return [self._read(0x09) for _ in range(5)][:4]
+        """Returns the array contents matching the target scanned card UID."""
+        try:
+            if not self._write_command(0x4A, b'\x01\x00'):
+                return None
+            
+            resp = self._read_response(20, timeout=200)
+            if resp and len(resp) >= 14 and resp[0:3] == b'\x00\x00\xff':
+                tags_found = resp[7]
+                if tags_found > 0:
+                    uid_len = resp[12]
+                    return list(resp[13:13 + uid_len])
+        except Exception:
+            pass
+        return None
+
 
 ## LCD Driver
 class I2cLcd:
@@ -192,11 +235,28 @@ def fetch_data():
 
 ## Main function
 def main():
-    tprint(PRINTSTATUS.INFO, "TEST MODE: Sending simulated RFID")
+    tprint(PRINTSTATUS.INFO, "PN532 I2C MODE ACTIVE")
 
     last_rfid = None
     last_ping = time.ticks_ms()
     last_test = time.ticks_ms()
+
+    # Initialize PN532 over I2C
+    rfid = PN532()
+    tprint(PRINTSTATUS.INFO, "Checking PN532 I2C...")
+    reader_ok = False
+    for _ in range(5):
+        if rfid.request():
+            reader_ok = True
+            break
+        time.sleep_ms(150)
+
+    if not reader_ok:
+        tprint(PRINTSTATUS.ERROR, "PN532 I2C NOT FOUND! Check wiring/jumpers.")
+        while True:
+            time.sleep_ms(1000)
+    else:
+        tprint(PRINTSTATUS.SUCCESS, "PN532 I2C OK - Ready for cards")
 
     # --- MAIN LOOP ---
     while True:
@@ -205,40 +265,13 @@ def main():
             last_ping = time.ticks_ms()
             send_ping()
 
-        # 2. REAL RFID READING DISABLED
-        """
-        rfid = MFRC522()
-        tprint(PRINTSTATUS.INFO, "Checking RFID reader...")
-        reader_ok = False
-        for _ in range(5):
-            if rfid.request():
-                reader_ok = True
-                break
-            time.sleep_ms(100)
-        if not reader_ok:
-            tprint(PRINTSTATUS.ERROR, "RFID reader NOT DETECTED!")
-            while True:
-                time.sleep_ms(1000)
-        else:
-            tprint(PRINTSTATUS.SUCCESS, "RFID reader OK")
+        # 2. Read PN532 RFID
         uid = rfid.get_uid()
-        if uid and len(uid) == 4:
+        if uid and len(uid) >= 4:
             rfid_str = "".join(f"{b:02X}" for b in uid)
             if rfid_str != last_rfid:
                 last_rfid = rfid_str
-                print(f"--- CARD DETECTED --- RFID: {rfid_str}")
+                tprint(PRINTSTATUS.INFO, f"RFID: {rfid_str}")
                 post_data({"rfid": rfid_str})
-        """
-
-        # 3. TEST MODE: Generate & send random RFID every TEST_INTERVAL
-        if time.ticks_diff(time.ticks_ms(), last_test) >= param.TEST_INTERVAL:
-            last_test = time.ticks_ms()
-            test_rfid = "".join(f"{urandom.getrandbits(8):02X}" for _ in range(4))
-            if test_rfid != last_rfid:
-                last_rfid = test_rfid
-                print(f"--- TEST SEND --- RFID: {test_rfid}")
-                success = post_data({"rfid": test_rfid})
-                if success:
-                    tprint(PRINTSTATUS.SUCCESS, f"Sent OK: {test_rfid}")
 
         time.sleep_ms(200)

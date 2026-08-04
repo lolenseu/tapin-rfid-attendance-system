@@ -1,3 +1,3 @@
 ## network configuration
-SSID = "lolenseu"            # WiFi SSID
-PASSWORD = "lolenseu"        # WiFi password
+SSID = "HUAWEI-2.4G-Uz3F"    # WiFi SSID
+PASSWORD = "ERJd89gm"        # WiFi password
