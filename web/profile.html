@@ -12,38 +12,46 @@
 </head>
 <body>
 
-<div class="container" id="app">
-    <div class="header">
-        <div class="logo" id="logoContainer">
-            <img src="assets/tapin_logo.png" alt="TapIn Logo" onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\'logo-placeholder\'>T</span>';" />
+<div class="profile-wrap">
+    <!-- Logos outside the profile card - positioned at top left of the page -->
+    <div class="top-logos-container">
+        <img src="./assets/ispsc_logo.png" alt="ISPSC Logo" class="top-logo">
+        <img src="./assets/bagong_pilipinas_logo.png" alt="Bagong Philipinas Logo" class="top-logo">
+    </div>
+
+    <div class="container" id="app">
+        <div class="header">
+            <div class="logo" id="logoContainer">
+                <img src="assets/tapin_logo.png" alt="TapIn Logo" onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\'logo-placeholder\'>T</span>';" />
+            </div>
+            <h1>TapIn Profile</h1>
         </div>
-        <h1>TapIn Profile</h1>
-    </div>
 
-    <div class="status-bar">
-        <div class="status">
-            <span class="status-dot" id="statusDot"></span>
-            <span id="statusText">Connecting...</span>
+        <div class="status-bar">
+            <div class="status">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <span class="time" id="lastUpdated">--</span>
         </div>
-        <span class="time" id="lastUpdated">--</span>
-    </div>
 
-    <div class="scanned-display">
-        <div class="scanned-at" id="scannedAt">Waiting for scan...</div>
-    </div>
-
-    <div class="employee-card" id="employeeCard"></div>
-
-    <div class="no-data" id="noData">
-        <div class="empty-avatar" id="emptyAvatar">
-            <img src="assets/profile_icon.png" alt="Profile" id="profileIconPlaceholder" />
+        <div class="scanned-display">
+            <div class="scanned-at" id="scannedAt">Waiting for scan...</div>
         </div>
-        <h3>Unknown</h3>
-        <p>Tap an RFID card to see employee profile</p>
-    </div>
 
-    <div class="footer">
-        TapIn Attendance System &bull; ISPSC Tagudin Campus
+        <div class="employee-card" id="employeeCard"></div>
+
+        <div class="no-data" id="noData">
+            <div class="empty-avatar" id="emptyAvatar">
+                <img src="assets/profile_icon.png" alt="Profile" id="profileIconPlaceholder" />
+            </div>
+            <h3>Unknown</h3>
+            <p>Tap an RFID card to see employee profile</p>
+        </div>
+
+        <div class="footer">
+            TapIn Attendance System &bull; ISPSC Tagudin Campus
+        </div>
     </div>
 </div>
 

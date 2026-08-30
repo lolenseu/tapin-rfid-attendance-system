@@ -4,7 +4,7 @@ const dashboardApiBaseUrl = window.TAPIN_API_URL || 'https://tapin-api.up.railwa
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');
     localStorage.removeItem('tapinToken');
-    window.location.replace('login.html');
+    window.location.replace('../login.html');
 }
 
 function getAuthHeaders() {
@@ -193,7 +193,7 @@ if (logoutLink) {
         } finally {
             localStorage.removeItem('tapinToken');
             localStorage.removeItem('tapinUser');
-            window.location.replace('login.html');
+            window.location.replace('../login.html');
         }
     });
 }
