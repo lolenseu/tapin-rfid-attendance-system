@@ -154,8 +154,9 @@ def send_ping():
         return False
 
 def post_data(rfid_str):
-    """Send RFID data using raw socket with SSL - Most efficient version for ESP32"""
+    """Send RFID data - Reliable version for ESP32 with full response reading"""
     if not check_wifi_connection():
+        tprint(PRINTSTATUS.ERROR, "WiFi not connected")
         return False
         
     t = time.localtime()
@@ -170,14 +171,18 @@ def post_data(rfid_str):
     })
     
     try:
+        tprint(PRINTSTATUS.INFO, f"Sending RFID: {rfid_str}")
+        
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(5)  # Reduced timeout for faster failure detection
-        s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)  # SSL timeout
+        s.settimeout(5)
         
+        # Connect and wrap with SSL
+        s.connect(addr)
+        s = ssl.wrap_socket(s)
+        s.settimeout(5)
+        
+        # Build request
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
@@ -188,31 +193,51 @@ def post_data(rfid_str):
             + data
         )
         
+        # Send request
         s.write(request.encode())
         
-        # Read only the HTTP status line (first line)
-        # This is the most memory-efficient way - reads only until newline
-        status_line = b""
-        while len(status_line) < 12:
-            chunk = s.read(1)
+        # Read the entire response in chunks
+        response = b""
+        while True:
+            chunk = s.read(64)
             if not chunk:
                 break
-            status_line += chunk
-            # Stop when we see a newline (end of status line)
-            if chunk == b'\n':
+            response += chunk
+            # Stop if we have enough to check status
+            if len(response) > 200:
                 break
         
         s.close()
         
-        # Check for 200 OK
-        if b"200" in status_line:
+        # Check for 200 OK in response
+        if b"200" in response:
+            tprint(PRINTSTATUS.SUCCESS, "RFID sent OK")
             return True
         else:
-            # Check for known responses in the status line
-            status_str = status_line.decode('utf-8', errors='ignore').lower()
-            if "skipped" in status_str or "already" in status_str:
-                return True
-            return False
+            # Try to decode response for checking keywords
+            try:
+                response_str = response.decode('utf-8', errors='ignore')
+                tprint(PRINTSTATUS.INFO, f"Response contains: {response_str[:50]}")
+                
+                # Check for known response messages
+                if "skipped" in response_str:
+                    tprint(PRINTSTATUS.WARN, "Attendance skipped (cooldown or on leave)")
+                    return True
+                elif "already" in response_str:
+                    tprint(PRINTSTATUS.WARN, "Attendance already recorded")
+                    return True
+                elif "not_found" in response_str:
+                    tprint(PRINTSTATUS.WARN, "RFID not found in database")
+                    return False
+                elif "success" in response_str:
+                    tprint(PRINTSTATUS.SUCCESS, "RFID processed successfully")
+                    return True
+                else:
+                    tprint(PRINTSTATUS.WARN, "Unknown response")
+                    return False
+            except:
+                tprint(PRINTSTATUS.WARN, "Could not decode response")
+                return False
             
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
