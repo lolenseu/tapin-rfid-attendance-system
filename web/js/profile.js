@@ -183,7 +183,6 @@ function formatDate(isoString) {
 
 function formatTime(timeStr) {
     if (!timeStr) return '--';
-    // If time is in HH:MM:SS format, convert to 12-hour format
     if (timeStr.includes(':')) {
         try {
             const parts = timeStr.split(':');
@@ -284,6 +283,9 @@ function renderEmployee(emp, attendance) {
     const scannedTime = currentData.scanned_at ? formatTimeFromISO(currentData.scanned_at) : '--';
     const currentTime = getCurrentTime();
     const imageUrl = getImageUrl(emp.image);
+    
+    // Debug: log attendance data
+    console.log('Attendance data:', attendance);
     
     // Get attendance times - format them properly
     const amIn = attendance && attendance.am_in ? formatTime(attendance.am_in) : '--';
@@ -477,6 +479,7 @@ async function fetchData() {
         }
 
         const data = await response.json();
+        console.log('API Response:', data); // Debug log
 
         if (data.status === 'success') {
             render(data);

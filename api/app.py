@@ -1686,6 +1686,18 @@ def get_latest_rfid():
             save_attendance_data()
             print(f"Created new attendance record for {employee.get('firstname')} for today")
 
+    # If no employee found, still return a valid response
+    if not employee_data and not attendance_data:
+        return jsonify({
+            "status": "success",
+            "rfid": rfid,
+            "scanned_at": scanned_at,
+            "devices": get_online_devices(),
+            "found": False,
+            "employee": None,
+            "attendance": None
+        }), 200
+
     return jsonify({
         "status": "success",
         "rfid": rfid,
