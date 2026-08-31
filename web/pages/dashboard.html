@@ -18,23 +18,25 @@
   <aside class="sidebar">
 
     <div class="sidebar-brand">
-      <div class="brand-icon"><i class="fa-solid fa-tower-broadcast"></i></div>
+      <div class="brand-icon">
+        <img src="../assets/tapin_logo.jpg" alt="TAPIN logo" class="brand-logo" />
+      </div>
       <div class="brand-text">
         <div class="brand-name">TAPIN</div>
         <div class="brand-sub">ISPSC TAGUDIN</div>
       </div>
+      <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar" aria-expanded="true">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
     </div>
 
-    <div class="sidebar-section-label">Overview</div>
     <nav class="sidebar-nav">
       <a href="#dashboard" class="nav-item active">
         <span class="nav-icon"><i class="fa-solid fa-gauge-high"></i></span>
         Dashboard
       </a>
-    </nav>
-
-    <div class="sidebar-section-label">IPO Management</div>
-    <nav class="sidebar-nav">
       <a href="#employees" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-user-tie"></i></span>
         Employees Personal Info
@@ -43,18 +45,10 @@
         <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
         DTR CSC Form
       </a>
-      <a href="#iot-attendance" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
-        IoT-Based Attendance
-      </a>
       <a href="#employee-list" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-users"></i></span>
         Employee List
       </a>
-    </nav>
-
-    <div class="sidebar-section-label">HR Documents</div>
-    <nav class="sidebar-nav">
       <a href="#hr-letters" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-envelope-open-text"></i></span>
         HR Letter
@@ -67,35 +61,21 @@
         <span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span>
         Reports
       </a>
-      <a href="#reports" class="nav-sub-item">Daily Attendance</a>
-      <a href="#reports" class="nav-sub-item">Weekly Attendance</a>
-      <a href="#reports" class="nav-sub-item">Monthly Attendance</a>
-      <a href="#reports" class="nav-sub-item">Yearly Attendance</a>
-      <a href="#reports" class="nav-sub-item">Attendance Summary</a>
-      <a href="#reports" class="nav-sub-item">Late Employees</a>
-      <a href="#reports" class="nav-sub-item">Absent Employees</a>
-      <a href="#reports" class="nav-sub-item">Leave Report</a>
-      <a href="#reports" class="nav-sub-item">Attendance Analytics</a>
-    </nav>
-
-    <div class="sidebar-section-label">Monitoring</div>
-    <nav class="sidebar-nav">
       <a href="#realtime" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-signal"></i></span>
         Realtime Employee Dashboard
-        <span class="nav-badge">Live</span>
       </a>
       <a href="#admin-dashboard" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-user-shield"></i></span>
         Admin / HR Dashboard
       </a>
-    </nav>
-
-    <div class="sidebar-section-label">Information</div>
-    <nav class="sidebar-nav">
       <a href="#introduction" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-book-open"></i></span>
-        Introduction / Background
+        Introduction
+      </a>
+      <a href="#iot-attendance" class="nav-item">
+        <span class="nav-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
+        IoT-Based Attendance
       </a>
     </nav>
 
@@ -131,9 +111,6 @@
       </div>
 
       <div class="topbar-actions">
-        <button class="topbar-btn" title="Messages">
-          <i class="fa-regular fa-comment-dots"></i>
-        </button>
         <button class="topbar-btn" title="Notifications">
           <i class="fa-regular fa-bell"></i>
           <span class="notif-dot"></span>
@@ -152,14 +129,8 @@
     </header>
     <div class="content">
       <section class="page-section" id="dashboard">
-
-        <div class="section-actions">
+        <div class="global-section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Dashboard</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Dashboard Overview</h1>
             <p class="section-subtitle">Real-time attendance statistics and system activities.</p>
           </div>
@@ -192,13 +163,6 @@
             <div class="stat-trend trend-down"><i class="fa-solid fa-arrow-down"></i> −0 vs yesterday</div>
             <div class="stat-progress"><div class="stat-progress-bar" style="width:10%"></div></div>
           </div>
-          <div class="stat-card stat-yellow">
-            <div class="stat-icon-wrap"><i class="fa-regular fa-clock"></i></div>
-            <div class="stat-label">Employees Late</div>
-            <div class="stat-value" id="statEmployeesLate">0</div>
-            <div class="stat-trend trend-down"><i class="fa-solid fa-arrow-down"></i> −0 vs yesterday</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:7%"></div></div>
-          </div>
           <div class="stat-card stat-purple">
             <div class="stat-icon-wrap"><i class="fa-solid fa-umbrella-beach"></i></div>
             <div class="stat-label">On Leave</div>
@@ -219,13 +183,6 @@
             <div class="stat-value" id="statRfidScans">0</div>
             <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> Live</div>
             <div class="stat-progress"><div class="stat-progress-bar" style="width:80%"></div></div>
-          </div>
-          <div class="stat-card stat-green">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-building"></i></div>
-            <div class="stat-label">Departments</div>
-            <div class="stat-value" id="statDepartments">0</div>
-            <div class="stat-trend trend-neutral"><i class="fa-solid fa-minus"></i> Stable</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:100%"></div></div>
           </div>
         </div>
 
@@ -450,11 +407,6 @@
       <section class="page-section" id="employees">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">IPO — Employees Personal Info</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Employee Directory</h1>
             <p class="section-subtitle">View and manage employee personal information and profiles.</p>
           </div>
@@ -612,14 +564,10 @@
 
         </div>
       </section>
+      
       <section class="page-section" id="dtr">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">IPO — DTR CSC Form</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Daily Time Record</h1>
             <p class="section-subtitle">CSC Form No. 48 — Civil Service Commission official DTR.</p>
           </div>
@@ -734,14 +682,106 @@
           </div>
         </div>
       </section>
+      <section class="page-section" id="employee-list">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">Employee Masterlist</h1>
+            <p class="section-subtitle">Complete registry of all employees at ISPSC Tagudin Campus.</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-outline"><i class="fa-solid fa-file-excel"></i> Export</button>
+            <button class="btn btn-primary" type="button" onclick="document.getElementById('employeeRegistrationForm').scrollIntoView({ behavior: 'smooth' })"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
+          </div>
+        </div>
+
+        <div class="card mb-6">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-user-plus"></i> Register User</div>
+          </div>
+          <div class="card-body">
+            <form id="employeeRegistrationForm" enctype="multipart/form-data">
+              <div class="grid-2">
+                <div class="form-group"><label for="registrationRole">Role</label><select class="form-control" id="registrationRole" name="role" required><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">Admin</option></select></div>
+                <div class="form-group"><label for="registrationRfid">RFID</label><input class="form-control" id="registrationRfid" name="rfid" required /></div>
+                <div class="form-group"><label for="registrationEmployeeId">Employee ID</label><input class="form-control" id="registrationEmployeeId" name="employeeid" /></div>
+                <div class="form-group"><label for="registrationLastname">Last Name</label><input class="form-control" id="registrationLastname" name="lastname" required /></div>
+                <div class="form-group"><label for="registrationFirstname">First Name</label><input class="form-control" id="registrationFirstname" name="firstname" required /></div>
+                <div class="form-group"><label for="registrationAddress">Address</label><input class="form-control" id="registrationAddress" name="address" required /></div>
+                <div class="form-group"><label for="registrationBdate">Birth Date</label><input class="form-control" id="registrationBdate" name="bdate" type="date" required /></div>
+                <div class="form-group"><label for="registrationCpnumber">CP Number</label><input class="form-control" id="registrationCpnumber" name="cpnumber" required /></div>
+                <div class="form-group"><label for="registrationEmail">Email</label><input class="form-control" id="registrationEmail" name="email" type="email" required /></div>
+                <div class="form-group"><label for="registrationUsername">Username</label><input class="form-control" id="registrationUsername" name="username" autocomplete="username" required /></div>
+                <div class="form-group"><label for="registrationPassword">Password</label><input class="form-control" id="registrationPassword" name="password" type="password" autocomplete="new-password" required /></div>
+                <div class="form-group"><label for="registrationImage">Profile Image</label><input class="form-control" id="registrationImage" name="image" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" /></div>
+              </div>
+              <button class="btn btn-primary" type="submit"><i class="fa-solid fa-floppy-disk"></i> Register User</button>
+              <p id="registrationMessage" role="status" aria-live="polite"></p>
+            </form>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-users"></i> All Employees (248)</div>
+            <div class="filter-bar" style="margin:0;">
+              <div class="filter-input-wrap">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input class="form-control" type="search" placeholder="Search employees…" style="padding-left:32px;" />
+              </div>
+              <select class="filter-select">
+                <option>All Departments</option>
+                <option>Information Technology</option>
+                <option>Human Resources</option>
+                <option>Finance &amp; Accounting</option>
+                <option>Academic Affairs</option>
+                <option>Administration</option>
+                <option>Library Services</option>
+              </select>
+              <select class="filter-select">
+                <option>All Status</option>
+                <option>Regular</option>
+                <option>Contractual</option>
+                <option>Casual</option>
+                <option>Job Order</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Photo</th>
+                  <th>Employee ID</th>
+                  <th>Name</th>
+                  <th>Department</th>
+                  <th>Position</th>
+                  <th>Email</th>
+                  <th>Status</th>
+                  <th>Attendance %</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="dashboardEmployeeBody">
+                <!-- Filled dynamically -->
+              </tbody>
+            </table>
+          </div>
+          <div class="card-footer" style="display:flex;align-items:center;justify-content:space-between;">
+            <span class="text-sm text-muted">Showing 7 of 248 employees</span>
+            <div class="flex gap-2">
+              <button class="btn btn-outline btn-sm">Previous</button>
+              <button class="btn btn-primary btn-sm">1</button>
+              <button class="btn btn-outline btn-sm">2</button>
+              <button class="btn btn-outline btn-sm">3</button>
+              <button class="btn btn-outline btn-sm">Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section class="page-section" id="hr-letters">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">HR — Letters</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">HR Letter Module</h1>
             <p class="section-subtitle">Generate and manage official HR correspondence and documents.</p>
           </div>
@@ -835,11 +875,6 @@
       <section class="page-section" id="templates">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">DTR — Template HR</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">HR Document Templates</h1>
             <p class="section-subtitle">Standard templates for HR forms, evaluations, and employee documents.</p>
           </div>
@@ -889,392 +924,10 @@
           </div>
         </div>
       </section>
-      <section class="page-section" id="introduction">
-        <div class="section-actions">
-          <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Introduction / Background</span>
-            </div>
-            <h1 class="section-title" style="margin-top:6px;">Introduction &amp; Background</h1>
-            <p class="section-subtitle">Understanding TAPIN, the Civil Service Commission, and digital attendance transformation.</p>
-          </div>
-        </div>
-
-        <div class="info-hero">
-          <h2 class="info-hero-title"><i class="fa-solid fa-landmark"></i> Civil Service Commission (CSC)</h2>
-          <p class="info-hero-sub">The Civil Service Commission is the central personnel agency of the Philippine government, ensuring merit-based appointments and promoting employee welfare in the public sector through policies on attendance, accountability, and professional development.</p>
-        </div>
-
-        <div class="info-cards-grid">
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-landmark"></i></div>
-            <div class="info-card-title">What is the CSC?</div>
-            <div class="info-card-body">The Civil Service Commission (CSC) is a constitutional body established to promote merit, efficiency, and integrity in the government civil service. It establishes standards for government employee recruitment, promotion, and discipline across all branches of Philippine government.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-clock"></i></div>
-            <div class="info-card-title">Importance of Attendance</div>
-            <div class="info-card-body">Strict monitoring of attendance ensures that government employees fulfill their duty to the public. The CSC mandates accurate time records (DTR) as the official basis for salary computation, leave credits, and disciplinary actions for habitual tardiness or absenteeism.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-user-gear"></i></div>
-            <div class="info-card-title">Government Employee Monitoring</div>
-            <div class="info-card-body">Every government employee is required to maintain an accurate Daily Time Record (DTR) per CSC Memorandum Circular No. 21, series of 1991. Modern systems like TAPIN automate this process, reducing manual errors and administrative burden while ensuring full compliance.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-microchip"></i></div>
-            <div class="info-card-title">Digital Transformation</div>
-            <div class="info-card-body">The Philippine government's digital transformation agenda drives institutions toward technology-based solutions. TAPIN represents this shift — replacing paper-based timekeeping with RFID-automated tracking, providing real-time data access, and enabling smarter HR decision-making.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-file-lines"></i></div>
-            <div class="info-card-title">Daily Time Records (DTR)</div>
-            <div class="info-card-body">The DTR (CSC Form No. 48) is the official government timesheet. It records daily arrival and departure times for morning and afternoon shifts. TAPIN auto-generates CSC-compliant DTRs from RFID scan data, eliminating manual encoding and reducing falsification risk.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-scale-balanced"></i></div>
-            <div class="info-card-title">Employee Accountability</div>
-            <div class="info-card-body">Government employees are accountable to the public they serve. Accurate attendance records support the Ease of Doing Business Act and promote transparency. TAPIN creates an audit trail of all RFID events, ensuring accountability for every time-in and time-out record.</div>
-          </div>
-        </div>
-      </section>
-      <section class="page-section" id="iot-attendance">
-        <div class="section-actions">
-          <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">IPO — IoT-Based Attendance</span>
-            </div>
-            <h1 class="section-title" style="margin-top:6px;">IoT-Based RFID Attendance</h1>
-            <p class="section-subtitle">How RFID technology powers the TAPIN automated attendance monitoring system.</p>
-          </div>
-        </div>
-
-        <div class="info-hero" style="background:linear-gradient(135deg,#0F172A,#1E40AF);">
-          <h2 class="info-hero-title"><i class="fa-solid fa-tower-broadcast"></i> RFID Technology Overview</h2>
-          <p class="info-hero-sub">Radio Frequency Identification (RFID) uses electromagnetic fields to automatically identify and track tags attached to objects or carried by individuals. In TAPIN, each employee carries a unique RFID card that is scanned at entry/exit points to record attendance automatically in real-time.</p>
-        </div>
-
-        <div class="info-cards-grid">
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-signal"></i></div>
-            <div class="info-card-title">How RFID Works</div>
-            <div class="info-card-body">Each RFID card contains a microchip and antenna. When brought near an RFID reader (within 1–10 cm), the reader emits radio waves that power the chip, which transmits its unique ID back to the reader. TAPIN's server receives this ID, matches it to an employee record, and logs the attendance event instantly.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-robot"></i></div>
-            <div class="info-card-title">Attendance Automation</div>
-            <div class="info-card-body">TAPIN eliminates manual time logging. When an employee taps their RFID card, the system automatically determines whether it is a Time In or Time Out event, records the timestamp, computes working hours, flags tardiness based on configurable schedules, and updates the dashboard in real time.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-bullseye"></i></div>
-            <div class="info-card-title">Accuracy</div>
-            <div class="info-card-body">RFID scanning achieves near-perfect accuracy compared to manual timekeeping. Timestamps are logged to the second, with tamper-resistant records stored in the database. Biometric validation can be layered on for added security. TAPIN's error rate is less than 0.01% across all recorded transactions.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-ban"></i></div>
-            <div class="info-card-title">Reduced Manual Errors</div>
-            <div class="info-card-body">Human errors such as incorrect time entries, illegible handwriting, buddy punching, and lost timesheets are eliminated. TAPIN creates immutable digital records that cannot be altered without administrative privileges, ensuring integrity of all attendance data.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-gauge-max"></i></div>
-            <div class="info-card-title">Real-Time Monitoring</div>
-            <div class="info-card-body">Administrators can view live attendance data from any device with browser access. The TAPIN realtime dashboard shows who is currently inside, who has checked out, and who is absent or late — updated the moment an RFID scan occurs. System status indicators show reader and server health.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-cloud"></i></div>
-            <div class="info-card-title">Cloud Data Synchronization</div>
-            <div class="info-card-body">All attendance records are synchronized to a centralized PostgreSQL database hosted on secure cloud infrastructure. Data is backed up daily and accessible to authorized HR personnel anytime. Reports can be generated on demand without physical access to the RFID reader hardware.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-bolt"></i></div>
-            <div class="info-card-title">Fast Employee Identification</div>
-            <div class="info-card-body">RFID identification takes under 100 milliseconds. Employees simply tap their card as they enter or leave — no PIN entry, no fingerprint placement time, no queue. For 248 employees at ISPSC Tagudin Campus, this means zero attendance bottlenecks even during peak entry times.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-shield-halved"></i></div>
-            <div class="info-card-title">Security</div>
-            <div class="info-card-body">RFID cards use 128-bit encrypted UIDs that cannot be easily duplicated. TAPIN's server uses HTTPS for all data transfers. Administrative access requires authentication, and all login events are logged. Lost or stolen cards can be immediately deactivated from the admin dashboard.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-line"></i></div>
-            <div class="info-card-title">Future Scalability</div>
-            <div class="info-card-body">TAPIN is designed to scale. Additional RFID readers can be added to new campus locations, departments, or buildings with minimal configuration. The system supports multi-campus deployment and can accommodate an unlimited number of employees, readers, and concurrent scan events.</div>
-          </div>
-        </div>
-      </section>
-      <section class="page-section" id="employee-list">
-        <div class="section-actions">
-          <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">IPO — Employee List</span>
-            </div>
-            <h1 class="section-title" style="margin-top:6px;">Employee Masterlist</h1>
-            <p class="section-subtitle">Complete registry of all employees at ISPSC Tagudin Campus.</p>
-          </div>
-          <div class="flex gap-2">
-            <button class="btn btn-outline"><i class="fa-solid fa-file-excel"></i> Export</button>
-            <button class="btn btn-primary" type="button" onclick="document.getElementById('employeeRegistrationForm').scrollIntoView({ behavior: 'smooth' })"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
-          </div>
-        </div>
-
-        <div class="card mb-6">
-          <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-user-plus"></i> Register User</div>
-          </div>
-          <div class="card-body">
-            <form id="employeeRegistrationForm" enctype="multipart/form-data">
-              <div class="grid-2">
-                <div class="form-group"><label for="registrationRole">Role</label><select class="form-control" id="registrationRole" name="role" required><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">Admin</option></select></div>
-                <div class="form-group"><label for="registrationRfid">RFID</label><input class="form-control" id="registrationRfid" name="rfid" required /></div>
-                <div class="form-group"><label for="registrationEmployeeId">Employee ID</label><input class="form-control" id="registrationEmployeeId" name="employeeid" /></div>
-                <div class="form-group"><label for="registrationLastname">Last Name</label><input class="form-control" id="registrationLastname" name="lastname" required /></div>
-                <div class="form-group"><label for="registrationFirstname">First Name</label><input class="form-control" id="registrationFirstname" name="firstname" required /></div>
-                <div class="form-group"><label for="registrationAddress">Address</label><input class="form-control" id="registrationAddress" name="address" required /></div>
-                <div class="form-group"><label for="registrationBdate">Birth Date</label><input class="form-control" id="registrationBdate" name="bdate" type="date" required /></div>
-                <div class="form-group"><label for="registrationCpnumber">CP Number</label><input class="form-control" id="registrationCpnumber" name="cpnumber" required /></div>
-                <div class="form-group"><label for="registrationEmail">Email</label><input class="form-control" id="registrationEmail" name="email" type="email" required /></div>
-                <div class="form-group"><label for="registrationUsername">Username</label><input class="form-control" id="registrationUsername" name="username" autocomplete="username" required /></div>
-                <div class="form-group"><label for="registrationPassword">Password</label><input class="form-control" id="registrationPassword" name="password" type="password" autocomplete="new-password" required /></div>
-                <div class="form-group"><label for="registrationImage">Profile Image</label><input class="form-control" id="registrationImage" name="image" type="file" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" /></div>
-              </div>
-              <button class="btn btn-primary" type="submit"><i class="fa-solid fa-floppy-disk"></i> Register User</button>
-              <p id="registrationMessage" role="status" aria-live="polite"></p>
-            </form>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-users"></i> All Employees (248)</div>
-            <div class="filter-bar" style="margin:0;">
-              <div class="filter-input-wrap">
-                <i class="fa-solid fa-magnifying-glass"></i>
-                <input class="form-control" type="search" placeholder="Search employees…" style="padding-left:32px;" />
-              </div>
-              <select class="filter-select">
-                <option>All Departments</option>
-                <option>Information Technology</option>
-                <option>Human Resources</option>
-                <option>Finance &amp; Accounting</option>
-                <option>Academic Affairs</option>
-                <option>Administration</option>
-                <option>Library Services</option>
-              </select>
-              <select class="filter-select">
-                <option>All Status</option>
-                <option>Regular</option>
-                <option>Contractual</option>
-                <option>Casual</option>
-                <option>Job Order</option>
-              </select>
-            </div>
-          </div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Photo</th>
-                  <th>Employee ID</th>
-                  <th>Name</th>
-                  <th>Department</th>
-                  <th>Position</th>
-                  <th>Email</th>
-                  <th>Status</th>
-                  <th>Attendance %</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="dashboardEmployeeBody">
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;">MS</div></td>
-                  <td><strong>EMP-001</strong></td>
-                  <td><div class="emp-name">Maria Santos</div></td>
-                  <td>Information Technology</td>
-                  <td>Systems Administrator</td>
-                  <td>m.santos@ispsc.edu.ph</td>
-                  <td><span class="badge badge-approved">Regular</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:97.5%;background:var(--success);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">97.5%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn" title="View"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger" title="Delete"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn" title="Print"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#F59E0B,#D97706);">JD</div></td>
-                  <td><strong>EMP-002</strong></td>
-                  <td><div class="emp-name">Juan Dela Cruz</div></td>
-                  <td>Human Resources</td>
-                  <td>HR Officer</td>
-                  <td>j.delacruz@ispsc.edu.ph</td>
-                  <td><span class="badge badge-approved">Regular</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:95%;background:var(--primary);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">95%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#22C55E,#16A34A);">AG</div></td>
-                  <td><strong>EMP-003</strong></td>
-                  <td><div class="emp-name">Ana Garcia</div></td>
-                  <td>Finance &amp; Accounting</td>
-                  <td>Accountant I</td>
-                  <td>a.garcia@ispsc.edu.ph</td>
-                  <td><span class="badge badge-approved">Regular</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:92.3%;background:var(--warning);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">92.3%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#8B5CF6,#7C3AED);">RR</div></td>
-                  <td><strong>EMP-004</strong></td>
-                  <td><div class="emp-name">Roberto Reyes</div></td>
-                  <td>Academic Affairs</td>
-                  <td>Professor</td>
-                  <td>r.reyes@ispsc.edu.ph</td>
-                  <td><span class="badge badge-approved">Regular</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:98%;background:var(--success);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">98%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#EF4444,#DC2626);">CV</div></td>
-                  <td><strong>EMP-005</strong></td>
-                  <td><div class="emp-name">Carmen Villanueva</div></td>
-                  <td>Administration</td>
-                  <td>Administrative Assistant</td>
-                  <td>c.villanueva@ispsc.edu.ph</td>
-                  <td><span class="badge badge-pending">Contractual</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:88.5%;background:var(--warning);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">88.5%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#06B6D4,#0891B2);">PR</div></td>
-                  <td><strong>EMP-006</strong></td>
-                  <td><div class="emp-name">Patricia Ramos</div></td>
-                  <td>Library Services</td>
-                  <td>Librarian</td>
-                  <td>p.ramos@ispsc.edu.ph</td>
-                  <td><span class="badge badge-approved">Regular</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:99.1%;background:var(--success);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">99.1%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;background:linear-gradient(135deg,#64748B,#475569);">ET</div></td>
-                  <td><strong>EMP-007</strong></td>
-                  <td><div class="emp-name">Eduardo Torres</div></td>
-                  <td>Information Technology</td>
-                  <td>IT Support Specialist</td>
-                  <td>e.torres@ispsc.edu.ph</td>
-                  <td><span class="badge badge-draft" style="background:var(--accent-light);color:var(--accent);">Casual</span></td>
-                  <td>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                      <div class="progress-track" style="flex:1;"><div class="progress-fill" style="width:85%;background:var(--danger);"></div></div>
-                      <span style="font-size:11px;font-weight:700;">85%</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div class="table-actions">
-                      <button class="action-btn"><i class="fa-solid fa-eye"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-pen"></i></button>
-                      <button class="action-btn danger"><i class="fa-solid fa-trash"></i></button>
-                      <button class="action-btn"><i class="fa-solid fa-print"></i></button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="card-footer" style="display:flex;align-items:center;justify-content:space-between;">
-            <span class="text-sm text-muted">Showing 7 of 248 employees</span>
-            <div class="flex gap-2">
-              <button class="btn btn-outline btn-sm">Previous</button>
-              <button class="btn btn-primary btn-sm">1</button>
-              <button class="btn btn-outline btn-sm">2</button>
-              <button class="btn btn-outline btn-sm">3</button>
-              <button class="btn btn-outline btn-sm">Next</button>
-            </div>
-          </div>
-        </div>
-      </section>
+  
       <section class="page-section" id="reports">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Reports</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Attendance Reports</h1>
             <p class="section-subtitle">Generate, preview, and export all attendance and HR reports.</p>
           </div>
@@ -1370,23 +1023,6 @@
 
           <div class="report-card">
             <div class="report-card-header">
-              <div class="report-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-regular fa-clock"></i></div>
-              <div><div class="report-card-title">Late Employees</div><div class="report-card-desc">Report of employees with tardiness records including frequency and total undertime.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:30%;background:linear-gradient(180deg,var(--warning),#FCD34D);"></div><div class="preview-bar" style="height:20%;background:linear-gradient(180deg,var(--warning),#FCD34D);"></div><div class="preview-bar" style="height:45%;background:linear-gradient(180deg,var(--warning),#FCD34D);"></div><div class="preview-bar" style="height:25%;background:linear-gradient(180deg,var(--warning),#FCD34D);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--warning),#FCD34D);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card">
-            <div class="report-card-header">
               <div class="report-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-user-xmark"></i></div>
               <div><div class="report-card-title">Absent Employees</div><div class="report-card-desc">Absence tracking report with patterns, frequencies, and department breakdowns.</div></div>
             </div>
@@ -1441,11 +1077,6 @@
       <section class="page-section" id="realtime">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Realtime Employee Attendance</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Realtime Attendance Monitoring</h1>
             <p class="section-subtitle">Live feed of employee RFID scans and system status indicators.</p>
           </div>
@@ -1650,11 +1281,6 @@
       <section class="page-section" id="admin-dashboard">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Admin / HR Realtime Dashboard</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">Admin &amp; HR Command Center</h1>
             <p class="section-subtitle">Manage approvals, monitor alerts, and review HR activities in real time.</p>
           </div>
@@ -1814,14 +1440,117 @@
 
         </div>
       </section>
+
+      <section class="page-section" id="introduction">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">Introduction &amp; Background</h1>
+            <p class="section-subtitle">Understanding TAPIN, the Civil Service Commission, and digital attendance transformation.</p>
+          </div>
+        </div>
+
+        <div class="info-hero">
+          <h2 class="info-hero-title"><i class="fa-solid fa-landmark"></i> Civil Service Commission (CSC)</h2>
+          <p class="info-hero-sub">The Civil Service Commission is the central personnel agency of the Philippine government, ensuring merit-based appointments and promoting employee welfare in the public sector through policies on attendance, accountability, and professional development.</p>
+        </div>
+
+        <div class="info-cards-grid">
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-landmark"></i></div>
+            <div class="info-card-title">What is the CSC?</div>
+            <div class="info-card-body">The Civil Service Commission (CSC) is a constitutional body established to promote merit, efficiency, and integrity in the government civil service. It establishes standards for government employee recruitment, promotion, and discipline across all branches of Philippine government.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-clock"></i></div>
+            <div class="info-card-title">Importance of Attendance</div>
+            <div class="info-card-body">Strict monitoring of attendance ensures that government employees fulfill their duty to the public. The CSC mandates accurate time records (DTR) as the official basis for salary computation, leave credits, and disciplinary actions for habitual tardiness or absenteeism.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-user-gear"></i></div>
+            <div class="info-card-title">Government Employee Monitoring</div>
+            <div class="info-card-body">Every government employee is required to maintain an accurate Daily Time Record (DTR) per CSC Memorandum Circular No. 21, series of 1991. Modern systems like TAPIN automate this process, reducing manual errors and administrative burden while ensuring full compliance.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-microchip"></i></div>
+            <div class="info-card-title">Digital Transformation</div>
+            <div class="info-card-body">The Philippine government's digital transformation agenda drives institutions toward technology-based solutions. TAPIN represents this shift — replacing paper-based timekeeping with RFID-automated tracking, providing real-time data access, and enabling smarter HR decision-making.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-file-lines"></i></div>
+            <div class="info-card-title">Daily Time Records (DTR)</div>
+            <div class="info-card-body">The DTR (CSC Form No. 48) is the official government timesheet. It records daily arrival and departure times for morning and afternoon shifts. TAPIN auto-generates CSC-compliant DTRs from RFID scan data, eliminating manual encoding and reducing falsification risk.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-scale-balanced"></i></div>
+            <div class="info-card-title">Employee Accountability</div>
+            <div class="info-card-body">Government employees are accountable to the public they serve. Accurate attendance records support the Ease of Doing Business Act and promote transparency. TAPIN creates an audit trail of all RFID events, ensuring accountability for every time-in and time-out record.</div>
+          </div>
+        </div>
+      </section>
+      <section class="page-section" id="iot-attendance">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">IoT-Based RFID Attendance</h1>
+            <p class="section-subtitle">How RFID technology powers the TAPIN automated attendance monitoring system.</p>
+          </div>
+        </div>
+
+        <div class="info-hero" style="background:linear-gradient(135deg,#0F172A,#1E40AF);">
+          <h2 class="info-hero-title"><i class="fa-solid fa-tower-broadcast"></i> RFID Technology Overview</h2>
+          <p class="info-hero-sub">Radio Frequency Identification (RFID) uses electromagnetic fields to automatically identify and track tags attached to objects or carried by individuals. In TAPIN, each employee carries a unique RFID card that is scanned at entry/exit points to record attendance automatically in real-time.</p>
+        </div>
+
+        <div class="info-cards-grid">
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-signal"></i></div>
+            <div class="info-card-title">How RFID Works</div>
+            <div class="info-card-body">Each RFID card contains a microchip and antenna. When brought near an RFID reader (within 1–10 cm), the reader emits radio waves that power the chip, which transmits its unique ID back to the reader. TAPIN's server receives this ID, matches it to an employee record, and logs the attendance event instantly.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-robot"></i></div>
+            <div class="info-card-title">Attendance Automation</div>
+            <div class="info-card-body">TAPIN eliminates manual time logging. When an employee taps their RFID card, the system automatically determines whether it is a Time In or Time Out event, records the timestamp, computes working hours, flags tardiness based on configurable schedules, and updates the dashboard in real time.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-bullseye"></i></div>
+            <div class="info-card-title">Accuracy</div>
+            <div class="info-card-body">RFID scanning achieves near-perfect accuracy compared to manual timekeeping. Timestamps are logged to the second, with tamper-resistant records stored in the database. Biometric validation can be layered on for added security. TAPIN's error rate is less than 0.01% across all recorded transactions.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-ban"></i></div>
+            <div class="info-card-title">Reduced Manual Errors</div>
+            <div class="info-card-body">Human errors such as incorrect time entries, illegible handwriting, buddy punching, and lost timesheets are eliminated. TAPIN creates immutable digital records that cannot be altered without administrative privileges, ensuring integrity of all attendance data.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-gauge-max"></i></div>
+            <div class="info-card-title">Real-Time Monitoring</div>
+            <div class="info-card-body">Administrators can view live attendance data from any device with browser access. The TAPIN realtime dashboard shows who is currently inside, who has checked out, and who is absent or late — updated the moment an RFID scan occurs. System status indicators show reader and server health.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-cloud"></i></div>
+            <div class="info-card-title">Cloud Data Synchronization</div>
+            <div class="info-card-body">All attendance records are synchronized to a centralized PostgreSQL database hosted on secure cloud infrastructure. Data is backed up daily and accessible to authorized HR personnel anytime. Reports can be generated on demand without physical access to the RFID reader hardware.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-bolt"></i></div>
+            <div class="info-card-title">Fast Employee Identification</div>
+            <div class="info-card-body">RFID identification takes under 100 milliseconds. Employees simply tap their card as they enter or leave — no PIN entry, no fingerprint placement time, no queue. For 248 employees at ISPSC Tagudin Campus, this means zero attendance bottlenecks even during peak entry times.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-shield-halved"></i></div>
+            <div class="info-card-title">Security</div>
+            <div class="info-card-body">RFID cards use 128-bit encrypted UIDs that cannot be easily duplicated. TAPIN's server uses HTTPS for all data transfers. Administrative access requires authentication, and all login events are logged. Lost or stolen cards can be immediately deactivated from the admin dashboard.</div>
+          </div>
+          <div class="info-card">
+            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-line"></i></div>
+            <div class="info-card-title">Future Scalability</div>
+            <div class="info-card-body">TAPIN is designed to scale. Additional RFID readers can be added to new campus locations, departments, or buildings with minimal configuration. The system supports multi-campus deployment and can accommodate an unlimited number of employees, readers, and concurrent scan events.</div>
+          </div>
+        </div>
+      </section>
       <section class="page-section" id="settings">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">Settings</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">System Settings</h1>
             <p class="section-subtitle">Configure TAPIN system preferences and operational parameters.</p>
           </div>
@@ -1854,11 +1583,6 @@
       <section class="page-section" id="profile">
         <div class="section-actions">
           <div>
-            <div class="breadcrumb">
-              <a href="#dashboard"><i class="fa-solid fa-house"></i></a>
-              <span class="breadcrumb-sep">/</span>
-              <span class="breadcrumb-current">User Profile</span>
-            </div>
             <h1 class="section-title" style="margin-top:6px;">My Profile</h1>
             <p class="section-subtitle">Manage your account information and access preferences.</p>
           </div>
@@ -1909,6 +1633,19 @@
 
   </div><!-- /main -->
 </div><!-- /wrapper -->
+
+<div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+<div id="logoutConfirmModal" class="logout-modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="logoutConfirmTitle">
+  <div class="logout-modal">
+    <div class="logout-modal-icon"><i class="fa-solid fa-right-from-bracket"></i></div>
+    <h3 id="logoutConfirmTitle">Are you sure you want to logout?</h3>
+    <div class="logout-modal-actions">
+      <button id="logoutConfirmYes" class="btn btn-success">Yes</button>
+      <button id="logoutConfirmCancel" class="btn btn-primary">Cancel</button>
+    </div>
+  </div>
+</div>
 
 <script src="../js/dashboard.js"></script>
 <script src="../js/registration.js"></script>

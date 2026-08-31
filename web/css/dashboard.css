@@ -49,6 +49,9 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
 
+/* Reserve scrollbar gutter to avoid layout shift when scrollbars appear/disappear */
+html { scrollbar-gutter: stable; }
+
 body {
   font-family: var(--font-sans);
   font-size: 14px;
@@ -81,7 +84,7 @@ input, select, textarea { font: inherit; }
   overflow-y: auto;
   overflow-x: hidden;
   z-index: 100;
-  transition: transform var(--transition);
+  transition: width 0.28s ease, transform var(--transition);
   scrollbar-width: thin;
   scrollbar-color: #334155 transparent;
 }
@@ -97,6 +100,44 @@ input, select, textarea { font: inherit; }
   border-bottom: 1px solid rgba(255,255,255,.07);
 }
 
+.sidebar-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-left: auto;
+  flex-shrink: 0;
+  z-index: 1600; /* ensure toggle stays above overlays */
+  pointer-events: auto;
+}
+
+.sidebar-toggle span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  border-radius: 999px;
+  background: #ffffff;
+  transition: all 0.25s ease;
+}
+
+.sidebar-toggle.is-open span:nth-child(1) {
+  transform: translateY(7px) rotate(45deg);
+}
+
+.sidebar-toggle.is-open span:nth-child(2) {
+  opacity: 0;
+}
+
+.sidebar-toggle.is-open span:nth-child(3) {
+  transform: translateY(-7px) rotate(-45deg);
+}
+
 .brand-icon {
   width: 38px; height: 38px;
   background: linear-gradient(135deg, var(--primary), var(--accent));
@@ -105,6 +146,76 @@ input, select, textarea { font: inherit; }
   color: #fff; font-size: 16px;
   flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(37,99,235,.4);
+  overflow: hidden;
+}
+
+/* Nav item icon sizing and collapsed behavior */
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+}
+
+.nav-icon i { font-size: 16px; }
+
+/* When sidebar is collapsed: hide text by setting base font-size 0, keep icons visible and larger */
+body.sidebar-collapsed .nav-item {
+  font-size: 0; /* hide text labels while preserving icons */
+  padding: 9px 6px; /* keep same vertical spacing as full view to avoid layout shift */
+  justify-content: center;
+}
+
+body.sidebar-collapsed .nav-item .nav-icon i {
+  font-size: 16px !important; /* keep same icon size as full view */
+}
+
+/* Ensure icons remain visible and centered in collapsed brand */
+body.sidebar-collapsed .sidebar-brand { justify-content: center; }
+body.sidebar-collapsed .sidebar-brand .brand-icon { margin-right: 0; }
+
+/* Make sure the sidebar toggle remains aligned and visible when collapsed */
+body.sidebar-collapsed .sidebar-toggle { margin-left: 0; }
+
+/* Hide section labels and nav text when collapsed; keep icons visible */
+body.sidebar-collapsed .sidebar-section-label,
+body.sidebar-collapsed .sidebar .sidebar-section-label {
+  display: none !important;
+}
+
+/* Reduce nav-item content to icons only */
+body.sidebar-collapsed .nav-item {
+  font-size: 0 !important; /* hides text nodes */
+  padding: 8px 6px !important;
+  justify-content: center !important;
+}
+
+/* Make sure icons are visible and larger */
+body.sidebar-collapsed .nav-item .nav-icon {
+  width: 40px !important;
+  height: 40px !important;
+}
+body.sidebar-collapsed .nav-item .nav-icon i {
+  font-size: 16px !important;
+}
+
+/* Hide small badges (e.g., Live) while collapsed */
+body.sidebar-collapsed .nav-badge { display: none !important; }
+
+/* Hide sub-items' text when collapsed but preserve spacing to avoid vertical jumps */
+body.sidebar-collapsed .nav-sub-item {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .brand-text { min-width: 0; }
@@ -132,6 +243,7 @@ input, select, textarea { font: inherit; }
   font-weight: 700;
   letter-spacing: .1em;
   text-transform: uppercase;
+  display: none; /* removed per user request */
 }
 
 .sidebar-nav { padding: 0 10px; }
@@ -146,7 +258,8 @@ input, select, textarea { font: inherit; }
   font-size: 13px;
   font-weight: 500;
   transition: all var(--transition);
-  margin-bottom: 1px;
+  margin-bottom: 8px;
+  height: 48px;
   position: relative;
   cursor: pointer;
 }
@@ -157,12 +270,31 @@ input, select, textarea { font: inherit; }
 }
 
 .nav-item.active {
-  background: linear-gradient(135deg, #1D4ED8, #1E40AF);
   color: #fff;
-  box-shadow: 0 2px 8px rgba(29,78,216,.4);
+}
+/* Ensure the active state applies to the text label and direct children
+   (fixes cases where the icon is highlighted but the label remains muted) */
+.nav-item.active,
+.nav-item.active > * {
+  color: #fff;
+}
+/* Stronger override to ensure label text also becomes white in all states (expanded view) */
+.sidebar .nav-item.active,
+.sidebar .nav-item.active * {
+  color: #ffffff !important;
 }
 
-.nav-item.active .nav-icon { color: #fff; }
+.nav-item.active .nav-icon {
+  background: linear-gradient(135deg, #1D4ED8, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(29,78,216,.25);
+  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
 .nav-icon {
   width: 20px; height: 20px;
@@ -197,7 +329,8 @@ input, select, textarea { font: inherit; }
   font-size: 12px;
   font-weight: 500;
   transition: all var(--transition);
-  margin-bottom: 1px;
+  margin-bottom: 8px;
+  height: 44px;
   cursor: pointer;
 }
 
@@ -217,6 +350,44 @@ input, select, textarea { font: inherit; }
   margin-right: 10px;
 }
 
+/* When collapsed: center the nav items horizontally in the sidebar */
+body.sidebar-collapsed .nav-item {
+  width: 66px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-radius: 10px !important;
+}
+
+/* Make active/focused/pressed states show the blue highlight (consistent across views) */
+.nav-item:focus, .nav-item:active, .nav-item:focus-visible {
+  background: linear-gradient(135deg, #1D4ED8, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(29,78,216,.25);
+  outline: none;
+}
+
+/* Ensure collapsed active state uses the same styling */
+body.sidebar-collapsed .nav-item.active {
+  width: 66px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  color: #fff;
+}
+
+body.sidebar-collapsed .nav-item.active .nav-icon {
+  background: linear-gradient(135deg, #1D4ED8, #1E40AF);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(29,78,216,.25);
+  border-radius: 10px;
+  width: 40px !important;
+  height: 40px !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .sidebar-divider {
   height: 1px;
   background: rgba(255,255,255,.06);
@@ -229,6 +400,21 @@ input, select, textarea { font: inherit; }
   border-top: 1px solid rgba(255,255,255,.07);
 }
 
+.sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+  z-index: 120;
+}
+
+.sidebar-overlay.visible {
+  opacity: 1;
+  visibility: visible;
+}
+
 /* --- MAIN AREA --- */
 .main {
   margin-left: var(--sidebar-w);
@@ -236,6 +422,7 @@ input, select, textarea { font: inherit; }
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  transition: margin-left 0.28s ease, padding 0.18s ease;
 }
 
 .topbar {
@@ -284,12 +471,17 @@ input, select, textarea { font: inherit; }
 .search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 
 .topbar-center {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 12px;
   color: var(--text-muted);
+  pointer-events: none; /* allow clicks to pass through */
 }
 
 .topbar-date {
@@ -308,7 +500,7 @@ input, select, textarea { font: inherit; }
   letter-spacing: .02em;
 }
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 
 .topbar-btn {
   width: 36px; height: 36px;
@@ -372,18 +564,26 @@ input, select, textarea { font: inherit; }
 .breadcrumb a { color: var(--primary); font-weight: 500; transition: color var(--transition); }
 .breadcrumb a:hover { color: var(--primary-dark); }
 .breadcrumb-sep { color: var(--border-dark); }
-.breadcrumb-current { color: var(--text); font-weight: 600; }
 
 .content {
   flex: 1;
   padding: 8px 28px 32px;
 }
 
-/* CSS-only section navigation using :target */
-.page-section { display: none; }
-.page-section:target { display: block; }
-.page-section:first-of-type { display: block; } /* Dashboard shown by default */
-.page-section:target ~ .page-section:first-of-type { display: none; }
+/* Section navigation: show sections by default so they stack vertically; JS will scroll to anchors */
+.page-section {
+  display: block;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  margin: 14px 0 22px;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Make the section header stand out from the boxed card */
+.page-section .section-actions { padding: 0; margin-bottom: 12px; }
+.page-section .section-actions > div { padding-bottom: 8px; }
 
 .section-header {
   margin-bottom: 24px;
@@ -411,6 +611,74 @@ input, select, textarea { font: inherit; }
   flex-wrap: wrap;
   gap: 12px;
   padding-top: 8px;
+}
+
+/* Show per-section breadcrumb/title/subtitle so each section displays its own header */
+.page-section .section-actions > div > .breadcrumb,
+.page-section .section-actions > div > .section-title,
+.page-section .section-actions > div > .section-subtitle {
+  display: block;
+}
+
+/* Global header styling */
+.global-section-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding-top: 8px;
+}
+
+/* Box and style the global header so it's visually distinct */
+.global-section-actions {
+  /* Remove boxed background so header blends with page */
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 14px 0; /* keep vertical spacing */
+  box-shadow: none;
+}
+
+/* Quick action responsiveness: ensure buttons fit and wrap on small screens */
+.global-section-actions {
+  flex-wrap: wrap;
+}
+.global-section-actions .flex {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.global-section-actions .btn {
+  flex: 0 1 auto; /* allow buttons to shrink when space is limited */
+  min-width: 0;   /* prevent overflow from long labels */
+}
+
+@media (max-width: 600px) {
+  .global-section-actions { padding: 12px 14px; }
+  .global-section-actions .flex { width: 100%; justify-content: flex-end; }
+  .global-section-actions .btn { padding: 8px 12px; }
+}
+
+@media (max-width: 420px) {
+  /* Stack buttons full-width on very small screens */
+  .global-section-actions .flex { flex-direction: column; align-items: stretch; gap: 8px; }
+  .global-section-actions .btn { width: 100%; display: block; }
+}
+
+.global-section-actions .breadcrumb {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.global-section-actions .section-title {
+  margin: 6px 0 0 0;
+  font-size: 22px;
+}
+.global-section-actions .section-subtitle {
+  margin: 4px 0 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 .btn {
@@ -450,6 +718,58 @@ input, select, textarea { font: inherit; }
 .btn-warning { background: var(--warning); color: white; }
 .btn-danger { background: var(--danger); color: white; }
 
+.logout-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.56);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+}
+
+.logout-modal-backdrop.hidden {
+  display: none;
+}
+
+.logout-modal {
+  width: min(420px, 92vw);
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  padding: 28px 24px 22px;
+  text-align: center;
+}
+
+.logout-modal-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 16px;
+}
+
+.logout-modal h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1.3;
+}
+
+.logout-modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 22px;
+}
+
 .btn-sm { padding: 5px 11px; font-size: 12px; }
 .btn-icon { padding: 8px; }
 
@@ -460,6 +780,13 @@ input, select, textarea { font: inherit; }
   box-shadow: var(--shadow);
   transition: box-shadow var(--transition), transform var(--transition);
   overflow: hidden;
+}
+
+/* Ensure cards never exceed the container width and their body fits the viewport */
+.card {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .card:hover { box-shadow: var(--shadow-md); }
@@ -491,12 +818,31 @@ input, select, textarea { font: inherit; }
 
 .card-title i { color: var(--primary); }
 
-.card-body { padding: 20px; }
+.card-body { padding: 20px; overflow: hidden; box-sizing: border-box; }
+
+/* Make sure card inner grids don't cause horizontal overflow */
+.card-body .quick-actions-grid,
+.card-body .stats-grid,
+.card-body .employees-grid,
+.card-body .reports-grid {
+  width: 100%;
+  max-width: 100%;
+}
+.quick-actions-grid .quick-action {
+  min-width: 0; /* allow items to shrink below their content width */
+}
+
+@media (max-width: 768px) {
+  .content { padding-left: 12px; padding-right: 12px; }
+  .card { margin-left: 0; margin-right: 0; }
+  .card-body { padding: 12px; }
+}
 .card-footer { padding: 14px 20px; border-top: 1px solid var(--border); background: #FAFAFA; }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  /* allow the grid to auto-fit available space and keep cards readable */
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -609,8 +955,9 @@ input, select, textarea { font: inherit; }
 
 .quick-actions-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 12px;
+  /* allow items to shrink more so many actions fit on narrow screens */
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 10px;
   margin-bottom: 24px;
 }
 
@@ -618,14 +965,16 @@ input, select, textarea { font: inherit; }
   background: var(--card-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 12px;
+  padding: 12px 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   transition: all .22s ease;
   text-align: center;
+  min-height: 72px;
+  box-sizing: border-box;
 }
 
 .quick-action:hover {
@@ -639,21 +988,35 @@ input, select, textarea { font: inherit; }
 .quick-action:hover .qa-label { color: var(--primary-dark); }
 
 .qa-icon {
-  width: 42px; height: 42px;
+  width: 40px; height: 40px;
   border-radius: var(--radius);
   background: var(--bg);
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   color: var(--primary);
   transition: all var(--transition);
+  flex-shrink: 0;
 }
 
 .qa-label {
   font-size: 11px;
   font-weight: 600;
   color: var(--text);
-  line-height: 1.3;
+  line-height: 1.2;
   transition: color var(--transition);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 520px) {
+  .quick-actions-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .quick-action { padding: 10px 8px; min-height: 64px; }
+  .qa-label { font-size: 12px; }
+}
+
+@media (max-width: 360px) {
+  .quick-actions-grid { grid-template-columns: repeat(1, 1fr); }
+  .qa-label { font-size: 13px; }
 }
 
 .table-wrap {
@@ -1566,11 +1929,22 @@ input, select, textarea { font: inherit; }
   .grid-4 { grid-template-columns: 1fr 1fr; }
   .realtime-grid { grid-template-columns: 1fr; }
   .dtr-sigs { grid-template-columns: 1fr 1fr; }
+  /* Slightly reduce stat card padding and value size on medium screens */
+  .stat-card { padding: 16px; }
+  .stat-value { font-size: 24px; }
+  .stat-icon-wrap { width: 40px; height: 40px; font-size: 16px; }
 }
 
 @media (max-width: 768px) {
-  :root { --sidebar-w: 0; }
-  .sidebar { transform: translateX(-100%); }
+  :root { --sidebar-w: 260px; }
+  .sidebar {
+    transform: translateX(-100%);
+    z-index: 130;
+    box-shadow: 0 24px 40px rgba(15, 23, 42, 0.24);
+  }
+  .sidebar.is-open {
+    transform: translateX(0);
+  }
   .main { margin-left: 0; }
   .content { padding: 8px 16px 32px; }
   .topbar { padding: 0 16px; gap: 10px; }
@@ -1578,6 +1952,10 @@ input, select, textarea { font: inherit; }
   .grid-3 { grid-template-columns: 1fr; }
   .grid-4 { grid-template-columns: 1fr 1fr; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  /* Mobile: make stat cards more compact */
+  .stat-card { padding: 12px; }
+  .stat-value { font-size: 22px; }
+  .stat-icon-wrap { width: 36px; height: 36px; font-size: 14px; }
   .realtime-grid { grid-template-columns: 1fr; }
   .dtr-sigs { grid-template-columns: 1fr; }
   .footer-content { flex-direction: column; text-align: center; }
@@ -1585,8 +1963,38 @@ input, select, textarea { font: inherit; }
   .topbar-center { display: none; }
 }
 
+body.sidebar-collapsed .sidebar {
+  width: 86px;
+  transform: none;
+}
+
+body.sidebar-collapsed .brand-text {
+  display: none;
+}
+
+body.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+body.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}
+
+body.sidebar-collapsed .brand-icon {
+  display: none;
+}
+
+body.sidebar-collapsed .main {
+  margin-left: 86px;
+}
+
 @media (max-width: 480px) {
   .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stat-card { padding: 10px; }
+  .stat-value { font-size: 18px; }
+  .stat-icon-wrap { width: 32px; height: 32px; font-size: 13px; }
   .quick-actions-grid { grid-template-columns: repeat(3, 1fr); }
   .hr-letters-grid { grid-template-columns: 1fr; }
   .templates-grid { grid-template-columns: repeat(2, 1fr); }
