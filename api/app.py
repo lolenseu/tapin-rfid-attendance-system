@@ -55,11 +55,15 @@ PROFILE_STORAGE = os.path.join(BASE_DIR, "storage", "profiles")
 # Scan feed storage - keeps detailed logs of all scans
 SCAN_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_feed.json")
 
+# Leave requests storage
+LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "leaves.json")
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
@@ -67,6 +71,7 @@ print(f"USER_DATA_FILE: {USER_DATA_FILE}")
 print(f"ATTENDANCE_DATA_FILE: {ATTENDANCE_DATA_FILE}")
 print(f"PROFILE_STORAGE: {PROFILE_STORAGE}")
 print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
+print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
 
 # Open the shared dashboard after a successful login.
 WEB_DASHBOARD = "/pages/dashboard.html"
@@ -115,14 +120,45 @@ latest_scan = {
 }
 
 # Track last scan time for each RFID to enforce cooldown
-# Structure: {rfid: {"last_scan_time": datetime, "last_scan_type": "in"|"out", "scan_date": date}}
+# Structure: {rfid: {"last_scan_time": datetime, "last_scan_type": "in"|"out"}}
 last_scan_tracking = {}
 
-# Track current day for each RFID to reset at midnight
-# Structure: {rfid: {"current_date": date, "am_in": bool, "am_out": bool, "pm_in": bool, "pm_out": bool}}
-daily_scan_status = {}
-
 ## Functions ------------------------------------
+# Load leave data
+def load_leave_data():
+    if not os.path.exists(LEAVE_DATA_FILE):
+        default_data = {"requests": [], "approved": [], "rejected": []}
+        with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+            f.write("\n")
+        print(f"Created new leave file: {LEAVE_DATA_FILE}")
+        return default_data
+    
+    try:
+        with open(LEAVE_DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if "requests" not in data:
+                data["requests"] = []
+            if "approved" not in data:
+                data["approved"] = []
+            if "rejected" not in data:
+                data["rejected"] = []
+            return data
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading leave file: {e}")
+        return {"requests": [], "approved": [], "rejected": []}
+
+# Save leave data
+def save_leave_data(leave_data):
+    os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
+    with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(leave_data, f, indent=4)
+        f.write("\n")
+    print(f"Leave data saved to {LEAVE_DATA_FILE}")
+
+# Load leave data
+leave_data = load_leave_data()
+
 # Load persisted DTR records and scan events.
 def load_attendance_data():
     # Ensure the directory exists
@@ -142,37 +178,14 @@ def load_attendance_data():
             data = json.load(f)
             # Ensure we have the proper structure
             if isinstance(data, list):
-                # Old format - convert to new structure
                 return {"records": [], "scan_events": data}
-            if "dtr" in data:
-                # Handle old DTR format
-                working_days = list(data.get("dtr", {}).values())
-                template_record = {
-                    "id": data.get("id") or "001",
-                    "uid": data.get("uid", ""),
-                    "employeeid": data.get("employeeid", ""),
-                    "rfid": data.get("rfid", ""),
-                    "fullname": f"{data.get('firstname', '')} {data.get('lastname', '')}".strip(),
-                    "position": data.get("position"),
-                    "department": data.get("department"),
-                    "month": "2026-09",
-                    "working_days": working_days,
-                    "total_hours": "0.00",
-                    "total_ut": "0.00",
-                    "total_ot": "0.00"
-                }
-                return {
-                    "records": [template_record] if template_record["uid"] else [],
-                    "scan_events": []
-                }
-            # Modern structure
+            # Modern structure with records array
             return {
                 "records": data.get("records", []),
                 "scan_events": data.get("scan_events", [])
             }
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"Error reading attendance file: {e}")
-        # Backup the corrupted file if it exists
         if os.path.exists(ATTENDANCE_DATA_FILE):
             backup_file = ATTENDANCE_DATA_FILE + ".backup"
             try:
@@ -180,14 +193,12 @@ def load_attendance_data():
                 print(f"Corrupted file backed up to: {backup_file}")
             except:
                 pass
-        # Return empty structure
         return {"records": [], "scan_events": []}
 
 # Load scan feed data
 def load_scan_feed():
     """Load scan feed data from JSON file"""
     if not os.path.exists(SCAN_FEED_FILE):
-        # Create empty file with proper structure
         default_data = {
             "scans": [],
             "total_scans": 0,
@@ -202,7 +213,6 @@ def load_scan_feed():
     try:
         with open(SCAN_FEED_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Ensure we have the proper structure
             if "scans" not in data:
                 data["scans"] = []
             if "total_scans" not in data:
@@ -227,31 +237,26 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
     """Add a single scan to the feed with proper formatting"""
     scan_feed_data = load_scan_feed()
     
-    # Get current date for grouping
     scan_date = datetime.now().date().isoformat()
     
-    # Check if we need to clean up old scans (weekly cleanup)
     last_cleanup = datetime.fromisoformat(scan_feed_data.get("last_cleanup", datetime.now().isoformat()))
     days_since_cleanup = (datetime.now() - last_cleanup).days
     
-    # Reset scan feed every Monday (weekly cleanup)
     if days_since_cleanup >= 7:
         scan_feed_data["scans"] = []
         scan_feed_data["last_cleanup"] = datetime.now().isoformat()
         scan_feed_data["total_scans"] = 0
         print("Weekly scan feed cleanup performed")
     
-    # Create scan entry without image
     scan_entry = {
         "rfid": rfid,
         "scanned_at": scanned_at,
         "scanned_on": scan_date,
         "found": found,
-        "scan_type": scan_type,  # "time_in", "time_out", "unknown"
+        "scan_type": scan_type,
         "timestamp": datetime.now().isoformat()
     }
     
-    # Add employee details if found (without image)
     if employee:
         scan_entry["employee"] = {
             "uid": employee.get("uid"),
@@ -263,17 +268,13 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
     else:
         scan_entry["employee"] = None
     
-    # Add to scans list (newest first)
     scan_feed_data["scans"].insert(0, scan_entry)
     
-    # Keep only last 1000 scans to prevent file from growing too large
     if len(scan_feed_data["scans"]) > 1000:
         scan_feed_data["scans"] = scan_feed_data["scans"][:1000]
     
-    # Update total scans
     scan_feed_data["total_scans"] = len(scan_feed_data["scans"])
     
-    # Save to file
     save_scan_feed(scan_feed_data)
     
     return scan_entry
@@ -290,10 +291,9 @@ if scan_events:
 
 # Save DTR records and scan history to the attendance database.
 def save_attendance_data():
-    # Ensure the directory exists
+    """Save attendance records to attendance.json file - preserves all records"""
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
     
-    # Create backup before saving
     if os.path.exists(ATTENDANCE_DATA_FILE):
         backup_file = ATTENDANCE_DATA_FILE + ".backup"
         try:
@@ -302,67 +302,82 @@ def save_attendance_data():
         except:
             pass
     
-    # Save with proper structure
     with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "records": attendance_records,
-            "scan_events": scan_events[-10000:]  # Keep last 10000 events
+            "scan_events": scan_events[-10000:]
         }, f, indent=4)
         f.write("\n")
+    print(f"Attendance data saved to {ATTENDANCE_DATA_FILE} - {len(attendance_records)} total records")
 
-# Build calendar rows for one DTR month.
-def build_working_days(year, month):
-    return [
-        {
-            "date": f"{year:04d}-{month:02d}-{day:02d}",
-            "day": calendar.day_abbr[calendar.weekday(year, month, day)],
+# Build DTR dictionary for a month
+def build_dtr_dict(year, month):
+    """Build DTR dictionary with date keys like '1-sep', '2-sep'"""
+    days_in_month = calendar.monthrange(year, month)[1]
+    dtr = {}
+    month_name = calendar.month_abbr[month].lower()
+    
+    for day in range(1, days_in_month + 1):
+        date_obj = datetime(year, month, day)
+        date_key = f"{day}-{month_name}"
+        dtr[date_key] = {
+            "date": date_obj.strftime("%Y-%m-%d"),
+            "day": calendar.day_abbr[date_obj.weekday()],
             "am_in": "",
             "am_out": "",
             "pm_in": "",
             "pm_out": "",
             "hours": "0.00",
             "ut": "0.00",
-            "ot": "0.00"
+            "ot": "0.00",
+            "status": ""
         }
-        for day in range(1, calendar.monthrange(year, month)[1] + 1)
-    ]
+    return dtr
 
 # Find or create a DTR record using the user's identity fields.
 def get_attendance_record(employee, scan_date):
+    """
+    Find existing attendance record for a user and month, or create a new one.
+    Uses DTR format with date-keyed entries.
+    """
     month_key = scan_date.strftime("%Y-%m")
+    month_display = scan_date.strftime("%B %Y")
+    uid = employee.get("uid")
     
-    # First try to find existing record
+    # First try to find existing record for this user and month
     for record in attendance_records:
-        if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
-            return record
-
-    # Check if we have any existing working days for this user for this month
-    # This prevents creating duplicate records
-    existing_records = [r for r in attendance_records if r.get("uid") == employee.get("uid")]
-    for record in existing_records:
-        if record.get("month") == month_key:
+        if record.get("uid") == uid and record.get("month") == month_key:
+            print(f"Found existing record for {employee.get('firstname')} for month {month_key}")
             return record
     
-    # No record exists - create a new one
-    # Generate a new unique ID based on the highest existing numeric ID
-    existing_ids = [int(r.get("id", 0)) for r in attendance_records if str(r.get("id", "")).isdigit()]
+    # No record exists - create a new one with DTR format
+    existing_ids = []
+    for r in attendance_records:
+        try:
+            if str(r.get("id", "")).isdigit():
+                existing_ids.append(int(r.get("id")))
+        except:
+            pass
+    
     new_id = str(max(existing_ids + [0]) + 1).zfill(3)
 
     record = {
         "id": new_id,
-        "uid": employee.get("uid"),
-        "employeeid": employee.get("employeeid"),
-        "rfid": employee.get("rfid"),
+        "uid": uid,
+        "employeeid": employee.get("employeeid", ""),
+        "rfid": employee.get("rfid", ""),
         "fullname": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
-        "position": employee.get("position"),
-        "department": employee.get("department"),
+        "position": employee.get("position", ""),
+        "department": employee.get("department", ""),
         "month": month_key,
-        "working_days": build_working_days(scan_date.year, scan_date.month),
+        "month_display": month_display,
+        "dtr": build_dtr_dict(scan_date.year, scan_date.month),
         "total_hours": "0.00",
         "total_ut": "0.00",
         "total_ot": "0.00"
     }
     attendance_records.append(record)
+    print(f"Created new attendance record for {record['fullname']} for month {month_key}")
     return record
 
 # Determine if a time is AM or PM period
@@ -371,47 +386,24 @@ def get_period(scan_time):
     return "am" if scan_time.hour < 12 else "pm"
 
 # Check if a user has already timed in for the current period
-def has_time_in_for_period(day_record, period):
+def has_time_in_for_period(day_data, period):
     """Check if the user already has a time in for the given period"""
     in_key = f"{period}_in"
-    return bool(day_record.get(in_key))
+    return bool(day_data.get(in_key))
 
 # Check if a user has already timed out for the current period
-def has_time_out_for_period(day_record, period):
+def has_time_out_for_period(day_data, period):
     """Check if the user already has a time out for the given period"""
     out_key = f"{period}_out"
-    return bool(day_record.get(out_key))
+    return bool(day_data.get(out_key))
 
-# Reset daily tracking at midnight
-def reset_daily_tracking_if_needed(rfid, scan_date):
-    """Reset the daily tracking for an RFID if the date has changed"""
-    today = scan_date.date()
-    
-    if rfid not in daily_scan_status:
-        daily_scan_status[rfid] = {
-            "current_date": today,
-            "am_in": False,
-            "am_out": False,
-            "pm_in": False,
-            "pm_out": False
-        }
-        return
-    
-    current_data = daily_scan_status[rfid]
-    current_date = current_data.get("current_date")
-    
-    # If the date has changed, reset everything
-    if current_date != today:
-        daily_scan_status[rfid] = {
-            "current_date": today,
-            "am_in": False,
-            "am_out": False,
-            "pm_in": False,
-            "pm_out": False
-        }
+# Check if a day is marked as on leave
+def is_on_leave(day_data):
+    """Check if the day record is marked as on leave"""
+    return day_data.get("status") == "on_leave"
 
 # Get the appropriate scan type based on current state
-def determine_scan_type(day_record, scan_time, employee):
+def determine_scan_type(day_data, scan_time, employee):
     """
     Determine whether this scan should be a time in or time out.
     Returns: ("am", "in") or ("am", "out") or ("pm", "in") or ("pm", "out") or None (skip)
@@ -419,50 +411,51 @@ def determine_scan_type(day_record, scan_time, employee):
     rfid = employee.get("rfid")
     period = get_period(scan_time)
     
-    # Reset daily tracking if needed
-    reset_daily_tracking_if_needed(rfid, scan_time)
+    # Check if day is on leave - skip scanning
+    if is_on_leave(day_data):
+        print(f"Day marked as ON LEAVE for {rfid} - scan skipped")
+        return None
     
-    # Get current daily status
-    daily_status = daily_scan_status.get(rfid, {})
+    # Check AM status from the day record
+    am_has_in = has_time_in_for_period(day_data, "am")
+    am_has_out = has_time_out_for_period(day_data, "am")
+    am_complete = am_has_in and am_has_out
+    
+    # Check PM status from the day record
+    pm_has_in = has_time_in_for_period(day_data, "pm")
+    pm_has_out = has_time_out_for_period(day_data, "pm")
+    pm_complete = pm_has_in and pm_has_out
     
     # AM period handling
     if period == "am":
-        # If AM time in doesn't exist, record AM time in
-        if not daily_status.get("am_in", False):
+        if not am_has_in:
             return ("am", "in")
         
-        # If AM time in exists but AM time out doesn't, check cooldown
-        if daily_status.get("am_in", False) and not daily_status.get("am_out", False):
-            # Check if 1 hour has passed since last scan
+        if am_has_in and not am_has_out:
             if rfid in last_scan_tracking:
                 last_scan_data = last_scan_tracking[rfid]
                 last_scan_time = last_scan_data.get("last_scan_time")
                 last_scan_type = last_scan_data.get("last_scan_type")
                 
-                # If last scan was a time in, check cooldown
                 if last_scan_type == "in":
                     time_diff = (scan_time - last_scan_time).total_seconds() / 3600
-                    if time_diff >= 1.0:  # 1 hour cooldown
+                    if time_diff >= 1.0:
                         return ("am", "out")
                     else:
-                        # Still in cooldown, skip this scan
+                        print(f"AM cooldown not met for {rfid} - {time_diff:.2f} hours")
                         return None
         
-        # If both AM in and out exist, skip (already completed AM)
-        if daily_status.get("am_in", False) and daily_status.get("am_out", False):
+        if am_complete:
+            print(f"AM already complete for {rfid}")
             return None
     
     # PM period handling
     elif period == "pm":
-        # Check if AM is complete (has both in and out) before allowing PM
-        am_complete = daily_status.get("am_in", False) and daily_status.get("am_out", False)
-        
-        # If AM is not complete, handle AM first
         if not am_complete:
-            if not daily_status.get("am_in", False):
+            if not am_has_in:
+                print(f"Late AM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                 return ("am", "in")
-            elif daily_status.get("am_in", False) and not daily_status.get("am_out", False):
-                # Check cooldown for AM out
+            elif am_has_in and not am_has_out:
                 if rfid in last_scan_tracking:
                     last_scan_data = last_scan_tracking[rfid]
                     last_scan_time = last_scan_data.get("last_scan_time")
@@ -470,56 +463,62 @@ def determine_scan_type(day_record, scan_time, employee):
                     if last_scan_type == "in":
                         time_diff = (scan_time - last_scan_time).total_seconds() / 3600
                         if time_diff >= 1.0:
+                            print(f"Late AM time out for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                             return ("am", "out")
                         else:
+                            print(f"AM cooldown not met for {rfid} - {time_diff:.2f} hours")
                             return None
                 return ("am", "out")
         
-        # AM is complete, handle PM
-        if not daily_status.get("pm_in", False):
+        if not pm_has_in:
             return ("pm", "in")
         
-        if daily_status.get("pm_in", False) and not daily_status.get("pm_out", False):
-            # Check cooldown for PM out
+        if pm_has_in and not pm_has_out:
             if rfid in last_scan_tracking:
                 last_scan_data = last_scan_tracking[rfid]
                 last_scan_time = last_scan_data.get("last_scan_time")
                 last_scan_type = last_scan_data.get("last_scan_type")
+                
                 if last_scan_type == "in":
                     time_diff = (scan_time - last_scan_time).total_seconds() / 3600
                     if time_diff >= 1.0:
                         return ("pm", "out")
                     else:
+                        print(f"PM cooldown not met for {rfid} - {time_diff:.2f} hours")
                         return None
         
-        # If both PM in and out exist, skip
-        if daily_status.get("pm_in", False) and daily_status.get("pm_out", False):
+        if pm_complete:
+            print(f"PM already complete for {rfid}")
             return None
     
-    # Default fallback - treat as time in for current period if not already present
-    if not has_time_in_for_period(day_record, period):
+    if not has_time_in_for_period(day_data, period):
         return (period, "in")
     else:
         return None
 
 # Add a device timestamp to the correct AM or PM DTR slot.
 def record_attendance_scan(employee, scanned_at):
+    """Record attendance scan - handles creating records for new employees and months"""
     scan_time = parse_scan_time(scanned_at)
     rfid = employee.get("rfid")
 
+    # Get or create the record for this user and month
     record = get_attendance_record(employee, scan_time)
     
-    # Find the day record
+    # Find the day record in DTR
     day_date = scan_time.strftime("%Y-%m-%d")
-    day_record = None
-    for day in record["working_days"]:
-        if day["date"] == day_date:
-            day_record = day
+    day_data = None
+    date_key = None
+    
+    for key, day in record.get("dtr", {}).items():
+        if day.get("date") == day_date:
+            day_data = day
+            date_key = key
             break
     
-    if not day_record:
+    if not day_data:
         # This shouldn't happen, but just in case
-        day_record = {
+        day_data = {
             "date": day_date,
             "day": calendar.day_abbr[scan_time.weekday()],
             "am_in": "",
@@ -528,42 +527,32 @@ def record_attendance_scan(employee, scanned_at):
             "pm_out": "",
             "hours": "0.00",
             "ut": "0.00",
-            "ot": "0.00"
+            "ot": "0.00",
+            "status": ""
         }
-        record["working_days"].append(day_record)
-        # Sort working days
-        record["working_days"].sort(key=lambda x: x["date"])
+        record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
     
     time_value = scan_time.strftime("%H:%M:%S")
     
     # Determine the scan type (time in or time out)
-    scan_result = determine_scan_type(day_record, scan_time, employee)
+    scan_result = determine_scan_type(day_data, scan_time, employee)
     
-    # If scan_result is None, skip this scan (cooldown not met)
     if scan_result is None:
-        print(f"Scan skipped for {rfid} - cooldown not met or already scanned")
+        print(f"Scan skipped for {rfid} - cooldown not met, already scanned, or on leave")
         return record, "skipped"
     
     period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
     
-    # Record the scan based on type
     if scan_type == "in":
-        # Only record if slot is empty
-        if not day_record[in_key]:
-            day_record[in_key] = time_value
-            # Update daily status
-            status_key = f"{period}_in"
-            if rfid in daily_scan_status:
-                daily_scan_status[rfid][status_key] = True
+        if not day_data[in_key]:
+            day_data[in_key] = time_value
             print(f"Recorded {period.upper()} TIME IN for {rfid} at {time_value}")
-            # Update last scan tracking
             last_scan_tracking[rfid] = {
                 "last_scan_time": scan_time,
                 "last_scan_type": "in"
             }
-            # Add to scan feed with type
             add_scan_to_feed(
                 rfid, 
                 scanned_at, 
@@ -575,20 +564,13 @@ def record_attendance_scan(employee, scanned_at):
             print(f"{period.upper()} TIME IN already exists for {rfid}")
             return record, "already_exists"
     elif scan_type == "out":
-        # Only record if slot is empty
-        if not day_record[out_key]:
-            day_record[out_key] = time_value
-            # Update daily status
-            status_key = f"{period}_out"
-            if rfid in daily_scan_status:
-                daily_scan_status[rfid][status_key] = True
+        if not day_data[out_key]:
+            day_data[out_key] = time_value
             print(f"Recorded {period.upper()} TIME OUT for {rfid} at {time_value}")
-            # Update last scan tracking
             last_scan_tracking[rfid] = {
                 "last_scan_time": scan_time,
                 "last_scan_type": "out"
             }
-            # Add to scan feed with type
             add_scan_to_feed(
                 rfid, 
                 scanned_at, 
@@ -601,15 +583,28 @@ def record_attendance_scan(employee, scanned_at):
             return record, "already_exists"
     
     # Calculate hours after each update
-    am_hours = calculate_hours(day_record["am_in"], day_record["am_out"])
-    pm_hours = calculate_hours(day_record["pm_in"], day_record["pm_out"])
+    am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""))
+    pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""))
     total_hours = am_hours + pm_hours
-    day_record["hours"] = f"{total_hours:.2f}"
-    day_record["ut"] = f"{max(0, 8 - total_hours):.2f}"
-    day_record["ot"] = f"{max(0, total_hours - 8):.2f}"
-    record["total_hours"] = f"{sum(float(day['hours']) for day in record['working_days']):.2f}"
-    record["total_ut"] = f"{sum(float(day['ut']) for day in record['working_days']):.2f}"
-    record["total_ot"] = f"{sum(float(day['ot']) for day in record['working_days']):.2f}"
+    day_data["hours"] = f"{total_hours:.2f}"
+    day_data["ut"] = f"{max(0, 8 - total_hours):.2f}"
+    day_data["ot"] = f"{max(0, total_hours - 8):.2f}"
+    
+    # Calculate total hours for the month
+    total_hours_month = 0
+    total_ut_month = 0
+    total_ot_month = 0
+    for day in record.get("dtr", {}).values():
+        try:
+            total_hours_month += float(day.get("hours", "0.00"))
+            total_ut_month += float(day.get("ut", "0.00"))
+            total_ot_month += float(day.get("ot", "0.00"))
+        except:
+            pass
+    
+    record["total_hours"] = f"{total_hours_month:.2f}"
+    record["total_ut"] = f"{total_ut_month:.2f}"
+    record["total_ot"] = f"{total_ot_month:.2f}"
     
     return record, "success"
 
@@ -633,21 +628,21 @@ def calculate_hours(start_time, end_time):
 
 # Ensure every registered user has a DTR record for the current month.
 def initialize_attendance_records():
-    """Only adds missing records, never overwrites existing ones"""
+    """Only adds missing records for the current month, never overwrites existing ones"""
     current_month = datetime.now()
+    records_created = 0
     for employee in employee_database.values():
-        # This will only create a record if one doesn't exist
         get_attendance_record(employee, current_month)
+        records_created += 1
     save_attendance_data()
+    print(f"Initialized attendance records - {records_created} employees checked")
 
 # Build the RFID lookup database from all user roles.
 def load_employee_database():
-    # Ensure the directory exists
     os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
     
     if not os.path.exists(USER_DATA_FILE):
         print("File not found: storage/database/users.json - database is empty")
-        # Create empty file with proper structure
         default_data = {"admin": [], "hr": [], "employees": []}
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -659,7 +654,6 @@ def load_employee_database():
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print("Error reading storage/database/users.json:", str(e))
-        # Backup corrupted file
         if os.path.exists(USER_DATA_FILE):
             backup_file = USER_DATA_FILE + ".backup"
             try:
@@ -727,7 +721,7 @@ def get_dashboard_statistics():
         "present_today": present_today,
         "absent_today": absent_today,
         "employees_late": 0,
-        "on_leave": 0,
+        "on_leave": len(leave_data.get("approved", [])),
         "attendance_rate": attendance_rate,
         "rfid_scans_today": len(today_events),
         "departments": 0,
@@ -780,7 +774,8 @@ def get_dashboard_data():
         "attendance": attendance_records,
         "scans": recent_scans,
         "devices": get_online_devices(),
-        "latest_scan": recent_scans[0] if recent_scans else None
+        "latest_scan": recent_scans[0] if recent_scans else None,
+        "leaves": leave_data
     }
 
 # Return only the supported role from a user record.
@@ -834,23 +829,21 @@ def get_employee_attendance(rfid):
             attendance_record = record
             break
     
-    # Get today's data
-    today_data = None
-    time_in = None
-    time_out = None
+    # Get today's data from DTR
     am_in = None
     am_out = None
     pm_in = None
     pm_out = None
+    status = None
     
     if attendance_record:
-        for day in attendance_record.get("working_days", []):
+        for key, day in attendance_record.get("dtr", {}).items():
             if day.get("date") == today_str:
-                today_data = day
                 am_in = day.get("am_in", "")
                 am_out = day.get("am_out", "")
                 pm_in = day.get("pm_in", "")
                 pm_out = day.get("pm_out", "")
+                status = day.get("status", "")
                 break
     
     # Build response
@@ -869,11 +862,240 @@ def get_employee_attendance(rfid):
             "am_in": am_in or "",
             "am_out": am_out or "",
             "pm_in": pm_in or "",
-            "pm_out": pm_out or ""
+            "pm_out": pm_out or "",
+            "status": status or ""
         }
     }
     
     return jsonify(response_data), 200
+
+## LEAVE MANAGEMENT ROUTES ------------------------------------
+# Request leave
+@app.route("/api/request-leave", methods=["POST"])
+def request_leave():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"status": "error", "message": "Missing data"}), 400
+        
+        required = ["rfid", "start_date", "end_date", "reason", "leave_type"]
+        if not all(key in data for key in required):
+            return jsonify({
+                "status": "error", 
+                "message": "Missing required fields: rfid, start_date, end_date, reason, leave_type"
+            }), 400
+        
+        rfid = data["rfid"].strip().upper()
+        employee = employee_database.get(rfid)
+        
+        if not employee:
+            return jsonify({"status": "error", "message": "Employee not found"}), 404
+        
+        request_id = str(len(leave_data["requests"]) + 1).zfill(3)
+        
+        leave_request = {
+            "id": request_id,
+            "rfid": rfid,
+            "uid": employee.get("uid"),
+            "employeeid": employee.get("employeeid"),
+            "fullname": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+            "department": employee.get("department", ""),
+            "leave_type": data["leave_type"],
+            "start_date": data["start_date"],
+            "end_date": data["end_date"],
+            "reason": data.get("reason", ""),
+            "status": "pending",
+            "requested_at": datetime.now().isoformat(),
+            "processed_at": None,
+            "processed_by": None,
+            "days": []
+        }
+        
+        start_date = datetime.strptime(data["start_date"], "%Y-%m-%d")
+        end_date = datetime.strptime(data["end_date"], "%Y-%m-%d")
+        
+        current_date = start_date
+        while current_date <= end_date:
+            if current_date.weekday() < 5:
+                leave_request["days"].append(current_date.strftime("%Y-%m-%d"))
+            current_date += timedelta(days=1)
+        
+        leave_data["requests"].append(leave_request)
+        save_leave_data(leave_data)
+        
+        return jsonify({
+            "status": "success",
+            "message": "Leave request submitted successfully",
+            "data": leave_request
+        }), 200
+        
+    except Exception as e:
+        print(f"Leave request error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Get all leave requests (for HR/Admin)
+@app.route("/api/leave-requests", methods=["GET"])
+def get_leave_requests():
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    return jsonify({
+        "status": "success",
+        "data": leave_data
+    }), 200
+
+# Get leave requests for a specific employee
+@app.route("/api/leave-requests/<rfid>", methods=["GET"])
+def get_employee_leave_requests(rfid):
+    rfid = rfid.strip().upper()
+    
+    if rfid not in employee_database:
+        return jsonify({"status": "error", "message": "Employee not found"}), 404
+    
+    employee_requests = [
+        req for req in leave_data["requests"] if req.get("rfid") == rfid
+    ]
+    employee_approved = [
+        req for req in leave_data["approved"] if req.get("rfid") == rfid
+    ]
+    employee_rejected = [
+        req for req in leave_data["rejected"] if req.get("rfid") == rfid
+    ]
+    
+    return jsonify({
+        "status": "success",
+        "data": {
+            "requests": employee_requests,
+            "approved": employee_approved,
+            "rejected": employee_rejected
+        }
+    }), 200
+
+# Approve leave request
+@app.route("/api/approve-leave/<request_id>", methods=["POST"])
+def approve_leave(request_id):
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            user_data, error_response, status_code = verify_token()
+            if error_response:
+                return error_response, status_code
+        else:
+            if not session.get("user"):
+                return jsonify({
+                    "status": "error",
+                    "message": "Session expired or user is not logged in"
+                }), 401
+        
+        request_to_approve = None
+        request_index = -1
+        
+        for idx, req in enumerate(leave_data["requests"]):
+            if req.get("id") == request_id:
+                request_to_approve = req
+                request_index = idx
+                break
+        
+        if not request_to_approve:
+            return jsonify({"status": "error", "message": "Leave request not found"}), 404
+        
+        request_to_approve["status"] = "approved"
+        request_to_approve["processed_at"] = datetime.now().isoformat()
+        request_to_approve["processed_by"] = user_data.get("fullname") or user_data.get("username")
+        
+        leave_data["approved"].append(request_to_approve)
+        leave_data["requests"].pop(request_index)
+        
+        # Update attendance records for the approved leave days
+        uid = request_to_approve.get("uid")
+        for date_str in request_to_approve.get("days", []):
+            date_obj = datetime.strptime(date_str, "%Y-%m-%d")
+            month_key = date_obj.strftime("%Y-%m")
+            
+            for record in attendance_records:
+                if record.get("uid") == uid and record.get("month") == month_key:
+                    for key, day in record.get("dtr", {}).items():
+                        if day.get("date") == date_str:
+                            day["status"] = "on_leave"
+                            day["am_in"] = ""
+                            day["am_out"] = ""
+                            day["pm_in"] = ""
+                            day["pm_out"] = ""
+                            day["hours"] = "0.00"
+                            day["ut"] = "0.00"
+                            day["ot"] = "0.00"
+                            print(f"Marked {date_str} as ON LEAVE for {request_to_approve.get('fullname')}")
+                            break
+                    break
+        
+        save_leave_data(leave_data)
+        save_attendance_data()
+        
+        return jsonify({
+            "status": "success",
+            "message": "Leave request approved successfully",
+            "data": request_to_approve
+        }), 200
+        
+    except Exception as e:
+        print(f"Approve leave error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+# Reject leave request
+@app.route("/api/reject-leave/<request_id>", methods=["POST"])
+def reject_leave(request_id):
+    try:
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            user_data, error_response, status_code = verify_token()
+            if error_response:
+                return error_response, status_code
+        else:
+            if not session.get("user"):
+                return jsonify({
+                    "status": "error",
+                    "message": "Session expired or user is not logged in"
+                }), 401
+        
+        request_to_reject = None
+        request_index = -1
+        
+        for idx, req in enumerate(leave_data["requests"]):
+            if req.get("id") == request_id:
+                request_to_reject = req
+                request_index = idx
+                break
+        
+        if not request_to_reject:
+            return jsonify({"status": "error", "message": "Leave request not found"}), 404
+        
+        request_to_reject["status"] = "rejected"
+        request_to_reject["processed_at"] = datetime.now().isoformat()
+        request_to_reject["processed_by"] = user_data.get("fullname") or user_data.get("username")
+        
+        leave_data["rejected"].append(request_to_reject)
+        leave_data["requests"].pop(request_index)
+        
+        save_leave_data(leave_data)
+        
+        return jsonify({
+            "status": "success",
+            "message": "Leave request rejected",
+            "data": request_to_reject
+        }), 200
+        
+    except Exception as e:
+        print(f"Reject leave error: {str(e)}")
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 ## Web Routes ------------------------------------
 # Add CORS and no-cache headers to API responses.
@@ -934,7 +1156,6 @@ def login():
         print(f"Password hash: '{password_hash}'")
         print(f"Total users in database: {len(employee_database)}")
 
-        # Debug: Print all usernames
         for emp in employee_database.values():
             print(f"  User in DB: '{emp.get('username')}' with role: {emp.get('role')}")
 
@@ -947,7 +1168,6 @@ def login():
                 print(f"Input hash:  '{password_hash}'")
                 
                 if password_hash == stored_hash:
-                    # Admin and HR use the command center; employees use the main dashboard.
                     role = get_user_role(emp)
                     user_data = {
                         "uid": emp.get("uid"),
@@ -958,13 +1178,11 @@ def login():
                         "rfid": emp.get("rfid")
                     }
                     
-                    # Create JWT token
                     token = jwt.encode({
                         'user': user_data,
                         'exp': datetime.utcnow() + JWT_EXPIRATION
                     }, JWT_SECRET, algorithm='HS256')
                     
-                    # Also set session for backward compatibility
                     session.permanent = True
                     session["user"] = user_data
                     session.modified = True
@@ -1002,14 +1220,12 @@ def verify_token_route():
 # Return the currently authenticated user's session.
 @app.route("/api/session", methods=["GET"])
 def get_session():
-    # First try to get user from token
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         user_data, error_response, status_code = verify_token()
         if not error_response:
             return jsonify({"status": "success", "user": user_data}), 200
     
-    # Fallback to session
     user = session.get("user")
     if not user:
         return jsonify({
@@ -1025,16 +1241,13 @@ def get_session():
 @app.route("/api/logout", methods=["POST", "GET", "OPTIONS"])
 def logout():
     try:
-        # Clear session
         session.clear()
         
-        # Also clear any session cookies
         response = jsonify({
             "status": "success",
             "message": "Logged out successfully"
         })
         
-        # Remove the session cookie
         response.set_cookie('tapin_session', '', expires=0)
         response.set_cookie('session', '', expires=0)
         
@@ -1061,7 +1274,6 @@ def register_employee():
                 "required_fields": required
             }), 400
         
-        # Store the account in the database section selected by its role.
         role = str(data.get("role", "employee")).strip().lower()
         if role not in ["admin", "hr", "employee"]:
             return jsonify({
@@ -1074,10 +1286,8 @@ def register_employee():
         image_file = request.files.get("image")
         image_path = ""
         
-        # Ensure the directory exists
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
         
-        # Read existing database
         if os.path.exists(USER_DATA_FILE):
             with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
                 database = json.load(f)
@@ -1087,7 +1297,6 @@ def register_employee():
         username = str(data.get("username", "")).strip()
         rfid = str(data.get("rfid", "")).strip().upper()
         
-        # Check if RFID or username already exists
         if any(emp.get("rfid", "").strip().upper() == rfid or emp.get("username") == username
                for records in database.values() for emp in records):
             return jsonify({
@@ -1105,7 +1314,6 @@ def register_employee():
         role_uids = [value for value in employee_uids if uid_start <= value <= uid_end]
         uid = str(max([uid_start - 1] + role_uids) + 1).zfill(3)
 
-        # Handle image upload - save with RFID as filename in flat structure
         if image_file and image_file.filename:
             extension = os.path.splitext(image_file.filename)[1].lower()
             if extension not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
@@ -1114,11 +1322,9 @@ def register_employee():
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
             
-            # Use RFID as the filename in flat profiles folder
             rfid_filename = secure_filename(rfid)
             os.makedirs(PROFILE_STORAGE, exist_ok=True)
             
-            # Save image with full filename including extension
             filename = rfid_filename + extension
             image_file.save(os.path.join(PROFILE_STORAGE, filename))
             image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
@@ -1144,7 +1350,6 @@ def register_employee():
         }
         database.setdefault(category, []).append(employee)
         
-        # Save with backup
         if os.path.exists(USER_DATA_FILE):
             import shutil
             shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
@@ -1174,7 +1379,6 @@ def update_employee(rfid):
         rfid = rfid.strip().upper()
         data = request.form
         
-        # Ensure directory exists
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
         
         if not os.path.exists(USER_DATA_FILE):
@@ -1186,7 +1390,6 @@ def update_employee(rfid):
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
             database = json.load(f)
         
-        # Find the employee in all categories
         found = False
         updated_employee = None
         category_found = None
@@ -1210,10 +1413,8 @@ def update_employee(rfid):
                 "message": "Employee not found"
             }), 404
         
-        # Update fields
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        # Update basic fields (only if provided)
         if "lastname" in data and data.get("lastname"):
             updated_employee["lastname"] = str(data.get("lastname", "")).strip()
         if "firstname" in data and data.get("firstname"):
@@ -1233,11 +1434,9 @@ def update_employee(rfid):
         if "position" in data:
             updated_employee["position"] = str(data.get("position", "")).strip()
         
-        # Update password if provided
         if "password" in data and data.get("password"):
             updated_employee["password_hash"] = hashlib.md5(str(data.get("password", "")).encode("utf-8")).hexdigest()
         
-        # Update image if provided
         image_file = request.files.get("image")
         if image_file and image_file.filename:
             extension = os.path.splitext(image_file.filename)[1].lower()
@@ -1247,7 +1446,6 @@ def update_employee(rfid):
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
             
-            # Delete old image if exists
             old_image = updated_employee.get("image")
             if old_image:
                 old_image_path = os.path.join(BASE_DIR, old_image)
@@ -1257,17 +1455,14 @@ def update_employee(rfid):
                     except:
                         pass
             
-            # Save new image with RFID as filename
             rfid_filename = secure_filename(rfid)
             os.makedirs(PROFILE_STORAGE, exist_ok=True)
             filename = rfid_filename + extension
             image_file.save(os.path.join(PROFILE_STORAGE, filename))
             updated_employee["image"] = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
         
-        # Update timestamp
         updated_employee["timestamp_modified"] = now
         
-        # Save back to database with backup
         database[category_found][index_found] = updated_employee
         
         import shutil
@@ -1277,7 +1472,6 @@ def update_employee(rfid):
             json.dump(database, f, indent=4)
             f.write("\n")
         
-        # Update in-memory database
         employee_database[rfid] = updated_employee
         
         return jsonify({
@@ -1296,14 +1490,12 @@ def update_employee(rfid):
 # Return all current dashboard data in one authenticated response.
 @app.route("/api/dashboard-data", methods=["GET"])
 def dashboard_data():
-    # Check token first
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         user_data, error_response, status_code = verify_token()
         if error_response:
             return error_response, status_code
     else:
-        # Fallback to session
         if not session.get("user"):
             return jsonify({
                 "status": "error",
@@ -1326,7 +1518,6 @@ def dashboard_stats():
 # Serve scan feed data
 @app.route("/api/scan-feed", methods=["GET"])
 def get_scan_feed():
-    """Get the full scan feed data"""
     scan_feed_data = load_scan_feed()
     return jsonify({
         "status": "success",
@@ -1361,14 +1552,12 @@ def check_device(device_id):
 # Return persistent DTR records for a requested month.
 @app.route("/api/attendance", methods=["GET"])
 def get_attendance():
-    # Check token first
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         user_data, error_response, status_code = verify_token()
         if error_response:
             return error_response, status_code
     else:
-        # Fallback to session
         if not session.get("user"):
             return jsonify({
                 "status": "error",
@@ -1390,25 +1579,19 @@ def get_latest_rfid():
     scanned_at = latest_scan.get("scanned_at")
     employee = employee_database.get(rfid) if rfid else None
 
-    # Build employee data with full image URL
     employee_data = None
     if employee:
-        # Get the stored image path from the employee record
         stored_image = employee.get("image", "")
         image_url = ""
         
         if stored_image:
-            # If image path already exists, use it directly (it already has the correct extension)
             if stored_image.startswith("http"):
                 image_url = stored_image
             else:
-                # Use the stored image path directly - it already has the correct extension
                 image_url = f"{request.host_url}{stored_image}"
         else:
-            # Fallback: try to find the image file in storage/profiles/
             rfid_filename = employee.get("rfid", "")
             if rfid_filename:
-                # Check for common image extensions
                 image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
                 for ext in image_extensions:
                     image_path = os.path.join(PROFILE_STORAGE, rfid_filename + ext)
@@ -1426,7 +1609,6 @@ def get_latest_rfid():
             "image": image_url
         }
     
-    # Get today's attendance data for this employee if found
     attendance_data = None
     if employee:
         today = datetime.now().date().strftime("%Y-%m-%d")
@@ -1434,13 +1616,14 @@ def get_latest_rfid():
         
         for record in attendance_records:
             if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
-                for day in record.get("working_days", []):
+                for key, day in record.get("dtr", {}).items():
                     if day.get("date") == today:
                         attendance_data = {
                             "am_in": day.get("am_in", ""),
                             "am_out": day.get("am_out", ""),
                             "pm_in": day.get("pm_in", ""),
-                            "pm_out": day.get("pm_out", "")
+                            "pm_out": day.get("pm_out", ""),
+                            "status": day.get("status", "")
                         }
                         break
                 break
@@ -1503,7 +1686,6 @@ def device_ping():
 @app.route("/api/receive-rfid", methods=["POST"])
 def receive_rfid():
     try:
-        # Log the raw request for debugging
         print(f"RFID receive request received")
         print(f"Content-Type: {request.headers.get('Content-Type')}")
         print(f"Raw data: {request.get_data()}")
@@ -1529,11 +1711,9 @@ def receive_rfid():
         latest_scan["rfid"] = rfid
         latest_scan["scanned_at"] = scanned_at
         
-        # Add to scan feed (detailed log)
         employee = employee_database.get(rfid)
         found = bool(employee)
         
-        # Add to scan feed with employee details if found
         add_scan_to_feed(rfid, scanned_at, employee, found)
         
         scan_event = {
@@ -1546,14 +1726,12 @@ def receive_rfid():
         scan_result = "not_found"
         if employee:
             print(f"RFID matched: {employee['firstname']} {employee['lastname']}")
-            # Record attendance with the new logic
             record, result = record_attendance_scan(employee, scanned_at)
             scan_result = result
             print(f"Attendance record result: {result}")
+            save_attendance_data()
         else:
             print(f"RFID not found in database: {rfid}")
-
-        save_attendance_data()
 
         response_data = {
             "status": "success",
@@ -1561,7 +1739,7 @@ def receive_rfid():
             "rfid": rfid,
             "scanned_at": scanned_at,
             "found": found,
-            "scan_result": scan_result  # success, skipped, already_exists, not_found
+            "scan_result": scan_result
         }
         
         if employee:
@@ -1582,7 +1760,6 @@ def receive_rfid():
         }), 500
 
 ## Error Handlers ------------------------------------
-# Return a consistent JSON response for unknown routes.
 @app.errorhandler(404)
 def page_not_found(e):
     return jsonify({
@@ -1602,6 +1779,10 @@ def page_not_found(e):
 @app.route("/api/receive-rfid", methods=["OPTIONS"])
 @app.route("/api/device-ping", methods=["OPTIONS"])
 @app.route("/api/scan-feed", methods=["OPTIONS"])
+@app.route("/api/request-leave", methods=["OPTIONS"])
+@app.route("/api/leave-requests", methods=["OPTIONS"])
+@app.route("/api/approve-leave/<request_id>", methods=["OPTIONS"])
+@app.route("/api/reject-leave/<request_id>", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
@@ -1614,7 +1795,5 @@ def handle_options():
 
 ## Main ------------------------------------
 if __name__ == "__main__":
-    # Initialize attendance records for all users at startup
-    # This only ADDS missing records, never overwrites existing ones
     initialize_attendance_records()
     app.run(host='0.0.0.0', port=5000, debug=True)

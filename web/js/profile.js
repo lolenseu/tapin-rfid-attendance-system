@@ -94,7 +94,7 @@ function createVersionNotification() {
                     Beta Version
                 </div>
                 <div style="font-size: 14px; color: #0f172a; font-weight: 600; line-height: 1.3;">
-                    ${versionData || 'v0.1.39'}
+                    ${versionData || 'v0.1.40'}
                 </div>
                 <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
                     System in development
@@ -141,7 +141,7 @@ function createVersionNotification() {
 
 async function fetchVersion() {
     try {
-        const response = await fetch(VERSION_URL);
+        const response = await fetch(VERSION_URL + '?t=' + Date.now());
         if (response.ok) {
             const text = await response.text();
             const lines = text.split('\n').filter(line => line.trim() !== '');
@@ -157,11 +157,11 @@ async function fetchVersion() {
                 versionData = lines[0].trim();
             }
         } else {
-            versionData = 'v0.1.39';
+            versionData = 'v0.1.40';
         }
     } catch (error) {
         console.warn('Could not fetch version:', error);
-        versionData = 'v0.1.39';
+        versionData = 'v0.1.40';
     }
     
     createVersionNotification();
@@ -464,7 +464,7 @@ async function fetchData() {
 function startPolling() {
     loadLogo();
     loadProfileIcon();
-    fetchVersion();
+    fetchVersion(); // Fetch version once when page loads
     fetchData();
     setInterval(fetchData, POLL_INTERVAL);
 }
