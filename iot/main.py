@@ -193,14 +193,50 @@ def post_data(rfid_str):
         )
         
         s.write(request.encode())
-        response = s.read(200)
+        response = s.read(300)  # Increased buffer to read full response
         s.close()
         
+        # Parse the response to check if attendance was recorded
+        response_str = response.decode('utf-8')
+        tprint(PRINTSTATUS.INFO, f"Response: {response_str[:100]}")  # Print first 100 chars
+        
+        # Check for HTTP 200 and 'success' in response
         if b"200" in response:
-            tprint(PRINTSTATUS.SUCCESS, "RFID sent successfully (200 OK)")
-            return True
+            # Try to parse JSON response
+            try:
+                # Extract JSON part from response
+                json_start = response_str.find('{')
+                if json_start != -1:
+                    json_str = response_str[json_start:]
+                    response_data = json.loads(json_str)
+                    scan_result = response_data.get('scan_result', 'unknown')
+                    found = response_data.get('found', False)
+                    
+                    if found:
+                        if scan_result == 'success':
+                            tprint(PRINTSTATUS.SUCCESS, f"Attendance recorded: {scan_result}")
+                            return True
+                        elif scan_result == 'skipped':
+                            tprint(PRINTSTATUS.WARN, "Attendance skipped (cooldown or on leave)")
+                            return True
+                        elif scan_result == 'already_exists':
+                            tprint(PRINTSTATUS.WARN, "Attendance already exists for today")
+                            return True
+                        else:
+                            tprint(PRINTSTATUS.WARN, f"Scan result: {scan_result}")
+                            return True
+                    else:
+                        tprint(PRINTSTATUS.WARN, "RFID not found in database")
+                        return False
+                else:
+                    tprint(PRINTSTATUS.SUCCESS, "RFID sent successfully")
+                    return True
+            except Exception as json_err:
+                tprint(PRINTSTATUS.WARN, f"JSON parse error: {json_err}")
+                # Still consider it a success if we got 200 OK
+                return True
         else:
-            tprint(PRINTSTATUS.WARN, f"RFID send returned: {response[:50]}")
+            tprint(PRINTSTATUS.WARN, f"RFID send returned: {response[:100]}")
             return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
