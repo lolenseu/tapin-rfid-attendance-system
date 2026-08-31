@@ -32,10 +32,26 @@ def create_ssl_socket(sock):
     """Create SSL socket with reduced buffer size"""
     try:
         # Try to set max_content_len to reduce buffer size (4KB instead of 16KB)
-        return ssl.wrap_socket(sock, max_content_len=4096)
+        return ssl.wrap_socket(
+            sock,
+            server_hostname=API_ADDR,
+            max_content_len=4096
+        )
     except TypeError:
         # Fallback for older MicroPython versions
-        return ssl.wrap_socket(sock)
+        try:
+            return ssl.wrap_socket(
+                sock,
+                server_hostname=API_ADDR
+            )
+        except TypeError:
+            try:
+                return ssl.wrap_socket(
+                    sock,
+                    max_content_len=4096
+                )
+            except TypeError:
+                return ssl.wrap_socket(sock)
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"SSL wrap error: {str(e)}")
         raise
@@ -64,29 +80,42 @@ def check_wifi_connection():
 def check_internet_connection():
     """Check if device has internet access by pinging a reliable server"""
     try:
-        import socket
-        socket.getaddrinfo("8.8.8.8", 53)
+        usocket.getaddrinfo("8.8.8.8", 53)
+        gc.collect()
         return True
     except:
         try:
-            socket.getaddrinfo("google.com", 80)
+            usocket.getaddrinfo("google.com", 80)
+            gc.collect()
             return True
         except:
+            gc.collect()
             return False
 
 def check_api_connectivity():
     """Check if API is reachable using raw socket with SSL"""
+    s = None
+
     try:
         free_mem = optimize_memory()
         tprint(PRINTSTATUS.INFO, f"Free memory before API check: {free_mem} bytes")
         
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        gc.collect()
+
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
+
+        del addr
+        gc.collect()
+
         s = create_ssl_socket(s)
+        gc.collect()
         
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
+        gc.collect()
+
         request = (
             "POST /api/device-ping HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
@@ -95,22 +124,33 @@ def check_api_connectivity():
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
-            + data
         )
         
-        s.write(request.encode())
-        response = s.read(128)
-        s.close()
-        
-        # Clean up after SSL
+        s.write(request)
+        s.write(data)
+
+        del request
+        del data
         gc.collect()
-        
-        if b"200" in response or b"OK" in response:
+
+        response = s.read(128)
+
+        if response and (b"200" in response or b"OK" in response):
             return True
+
         return False
+
     except Exception as e:
         tprint(PRINTSTATUS.WARN, f"API check failed: {e}")
         return False
+
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except:
+                pass
+        gc.collect()
 
 def restart_device():
     """Restart the device"""
@@ -138,6 +178,7 @@ def restart_device():
         pass
     
     time.sleep_ms(2000)
+    gc.collect()
     machine.reset()
 
 def send_ping():
@@ -149,16 +190,27 @@ def send_ping():
     free_mem = optimize_memory()
     tprint(PRINTSTATUS.INFO, f"Free memory before ping: {free_mem} bytes")
         
+    s = None
+
     try:
         tprint(PRINTSTATUS.INFO, "Sending ping...")
         
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        gc.collect()
+
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
+
+        del addr
+        gc.collect()
+
         s = create_ssl_socket(s)
+        gc.collect()
         
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
+        gc.collect()
+
         request = (
             "POST /api/device-ping HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
@@ -167,36 +219,35 @@ def send_ping():
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
-            + data
         )
         
-        s.write(request.encode())
-        
-        response = b""
-        for _ in range(30):
-            try:
-                chunk = s.read(1)
-                if not chunk:
-                    break
-                response += chunk
-                if b"200" in response or b"OK" in response:
-                    break
-            except:
-                break
-        
-        s.close()
-        
+        s.write(request)
+        s.write(data)
+
+        del request
+        del data
         gc.collect()
         
-        if b"200" in response or b"OK" in response:
+        response = s.read(128)
+
+        if response and (b"200" in response or b"OK" in response):
             tprint(PRINTSTATUS.SUCCESS, "Ping OK")
             return True
         else:
             tprint(PRINTSTATUS.WARN, f"Ping response: {response[:30]}")
             return False
+
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Ping error: {str(e)}")
         return False
+
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except:
+                pass
+        gc.collect()
 
 def post_data(rfid_str):
     """Send RFID data using HTTPS with SSL and reduced buffer"""
@@ -217,15 +268,27 @@ def post_data(rfid_str):
         "rfid": rfid_str,
         "scanned_at": scanned_time
     })
+
+    gc.collect()
     
+    s = None
+
     try:
         tprint(PRINTSTATUS.INFO, f"Sending RFID: {rfid_str}")
         tprint(PRINTSTATUS.INFO, f"Data: {data}")
+
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        gc.collect()
+
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(8)
         s.connect(addr)
+
+        del addr
+        gc.collect()
+
         s = create_ssl_socket(s)
+        gc.collect()
         
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
@@ -235,26 +298,17 @@ def post_data(rfid_str):
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
-            + data
         )
         
-        s.write(request.encode())
-        
-        response = b""
-        for _ in range(50):
-            try:
-                chunk = s.read(1)
-                if not chunk:
-                    break
-                response += chunk
-                if b"200" in response or b"OK" in response:
-                    break
-            except:
-                break
-        
-        s.close()
-        
+        s.write(request)
+        s.write(data)
+
+        del request
+        del data
+        del scanned_time
         gc.collect()
+        
+        response = s.read(128)
         
         try:
             response_str = response.decode('utf-8', errors='ignore')
@@ -262,7 +316,7 @@ def post_data(rfid_str):
         except:
             tprint(PRINTSTATUS.INFO, f"Full response: {response[:100]}")
         
-        if b"200" in response or b"OK" in response:
+        if response and (b"200" in response or b"OK" in response):
             tprint(PRINTSTATUS.SUCCESS, "RFID sent OK")
             return True
         else:
@@ -276,6 +330,14 @@ def post_data(rfid_str):
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
         return False
+
+    finally:
+        if s is not None:
+            try:
+                s.close()
+            except:
+                pass
+        gc.collect()
 
 def sync_manila_time():
     """Sync time from internet and adjust to Manila (UTC+8)"""
@@ -293,9 +355,11 @@ def sync_manila_time():
                 t = time.localtime(time.time() + 8 * 3600)
                 machine.RTC().datetime((t[0], t[1], t[2], t[6] + 1, t[3], t[4], t[5], 0))
                 tprint(PRINTSTATUS.SUCCESS, f"Manila Time Synced via {server}")
+                gc.collect()
                 return True
             except Exception as e:
                 tprint(PRINTSTATUS.WARN, f"NTP {server} failed: {str(e)}")
+                gc.collect()
                 continue
         
         tprint(PRINTSTATUS.ERROR, "All NTP servers failed")
