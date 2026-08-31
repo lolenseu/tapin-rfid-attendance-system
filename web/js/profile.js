@@ -181,7 +181,28 @@ function formatDate(isoString) {
     }
 }
 
-function formatTime(isoString) {
+function formatTime(timeStr) {
+    if (!timeStr) return '--';
+    // If time is in HH:MM:SS format, convert to 12-hour format
+    if (timeStr.includes(':')) {
+        try {
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+                let hour = parseInt(parts[0]);
+                const minute = parts[1];
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                hour = hour % 12 || 12;
+                return `${hour}:${minute} ${ampm}`;
+            }
+            return timeStr;
+        } catch {
+            return timeStr;
+        }
+    }
+    return timeStr;
+}
+
+function formatTimeFromISO(isoString) {
     if (!isoString) return '--';
     try {
         const d = new Date(isoString);
@@ -260,14 +281,22 @@ function renderEmployee(emp, attendance) {
     const initials = getInitials(emp.firstname, emp.lastname);
     const role = emp.role || 'employee';
     const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
-    const scannedTime = currentData.scanned_at ? formatTime(currentData.scanned_at) : '--';
+    const scannedTime = currentData.scanned_at ? formatTimeFromISO(currentData.scanned_at) : '--';
     const currentTime = getCurrentTime();
     const imageUrl = getImageUrl(emp.image);
     
-    const amIn = attendance && attendance.am_in ? attendance.am_in : '--';
-    const amOut = attendance && attendance.am_out ? attendance.am_out : '--';
-    const pmIn = attendance && attendance.pm_in ? attendance.pm_in : '--';
-    const pmOut = attendance && attendance.pm_out ? attendance.pm_out : '--';
+    // Get attendance times - format them properly
+    const amIn = attendance && attendance.am_in ? formatTime(attendance.am_in) : '--';
+    const amOut = attendance && attendance.am_out ? formatTime(attendance.am_out) : '--';
+    const pmIn = attendance && attendance.pm_in ? formatTime(attendance.pm_in) : '--';
+    const pmOut = attendance && attendance.pm_out ? formatTime(attendance.pm_out) : '--';
+    const status = attendance && attendance.status ? attendance.status : '';
+
+    // Build status badge if on leave
+    let statusBadge = '';
+    if (status === 'on_leave') {
+        statusBadge = `<span class="status-badge leave">On Leave</span>`;
+    }
 
     const currentHtml = employeeCard.innerHTML;
     const newHtml = `
@@ -278,6 +307,7 @@ function renderEmployee(emp, attendance) {
             <div class="profile-info">
                 <div class="fullname">${fullname || 'Unknown'}</div>
                 <span class="role-badge">${roleLabel}</span>
+                ${statusBadge}
                 <div class="id-row">
                     <span>
                         <span class="label">Employee ID:</span>
@@ -314,7 +344,7 @@ function renderEmployee(emp, attendance) {
             <div class="time-row">
                 <div class="time-item">
                     <div class="label">Current Time</div>
-                    <div class="value" id="currentTimeDisplay">${currentTime}</div>
+                    <div class="value live-time" id="currentTimeDisplay">${currentTime}</div>
                 </div>
                 <div class="time-item">
                     <div class="label">Last Scan</div>
@@ -327,6 +357,7 @@ function renderEmployee(emp, attendance) {
     if (currentHtml !== newHtml) {
         employeeCard.innerHTML = newHtml;
     } else {
+        // Update only the time values
         const amInElem = document.getElementById('amTimeIn');
         const amOutElem = document.getElementById('amTimeOut');
         const pmInElem = document.getElementById('pmTimeIn');
@@ -342,6 +373,7 @@ function renderEmployee(emp, attendance) {
         if (currentTimeElem) currentTimeElem.textContent = currentTime;
     }
 
+    // Keep current time updating
     const currentTimeDisplay = document.getElementById('currentTimeDisplay');
     if (currentTimeDisplay) {
         if (window._timeInterval) {
@@ -355,7 +387,7 @@ function renderEmployee(emp, attendance) {
 }
 
 function renderUnknownEmployee(rfid, scannedAtTime) {
-    const scannedTime = scannedAtTime ? formatTime(scannedAtTime) : '--';
+    const scannedTime = scannedAtTime ? formatTimeFromISO(scannedAtTime) : '--';
     const currentTime = getCurrentTime();
 
     const currentHtml = employeeCard.innerHTML;
@@ -403,7 +435,7 @@ function renderUnknownEmployee(rfid, scannedAtTime) {
             <div class="time-row">
                 <div class="time-item">
                     <div class="label">Current Time</div>
-                    <div class="value" id="currentTimeDisplayUnknown">${currentTime}</div>
+                    <div class="value live-time" id="currentTimeDisplayUnknown">${currentTime}</div>
                 </div>
                 <div class="time-item">
                     <div class="label">Last Scan</div>

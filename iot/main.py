@@ -20,31 +20,17 @@ buzzer = None
 lcd = None
 rfid = None
 
-# Track when operations are in progress to prevent multiple simultaneous attempts
-operation_in_progress = False
-
-# Track last loop time to detect hangs - will be updated in main loop
-last_loop_time = 0
-
-# Global flag for time sync
-time_synced = False
-time_sync_in_progress = False
-
-# Track last loop iteration for watchdog
-last_loop_iteration = 0
-
 ## Functions
 def check_wifi_connection():
-    """Check if WiFi is connected and reconnect if needed - NON-BLOCKING"""
+    """Check if WiFi is connected and reconnect if needed"""
     wlan = network.WLAN(network.STA_IF)
     if not wlan.isconnected():
         tprint(PRINTSTATUS.WARN, "WiFi disconnected, attempting to reconnect...")
         wlan.active(True)
         wlan.connect(param.WIFI_SSID, param.WIFI_PASSWORD)
-        timeout = 20  # Reduced from 30 to 20
-        # Non-blocking wait with small sleep
+        timeout = 30
         while not wlan.isconnected() and timeout > 0:
-            time.sleep_ms(50)  # Reduced from 100ms to 50ms
+            time.sleep_ms(500)
             timeout -= 1
         if wlan.isconnected():
             tprint(PRINTSTATUS.SUCCESS, "WiFi reconnected!")
@@ -56,41 +42,27 @@ def check_wifi_connection():
     return True
 
 def check_internet_connection():
-    """Check if device has internet access - NON-BLOCKING with short timeout"""
+    """Check if device has internet access by pinging a reliable server"""
     try:
         import socket
-        # Use non-blocking socket with timeout
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(1)  # 1 second timeout
-        sock.connect(("8.8.8.8", 53))
-        sock.close()
+        socket.getaddrinfo("8.8.8.8", 53)
         return True
     except:
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(1)
-            sock.connect(("google.com", 80))
-            sock.close()
+            socket.getaddrinfo("google.com", 80)
             return True
         except:
             return False
 
 def check_api_connectivity():
-    """Check if API is reachable using raw socket with SSL - with shorter timeout"""
+    """Check if API is reachable using raw socket with SSL"""
     try:
-        # DNS lookup with timeout protection
-        addr = None
-        try:
-            addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
-        except:
-            return False
-        
+        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(1.5)  # Reduced from 2 to 1.5 seconds
+        s.settimeout(10)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(1.5)  # Set timeout on SSL socket too
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
@@ -111,8 +83,7 @@ def check_api_connectivity():
         if b"200" in response:
             return True
         return False
-    except Exception as e:
-        # Silent fail for API check to avoid log spam
+    except:
         return False
 
 def restart_device():
@@ -144,35 +115,17 @@ def restart_device():
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL - NON-BLOCKING with timeout"""
-    global operation_in_progress
-    
-    # Prevent overlapping operations
-    if operation_in_progress:
-        tprint(PRINTSTATUS.WARN, "Operation already in progress, skipping ping")
-        return False
-    
+    """Send device ping using raw socket with SSL"""
     if not check_wifi_connection():
         return False
-    
-    operation_in_progress = True
         
     try:
-        # DNS lookup with timeout protection
-        addr = None
-        try:
-            addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
-        except:
-            tprint(PRINTSTATUS.ERROR, "DNS lookup failed")
-            operation_in_progress = False
-            return False
-            
+        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(1.5)  # Reduced from 2 to 1.5 seconds
+        s.settimeout(10)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(1.5)  # Set timeout on SSL socket
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
@@ -193,30 +146,18 @@ def send_ping():
         
         if b"200" in response:
             tprint(PRINTSTATUS.INFO, "Ping sent: Device alive")
-            operation_in_progress = False
             return True
         else:
             tprint(PRINTSTATUS.WARN, f"Ping returned: {response[:50]}")
-            operation_in_progress = False
             return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Ping failed: {str(e)}")
-        operation_in_progress = False
         return False
 
 def post_data(rfid_str):
-    """Send RFID data using raw socket with SSL - NON-BLOCKING with timeout"""
-    global operation_in_progress
-    
-    # Prevent overlapping operations
-    if operation_in_progress:
-        tprint(PRINTSTATUS.WARN, "Operation already in progress, skipping RFID send")
-        return False
-    
+    """Send RFID data using raw socket with SSL"""
     if not check_wifi_connection():
         return False
-    
-    operation_in_progress = True
         
     t = time.localtime()
     scanned_time = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
@@ -234,21 +175,12 @@ def post_data(rfid_str):
         tprint(PRINTSTATUS.INFO, f"Sending RFID: https://{API_ADDR}/api/receive-rfid")
         tprint(PRINTSTATUS.INFO, f"Data: {data}")
         
-        # DNS lookup with timeout protection
-        addr = None
-        try:
-            addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
-        except:
-            tprint(PRINTSTATUS.ERROR, "DNS lookup failed")
-            operation_in_progress = False
-            return False
-            
+        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(1.5)  # Reduced from 2 to 1.5 seconds
+        s.settimeout(10)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(1.5)  # Set timeout on SSL socket
         
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
@@ -266,69 +198,46 @@ def post_data(rfid_str):
         
         if b"200" in response:
             tprint(PRINTSTATUS.SUCCESS, "RFID sent successfully (200 OK)")
-            operation_in_progress = False
             return True
         else:
             tprint(PRINTSTATUS.WARN, f"RFID send returned: {response[:50]}")
-            operation_in_progress = False
             return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
-        operation_in_progress = False
         return False
 
 def sync_manila_time():
-    """Sync time from internet and adjust to Manila (UTC+8) - NON-BLOCKING with timeout"""
-    global time_synced, time_sync_in_progress
-    
-    # Prevent multiple sync attempts
-    if time_sync_in_progress:
-        return False
-    
+    """Sync time from internet and adjust to Manila (UTC+8)"""
     if not check_wifi_connection():
         return False
-    
-    time_sync_in_progress = True
         
     try:
-        # Try multiple NTP servers with timeout
+        # Try multiple NTP servers
         ntp_servers = ["pool.ntp.org", "time.google.com", "time.windows.com", "ntp.aliyun.com"]
         for server in ntp_servers:
             try:
                 tprint(PRINTSTATUS.INFO, f"Trying NTP: {server}")
-                # Set a shorter timeout for NTP
                 ntptime.host = server
-                # Use machine timer for timeout
-                start_time = time.ticks_ms()
                 ntptime.settime()
-                # Check if it took too long
-                if time.ticks_diff(time.ticks_ms(), start_time) > 5000:
-                    tprint(PRINTSTATUS.WARN, f"NTP {server} took too long, skipping")
-                    continue
-                    
                 t = time.localtime(time.time() + 8 * 3600)
                 machine.RTC().datetime((t[0], t[1], t[2], t[6] + 1, t[3], t[4], t[5], 0))
                 tprint(PRINTSTATUS.SUCCESS, f"Manila Time Synced via {server}")
-                time_synced = True
-                time_sync_in_progress = False
                 return True
             except Exception as e:
                 tprint(PRINTSTATUS.WARN, f"NTP {server} failed: {str(e)}")
                 continue
         
         tprint(PRINTSTATUS.ERROR, "All NTP servers failed")
-        time_sync_in_progress = False
         return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Time Sync Failed: {str(e)}")
-        time_sync_in_progress = False
         return False
 
 def monitor_internet_and_restart():
-    """Monitor internet and restart if no connection - NON-BLOCKING with timeout protection"""
+    """Monitor internet and restart if no connection"""
     global no_internet_count
     
-    # Quick WiFi check first - non-blocking
+    # Check WiFi
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "No WiFi connection!")
         no_internet_count += 1
@@ -336,48 +245,17 @@ def monitor_internet_and_restart():
             restart_device()
         return False
     
-    # Check internet connectivity - quick check with timeout
-    try:
-        # Use a timer to prevent hanging
-        start_time = time.ticks_ms()
-        has_internet = check_internet_connection()
-        if time.ticks_diff(time.ticks_ms(), start_time) > 2000:
-            tprint(PRINTSTATUS.WARN, "Internet check timeout")
-            no_internet_count += 1
-            if no_internet_count >= 3:
-                restart_device()
-            return False
-            
-        if not has_internet:
-            tprint(PRINTSTATUS.ERROR, "No internet connection!")
-            no_internet_count += 1
-            if no_internet_count >= 3: 
-                restart_device()
-            return False
-    except:
+    # Check internet connectivity
+    if not check_internet_connection():
+        tprint(PRINTSTATUS.ERROR, "No internet connection!")
         no_internet_count += 1
-        if no_internet_count >= 3:
+        if no_internet_count >= 3: 
             restart_device()
         return False
     
-    # Check API connectivity - with timeout protection
-    try:
-        start_time = time.ticks_ms()
-        api_ok = check_api_connectivity()
-        if time.ticks_diff(time.ticks_ms(), start_time) > 2000:
-            tprint(PRINTSTATUS.WARN, "API check timeout")
-            no_internet_count += 1
-            if no_internet_count >= 3:
-                restart_device()
-            return False
-            
-        if not api_ok:
-            tprint(PRINTSTATUS.ERROR, "API not reachable!")
-            no_internet_count += 1
-            if no_internet_count >= 3:
-                restart_device()
-            return False
-    except:
+    # Check API connectivity
+    if not check_api_connectivity():
+        tprint(PRINTSTATUS.ERROR, "API not reachable!")
         no_internet_count += 1
         if no_internet_count >= 3:
             restart_device()
@@ -485,34 +363,14 @@ def reset_lcd_to_ready():
     except:
         pass
 
-def read_rfid_nonblocking():
-    """Read RFID in a truly non-blocking way - single attempt with timeout"""
-    global rfid
-    
-    try:
-        # Single quick attempt to read RFID
-        # Check if RFID is ready without blocking
-        uid = rfid.get_uid()
-        if uid and len(uid) >= 4:
-            return uid
-        return None
-    except Exception as e:
-        # Silent fail for RFID read errors
-        return None
-
 ## Main function
 def main():
-    global buzzer, lcd, rfid, no_internet_count, operation_in_progress, last_loop_time
-    global time_synced, time_sync_in_progress
+    global buzzer, lcd, rfid, no_internet_count
     
     # Initialize counter
     no_internet_count = 0
-    operation_in_progress = False
-    last_loop_time = time.ticks_ms()
-    time_synced = False
-    time_sync_in_progress = False
 
-    # Check WiFi first - with timeout
+    # Check WiFi first
     tprint(PRINTSTATUS.INFO, "Checking WiFi connection...")
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "WiFi not connected! Restarting...")
@@ -545,11 +403,8 @@ def main():
         # Return to boot.py to count up
         return
 
-    # Sync Manila Time - do it once, but don't block main loop if it fails
-    try:
-        sync_manila_time()
-    except:
-        pass
+    # Sync Manila Time
+    sync_manila_time()
 
     # NORMAL OPERATION
     last_rfid = None                                # Track last scanned RFID to prevent duplicates
@@ -563,15 +418,6 @@ def main():
     last_ping = time.ticks_ms()                     # Track last ping time
     last_time_update = time.ticks_ms()              # Track last time update for LCD
     last_internet_check = time.ticks_ms()           # Track last internet check time
-    last_loop_time = time.ticks_ms()                # Track last loop time to detect hangs
-    
-    # Separate counters for staggered operations
-    internet_check_interval = 30000  # 30 seconds
-    ping_interval = param.PING_INTERVAL
-    time_update_interval = 1000  # 1 second
-    
-    # Track consecutive loop iterations
-    loop_iteration = 0
 
     tprint(PRINTSTATUS.SUCCESS, "Device Ready.")
     
@@ -587,68 +433,45 @@ def main():
     # --- MAIN LOOP ---
     while True:
         current_time = time.ticks_ms()
-        loop_iteration += 1
         
-        # Watchdog: If loop hangs for more than 10 seconds, force reset
-        if time.ticks_diff(current_time, last_loop_time) > 10000:
-            tprint(PRINTSTATUS.WARN, "Loop hung detected! Forcing reset...")
-            time.sleep_ms(500)  # Small delay before reset
-            machine.reset()
-        last_loop_time = current_time
-        
-        # 1. Check internet connectivity every 30 seconds - NON-BLOCKING
-        if time.ticks_diff(current_time, last_internet_check) >= internet_check_interval:
+        # 1. Check internet connectivity every 30 seconds - RESTART IF NO INTERNET
+        if time.ticks_diff(current_time, last_internet_check) >= 30000:  # 30 seconds
             last_internet_check = current_time
-            # Wrap in try-except to prevent monitor_internet_and_restart from hanging
-            try:
-                # Use a timeout mechanism - if it takes more than 3 seconds, skip
-                start_check = time.ticks_ms()
-                monitor_internet_and_restart()
-                if time.ticks_diff(time.ticks_ms(), start_check) > 3000:
-                    tprint(PRINTSTATUS.WARN, "Internet check took too long, skipping")
-            except Exception as e:
-                tprint(PRINTSTATUS.ERROR, f"Internet check error: {e}")
+            monitor_internet_and_restart()  # This will restart if no internet
 
-        # 2. Send ping - only if not already in an operation
-        if time.ticks_diff(current_time, last_ping) >= ping_interval and not operation_in_progress:
+        # 2. Send ping
+        if time.ticks_diff(current_time, last_ping) >= param.PING_INTERVAL:
             last_ping = current_time
-            try:
-                # Use a timeout mechanism
-                start_ping = time.ticks_ms()
-                if not send_ping():
-                    ping_retry_count += 1
-                    if ping_retry_count >= max_ping_retries:
-                        tprint(PRINTSTATUS.WARN, "Multiple ping failures - restarting...")
-                        time.sleep_ms(1000)
-                        machine.reset()
-                else:
-                    ping_retry_count = 0
-                if time.ticks_diff(time.ticks_ms(), start_ping) > 3000:
-                    tprint(PRINTSTATUS.WARN, "Ping took too long")
-            except Exception as e:
-                tprint(PRINTSTATUS.ERROR, f"Ping attempt error: {e}")
+            if not send_ping():
+                ping_retry_count += 1
+                if ping_retry_count >= max_ping_retries:
+                    tprint(PRINTSTATUS.WARN, "Multiple ping failures - restarting...")
+                    time.sleep_ms(1000)
+                    machine.reset()
+            else:
+                ping_retry_count = 0
 
         # 3. Update Time — AM/PM format
-        if time.ticks_diff(current_time, last_time_update) >= time_update_interval:
+        if time.ticks_diff(current_time, last_time_update) >= 1000:
             last_time_update = current_time
-            try:
-                t = time.localtime()
-                hour24 = t[3]
+            t = time.localtime()
+            hour24 = t[3]
 
-                if hour24 == 0:
-                    hour12 = 12
-                    period = "AM"
-                elif hour24 < 12:
-                    hour12 = hour24
-                    period = "AM"
-                elif hour24 == 12:
-                    hour12 = 12
-                    period = "PM"
-                else:
-                    hour12 = hour24 - 12
-                    period = "PM"
-                    
-                time_str = "Time:{:02d}:{:02d}:{:02d} {}".format(hour12, t[4], t[5], period)
+            if hour24 == 0:
+                hour12 = 12
+                period = "AM"
+            elif hour24 < 12:
+                hour12 = hour24
+                period = "AM"
+            elif hour24 == 12:
+                hour12 = 12
+                period = "PM"
+            else:
+                hour12 = hour24 - 12
+                period = "PM"
+                
+            time_str = "Time:{:02d}:{:02d}:{:02d} {}".format(hour12, t[4], t[5], period)
+            try:
                 lcd.move_to(0, 0)
                 lcd.putstr(time_str)
             except:
@@ -670,11 +493,9 @@ def main():
                     # Reset last_rfid so the next scan shows as new
                     last_rfid = None
 
-        # 4. Read RFID - TRULY NON-BLOCKING (single attempt, no loop)
+        # 4. Read RFID
         try:
-            # Single attempt to read RFID - no loop, no blocking
-            uid = read_rfid_nonblocking()
-            
+            uid = rfid.get_uid()
             if uid and len(uid) >= 4:
                 rfid_str = "".join("{:02X}".format(b) for b in uid)
 
@@ -690,9 +511,7 @@ def main():
                         tprint(PRINTSTATUS.INFO, f"Cooldown expired for RFID: {rfid_str}")
                     else:
                         remaining = (timer_delay - time_since_last_scan) // 1000
-                        # Only log every 5 seconds to reduce spam
-                        if remaining % 5 == 0:
-                            tprint(PRINTSTATUS.INFO, f"Cooldown active for RFID: {rfid_str} ({remaining}s remaining)")
+                        tprint(PRINTSTATUS.INFO, f"Cooldown active for RFID: {rfid_str} ({remaining}s remaining)")
                 
                 # Process RFID if it's new OR cooldown expired
                 if is_new_rfid or is_cooldown_expired:
@@ -701,15 +520,15 @@ def main():
                     last_scan_time = current_time  # Update last scan time for display reset
                     tprint(PRINTSTATUS.INFO, "RFID: " + rfid_str)
 
-                    # Buzzer beep after successful scan - NON-BLOCKING
+                    # Buzzer beep after successful scan
                     try:
                         buzzer.on()
-                        time.sleep_ms(100)  # Reduced from 150ms to 100ms
+                        time.sleep_ms(150)
                         buzzer.off()
                     except:
                         pass
 
-                    # Display RFID on LCD - NON-BLOCKING
+                    # Display RFID on LCD
                     display_str = "RFID:" + rfid_str
                     while len(display_str) < 14:
                         display_str = display_str + " "
@@ -719,46 +538,25 @@ def main():
                     except:
                         pass
 
-                    # Send RFID data to API - NON-BLOCKING with timeout
-                    # Quick WiFi check first
+                    # Send RFID data to API - Show status on LCD
                     if check_wifi_connection() and check_internet_connection():
-                        # Send data but don't block - use timeout
-                        try:
-                            start_send = time.ticks_ms()
-                            if post_data(rfid_str):
-                                # Success - show OK (only when status 200)
-                                try:
-                                    lcd.move_to(14, 1)
-                                    lcd.putstr("OK")
-                                    last_status_time = current_time  # Track when status was shown
-                                except:
-                                    pass
-                            else:
-                                # Failed - show ER (for any non-200 response)
-                                try:
-                                    lcd.move_to(14, 1)
-                                    lcd.putstr("ER")
-                                    last_status_time = current_time  # Track when status was shown
-                                except:
-                                    pass
-                            # If send takes too long, mark as error
-                            if time.ticks_diff(time.ticks_ms(), start_send) > 3000:
-                                try:
-                                    lcd.move_to(14, 1)
-                                    lcd.putstr("! ")
-                                    last_status_time = current_time
-                                except:
-                                    pass
-                        except:
-                            # Exception during send - show error
+                        if post_data(rfid_str):
+                            # Success - show OK (only when status 200)
                             try:
                                 lcd.move_to(14, 1)
-                                lcd.putstr("! ")
-                                last_status_time = current_time
+                                lcd.putstr("OK")
+                                last_status_time = current_time  # Track when status was shown
+                            except:
+                                pass
+                        else:
+                            # Failed - show ER (for any non-200 response)
+                            try:
+                                lcd.move_to(14, 1)
+                                lcd.putstr("ER")
+                                last_status_time = current_time  # Track when status was shown
                             except:
                                 pass
                     else:
-                        # No internet - show error
                         try:
                             lcd.move_to(14, 1)
                             lcd.putstr("! ")
@@ -767,15 +565,8 @@ def main():
                             pass
 
         except Exception as e:
-            # Silent fail for RFID read errors to prevent logging spam
-            # Only log if it's not a timeout error
-            if "timeout" not in str(e).lower():
-                # Only log every 10 iterations to prevent spam
-                if loop_iteration % 10 == 0:
-                    tprint(PRINTSTATUS.ERROR, f"RFID read error: {str(e)}")
+            tprint(PRINTSTATUS.ERROR, f"RFID read error: {str(e)}")
 
-        # Small delay to prevent watchdog trigger - reduced from 50ms to 20ms
-        time.sleep_ms(20)
+        time.sleep_ms(200)
 
-# Run main
 main()

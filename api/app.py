@@ -55,14 +55,18 @@ PROFILE_STORAGE = os.path.join(BASE_DIR, "storage", "profiles")
 # Scan feed storage - keeps detailed logs of all scans
 SCAN_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_feed.json")
 
-# Leave requests storage
-LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "leaves.json")
+# Scan events storage - keeps raw scan events (moved to feed)
+SCAN_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_events.json")
+
+# Leave requests storage (moved to feed)
+LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves.json")
 
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
 
 # Debug: Print paths to verify
@@ -71,6 +75,7 @@ print(f"USER_DATA_FILE: {USER_DATA_FILE}")
 print(f"ATTENDANCE_DATA_FILE: {ATTENDANCE_DATA_FILE}")
 print(f"PROFILE_STORAGE: {PROFILE_STORAGE}")
 print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
+print(f"SCAN_EVENTS_FILE: {SCAN_EVENTS_FILE}")
 print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
 
 # Open the shared dashboard after a successful login.
@@ -159,14 +164,42 @@ def save_leave_data(leave_data):
 # Load leave data
 leave_data = load_leave_data()
 
-# Load persisted DTR records and scan events.
+# Load scan events
+def load_scan_events():
+    if not os.path.exists(SCAN_EVENTS_FILE):
+        default_data = {"scan_events": []}
+        with open(SCAN_EVENTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+            f.write("\n")
+        print(f"Created new scan events file: {SCAN_EVENTS_FILE}")
+        return default_data
+    
+    try:
+        with open(SCAN_EVENTS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if "scan_events" not in data:
+                data["scan_events"] = []
+            return data
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading scan events file: {e}")
+        return {"scan_events": []}
+
+# Save scan events
+def save_scan_events(scan_events_data):
+    os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
+    with open(SCAN_EVENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(scan_events_data, f, indent=4)
+        f.write("\n")
+    print(f"Scan events saved to {SCAN_EVENTS_FILE}")
+
+# Load persisted DTR records.
 def load_attendance_data():
     # Ensure the directory exists
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
     
     if not os.path.exists(ATTENDANCE_DATA_FILE):
         # Create empty file with proper structure
-        default_data = {"records": [], "scan_events": []}
+        default_data = {"records": []}
         with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
             f.write("\n")
@@ -176,14 +209,12 @@ def load_attendance_data():
     try:
         with open(ATTENDANCE_DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Ensure we have the proper structure
+            # Ensure we have the proper structure - only records
             if isinstance(data, list):
-                return {"records": [], "scan_events": data}
-            # Modern structure with records array
-            return {
-                "records": data.get("records", []),
-                "scan_events": data.get("scan_events", [])
-            }
+                return {"records": data}
+            if "records" not in data:
+                data["records"] = []
+            return data
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"Error reading attendance file: {e}")
         if os.path.exists(ATTENDANCE_DATA_FILE):
@@ -193,7 +224,7 @@ def load_attendance_data():
                 print(f"Corrupted file backed up to: {backup_file}")
             except:
                 pass
-        return {"records": [], "scan_events": []}
+        return {"records": []}
 
 # Load scan feed data
 def load_scan_feed():
@@ -282,16 +313,20 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
 # Load attendance data
 attendance_data = load_attendance_data()
 attendance_records = attendance_data["records"]
-scan_events = attendance_data["scan_events"]
+
+# Load scan events
+scan_events_data = load_scan_events()
+scan_events = scan_events_data.get("scan_events", [])
+
 if scan_events:
     latest_scan.update({
         "rfid": scan_events[-1].get("rfid"),
         "scanned_at": scan_events[-1].get("scanned_at")
     })
 
-# Save DTR records and scan history to the attendance database.
+# Save DTR records to the attendance database (ONLY records, no scan events).
 def save_attendance_data():
-    """Save attendance records to attendance.json file - preserves all records"""
+    """Save attendance records to attendance.json file - ONLY records, no scan events"""
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
     
     if os.path.exists(ATTENDANCE_DATA_FILE):
@@ -304,8 +339,7 @@ def save_attendance_data():
     
     with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({
-            "records": attendance_records,
-            "scan_events": scan_events[-10000:]
+            "records": attendance_records
         }, f, indent=4)
         f.write("\n")
     print(f"Attendance data saved to {ATTENDANCE_DATA_FILE} - {len(attendance_records)} total records")
@@ -1575,12 +1609,16 @@ def get_attendance():
 # Return the latest RFID scan and online devices for the web dashboard.
 @app.route("/api/get-latest-rfid", methods=["GET"])
 def get_latest_rfid():
+    """Get the latest RFID scan with full attendance data for the employee"""
     rfid = latest_scan.get("rfid")
     scanned_at = latest_scan.get("scanned_at")
     employee = employee_database.get(rfid) if rfid else None
 
     employee_data = None
+    attendance_data = None
+
     if employee:
+        # Build employee data with full image URL
         stored_image = employee.get("image", "")
         image_url = ""
         
@@ -1608,9 +1646,8 @@ def get_latest_rfid():
             "role": employee.get("role"),
             "image": image_url
         }
-    
-    attendance_data = None
-    if employee:
+        
+        # Get today's attendance data
         today = datetime.now().date().strftime("%Y-%m-%d")
         month_key = datetime.now().strftime("%Y-%m")
         
@@ -1714,14 +1751,19 @@ def receive_rfid():
         employee = employee_database.get(rfid)
         found = bool(employee)
         
+        # Add to scan feed (detailed log for display)
         add_scan_to_feed(rfid, scanned_at, employee, found)
         
+        # Add to scan events (raw data for statistics)
         scan_event = {
             "rfid": rfid,
             "scanned_at": scanned_at,
             "scanned_on": datetime.now().date().isoformat()
         }
         scan_events.append(scan_event)
+        # Save scan events separately
+        scan_events_data = {"scan_events": scan_events[-10000:]}
+        save_scan_events(scan_events_data)
 
         scan_result = "not_found"
         if employee:
@@ -1729,6 +1771,7 @@ def receive_rfid():
             record, result = record_attendance_scan(employee, scanned_at)
             scan_result = result
             print(f"Attendance record result: {result}")
+            # Save attendance data (ONLY records, no scan events)
             save_attendance_data()
         else:
             print(f"RFID not found in database: {rfid}")
