@@ -59,11 +59,11 @@ def check_api_connectivity():
     try:
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(3)
+        s.settimeout(5)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(3)
+        s.settimeout(5)
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
@@ -78,13 +78,14 @@ def check_api_connectivity():
         )
         
         s.write(request.encode())
-        response = s.read(64)
+        response = s.read(128)
         s.close()
         
         if b"200" in response or b"OK" in response:
             return True
         return False
-    except:
+    except Exception as e:
+        tprint(PRINTSTATUS.WARN, f"API check failed: {e}")
         return False
 
 def restart_device():
@@ -121,13 +122,15 @@ def send_ping():
         return False
         
     try:
+        tprint(PRINTSTATUS.INFO, "Sending ping...")
+        
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(3)
+        s.settimeout(5)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(3)
+        s.settimeout(5)
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
@@ -143,21 +146,27 @@ def send_ping():
         
         s.write(request.encode())
         
-        # Read just enough to check for 200 or OK
+        # Read response - look for 200 or OK
         response = b""
-        for _ in range(20):
-            chunk = s.read(1)
-            if not chunk:
-                break
-            response += chunk
-            if b"200" in response or b"OK" in response:
+        for _ in range(30):
+            try:
+                chunk = s.read(1)
+                if not chunk:
+                    break
+                response += chunk
+                if b"200" in response or b"OK" in response:
+                    break
+            except:
                 break
         
         s.close()
         
         if b"200" in response or b"OK" in response:
+            tprint(PRINTSTATUS.SUCCESS, "Ping OK")
             return True
-        return False
+        else:
+            tprint(PRINTSTATUS.WARN, f"Ping response: {response[:30]}")
+            return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Ping error: {str(e)}")
         return False
@@ -184,11 +193,11 @@ def post_data(rfid_str):
         
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(8)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
-        s.settimeout(5)
+        s.settimeout(8)
         
         # Build request
         request = (
@@ -204,14 +213,17 @@ def post_data(rfid_str):
         # Send request
         s.write(request.encode())
         
-        # Read response - just look for 200 or OK
+        # Read response - look for 200 or OK
         response = b""
-        for _ in range(25):
-            chunk = s.read(1)
-            if not chunk:
-                break
-            response += chunk
-            if b"200" in response or b"OK" in response:
+        for _ in range(35):
+            try:
+                chunk = s.read(1)
+                if not chunk:
+                    break
+                response += chunk
+                if b"200" in response or b"OK" in response:
+                    break
+            except:
                 break
         
         s.close()
@@ -224,9 +236,9 @@ def post_data(rfid_str):
             # Show what we got for debugging
             try:
                 response_str = response.decode('utf-8', errors='ignore')
-                tprint(PRINTSTATUS.WARN, f"Response: {response_str[:30]}")
+                tprint(PRINTSTATUS.WARN, f"Response: {response_str[:40]}")
             except:
-                tprint(PRINTSTATUS.WARN, f"Response: {response[:30]}")
+                tprint(PRINTSTATUS.WARN, f"Response: {response[:40]}")
             return False
             
     except Exception as e:

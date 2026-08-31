@@ -1752,7 +1752,7 @@ def device_ping():
             "message": str(e)
         }), 500
 
-## Receive an RFID scan and match it to a user record - RETURNS PLAIN TEXT FOR ESP32 (HTTP compatible)
+## Receive an RFID scan and match it to a user record - RETURNS PLAIN TEXT FOR ESP32
 @app.route("/api/receive-rfid", methods=["POST"])
 def receive_rfid():
     try:
