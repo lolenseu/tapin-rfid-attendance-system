@@ -114,6 +114,14 @@ latest_scan = {
     "scanned_at": None
 }
 
+# Track last scan time for each RFID to enforce cooldown
+# Structure: {rfid: {"last_scan_time": datetime, "last_scan_type": "in"|"out", "scan_date": date}}
+last_scan_tracking = {}
+
+# Track current day for each RFID to reset at midnight
+# Structure: {rfid: {"current_date": date, "am_in": bool, "am_out": bool, "pm_in": bool, "pm_out": bool}}
+daily_scan_status = {}
+
 ## Functions ------------------------------------
 # Load persisted DTR records and scan events.
 def load_attendance_data():
@@ -215,7 +223,7 @@ def save_scan_feed(scan_data):
         f.write("\n")
 
 # Add scan to feed
-def add_scan_to_feed(rfid, scanned_at, employee=None, found=False):
+def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="unknown"):
     """Add a single scan to the feed with proper formatting"""
     scan_feed_data = load_scan_feed()
     
@@ -239,6 +247,7 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False):
         "scanned_at": scanned_at,
         "scanned_on": scan_date,
         "found": found,
+        "scan_type": scan_type,  # "time_in", "time_out", "unknown"
         "timestamp": datetime.now().isoformat()
     }
     
@@ -356,9 +365,147 @@ def get_attendance_record(employee, scan_date):
     attendance_records.append(record)
     return record
 
+# Determine if a time is AM or PM period
+def get_period(scan_time):
+    """Return 'am' if hour < 12, else 'pm'"""
+    return "am" if scan_time.hour < 12 else "pm"
+
+# Check if a user has already timed in for the current period
+def has_time_in_for_period(day_record, period):
+    """Check if the user already has a time in for the given period"""
+    in_key = f"{period}_in"
+    return bool(day_record.get(in_key))
+
+# Check if a user has already timed out for the current period
+def has_time_out_for_period(day_record, period):
+    """Check if the user already has a time out for the given period"""
+    out_key = f"{period}_out"
+    return bool(day_record.get(out_key))
+
+# Reset daily tracking at midnight
+def reset_daily_tracking_if_needed(rfid, scan_date):
+    """Reset the daily tracking for an RFID if the date has changed"""
+    today = scan_date.date()
+    
+    if rfid not in daily_scan_status:
+        daily_scan_status[rfid] = {
+            "current_date": today,
+            "am_in": False,
+            "am_out": False,
+            "pm_in": False,
+            "pm_out": False
+        }
+        return
+    
+    current_data = daily_scan_status[rfid]
+    current_date = current_data.get("current_date")
+    
+    # If the date has changed, reset everything
+    if current_date != today:
+        daily_scan_status[rfid] = {
+            "current_date": today,
+            "am_in": False,
+            "am_out": False,
+            "pm_in": False,
+            "pm_out": False
+        }
+
+# Get the appropriate scan type based on current state
+def determine_scan_type(day_record, scan_time, employee):
+    """
+    Determine whether this scan should be a time in or time out.
+    Returns: ("am", "in") or ("am", "out") or ("pm", "in") or ("pm", "out") or None (skip)
+    """
+    rfid = employee.get("rfid")
+    period = get_period(scan_time)
+    
+    # Reset daily tracking if needed
+    reset_daily_tracking_if_needed(rfid, scan_time)
+    
+    # Get current daily status
+    daily_status = daily_scan_status.get(rfid, {})
+    
+    # AM period handling
+    if period == "am":
+        # If AM time in doesn't exist, record AM time in
+        if not daily_status.get("am_in", False):
+            return ("am", "in")
+        
+        # If AM time in exists but AM time out doesn't, check cooldown
+        if daily_status.get("am_in", False) and not daily_status.get("am_out", False):
+            # Check if 1 hour has passed since last scan
+            if rfid in last_scan_tracking:
+                last_scan_data = last_scan_tracking[rfid]
+                last_scan_time = last_scan_data.get("last_scan_time")
+                last_scan_type = last_scan_data.get("last_scan_type")
+                
+                # If last scan was a time in, check cooldown
+                if last_scan_type == "in":
+                    time_diff = (scan_time - last_scan_time).total_seconds() / 3600
+                    if time_diff >= 1.0:  # 1 hour cooldown
+                        return ("am", "out")
+                    else:
+                        # Still in cooldown, skip this scan
+                        return None
+        
+        # If both AM in and out exist, skip (already completed AM)
+        if daily_status.get("am_in", False) and daily_status.get("am_out", False):
+            return None
+    
+    # PM period handling
+    elif period == "pm":
+        # Check if AM is complete (has both in and out) before allowing PM
+        am_complete = daily_status.get("am_in", False) and daily_status.get("am_out", False)
+        
+        # If AM is not complete, handle AM first
+        if not am_complete:
+            if not daily_status.get("am_in", False):
+                return ("am", "in")
+            elif daily_status.get("am_in", False) and not daily_status.get("am_out", False):
+                # Check cooldown for AM out
+                if rfid in last_scan_tracking:
+                    last_scan_data = last_scan_tracking[rfid]
+                    last_scan_time = last_scan_data.get("last_scan_time")
+                    last_scan_type = last_scan_data.get("last_scan_type")
+                    if last_scan_type == "in":
+                        time_diff = (scan_time - last_scan_time).total_seconds() / 3600
+                        if time_diff >= 1.0:
+                            return ("am", "out")
+                        else:
+                            return None
+                return ("am", "out")
+        
+        # AM is complete, handle PM
+        if not daily_status.get("pm_in", False):
+            return ("pm", "in")
+        
+        if daily_status.get("pm_in", False) and not daily_status.get("pm_out", False):
+            # Check cooldown for PM out
+            if rfid in last_scan_tracking:
+                last_scan_data = last_scan_tracking[rfid]
+                last_scan_time = last_scan_data.get("last_scan_time")
+                last_scan_type = last_scan_data.get("last_scan_type")
+                if last_scan_type == "in":
+                    time_diff = (scan_time - last_scan_time).total_seconds() / 3600
+                    if time_diff >= 1.0:
+                        return ("pm", "out")
+                    else:
+                        return None
+        
+        # If both PM in and out exist, skip
+        if daily_status.get("pm_in", False) and daily_status.get("pm_out", False):
+            return None
+    
+    # Default fallback - treat as time in for current period if not already present
+    if not has_time_in_for_period(day_record, period):
+        return (period, "in")
+    else:
+        return None
+
 # Add a device timestamp to the correct AM or PM DTR slot.
 def record_attendance_scan(employee, scanned_at):
     scan_time = parse_scan_time(scanned_at)
+    rfid = employee.get("rfid")
 
     record = get_attendance_record(employee, scan_time)
     
@@ -388,16 +535,72 @@ def record_attendance_scan(employee, scanned_at):
         record["working_days"].sort(key=lambda x: x["date"])
     
     time_value = scan_time.strftime("%H:%M:%S")
-    period = "am" if scan_time.hour < 12 else "pm"
+    
+    # Determine the scan type (time in or time out)
+    scan_result = determine_scan_type(day_record, scan_time, employee)
+    
+    # If scan_result is None, skip this scan (cooldown not met)
+    if scan_result is None:
+        print(f"Scan skipped for {rfid} - cooldown not met or already scanned")
+        return record, "skipped"
+    
+    period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
     
-    # Only add time if slot is empty (preserve existing data)
-    if not day_record[in_key]:
-        day_record[in_key] = time_value
-    elif not day_record[out_key]:
-        day_record[out_key] = time_value
-
+    # Record the scan based on type
+    if scan_type == "in":
+        # Only record if slot is empty
+        if not day_record[in_key]:
+            day_record[in_key] = time_value
+            # Update daily status
+            status_key = f"{period}_in"
+            if rfid in daily_scan_status:
+                daily_scan_status[rfid][status_key] = True
+            print(f"Recorded {period.upper()} TIME IN for {rfid} at {time_value}")
+            # Update last scan tracking
+            last_scan_tracking[rfid] = {
+                "last_scan_time": scan_time,
+                "last_scan_type": "in"
+            }
+            # Add to scan feed with type
+            add_scan_to_feed(
+                rfid, 
+                scanned_at, 
+                employee, 
+                True, 
+                f"{period}_in"
+            )
+        else:
+            print(f"{period.upper()} TIME IN already exists for {rfid}")
+            return record, "already_exists"
+    elif scan_type == "out":
+        # Only record if slot is empty
+        if not day_record[out_key]:
+            day_record[out_key] = time_value
+            # Update daily status
+            status_key = f"{period}_out"
+            if rfid in daily_scan_status:
+                daily_scan_status[rfid][status_key] = True
+            print(f"Recorded {period.upper()} TIME OUT for {rfid} at {time_value}")
+            # Update last scan tracking
+            last_scan_tracking[rfid] = {
+                "last_scan_time": scan_time,
+                "last_scan_type": "out"
+            }
+            # Add to scan feed with type
+            add_scan_to_feed(
+                rfid, 
+                scanned_at, 
+                employee, 
+                True, 
+                f"{period}_out"
+            )
+        else:
+            print(f"{period.upper()} TIME OUT already exists for {rfid}")
+            return record, "already_exists"
+    
+    # Calculate hours after each update
     am_hours = calculate_hours(day_record["am_in"], day_record["am_out"])
     pm_hours = calculate_hours(day_record["pm_in"], day_record["pm_out"])
     total_hours = am_hours + pm_hours
@@ -407,7 +610,8 @@ def record_attendance_scan(employee, scanned_at):
     record["total_hours"] = f"{sum(float(day['hours']) for day in record['working_days']):.2f}"
     record["total_ut"] = f"{sum(float(day['ut']) for day in record['working_days']):.2f}"
     record["total_ot"] = f"{sum(float(day['ot']) for day in record['working_days']):.2f}"
-    return record
+    
+    return record, "success"
 
 # Parse the timestamp supplied by the RFID device.
 def parse_scan_time(scanned_at):
@@ -605,6 +809,71 @@ def verify_token():
         return None, jsonify({"status": "error", "message": "Token expired"}), 401
     except jwt.InvalidTokenError:
         return None, jsonify({"status": "error", "message": "Invalid token"}), 401
+
+# Get the latest scan for a specific RFID with attendance details
+@app.route("/api/get-employee-attendance/<rfid>", methods=["GET"])
+def get_employee_attendance(rfid):
+    """Get attendance details for a specific employee including today's time in/out"""
+    rfid = rfid.strip().upper()
+    employee = employee_database.get(rfid)
+    
+    if not employee:
+        return jsonify({
+            "status": "error",
+            "message": "Employee not found"
+        }), 404
+    
+    today = datetime.now().date()
+    today_str = today.strftime("%Y-%m-%d")
+    month_key = today.strftime("%Y-%m")
+    
+    # Find attendance record for this employee
+    attendance_record = None
+    for record in attendance_records:
+        if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
+            attendance_record = record
+            break
+    
+    # Get today's data
+    today_data = None
+    time_in = None
+    time_out = None
+    am_in = None
+    am_out = None
+    pm_in = None
+    pm_out = None
+    
+    if attendance_record:
+        for day in attendance_record.get("working_days", []):
+            if day.get("date") == today_str:
+                today_data = day
+                am_in = day.get("am_in", "")
+                am_out = day.get("am_out", "")
+                pm_in = day.get("pm_in", "")
+                pm_out = day.get("pm_out", "")
+                break
+    
+    # Build response
+    response_data = {
+        "status": "success",
+        "employee": {
+            "uid": employee.get("uid"),
+            "employeeid": employee.get("employeeid"),
+            "firstname": employee.get("firstname"),
+            "lastname": employee.get("lastname"),
+            "role": employee.get("role"),
+            "image": employee.get("image", "")
+        },
+        "attendance": {
+            "date": today_str,
+            "am_in": am_in or "",
+            "am_out": am_out or "",
+            "pm_in": pm_in or "",
+            "pm_out": pm_out or ""
+        }
+    }
+    
+    return jsonify(response_data), 200
 
 ## Web Routes ------------------------------------
 # Add CORS and no-cache headers to API responses.
@@ -1156,6 +1425,25 @@ def get_latest_rfid():
             "role": employee.get("role"),
             "image": image_url
         }
+    
+    # Get today's attendance data for this employee if found
+    attendance_data = None
+    if employee:
+        today = datetime.now().date().strftime("%Y-%m-%d")
+        month_key = datetime.now().strftime("%Y-%m")
+        
+        for record in attendance_records:
+            if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
+                for day in record.get("working_days", []):
+                    if day.get("date") == today:
+                        attendance_data = {
+                            "am_in": day.get("am_in", ""),
+                            "am_out": day.get("am_out", ""),
+                            "pm_in": day.get("pm_in", ""),
+                            "pm_out": day.get("pm_out", "")
+                        }
+                        break
+                break
 
     return jsonify({
         "status": "success",
@@ -1163,7 +1451,8 @@ def get_latest_rfid():
         "scanned_at": scanned_at,
         "devices": get_online_devices(),
         "found": bool(employee),
-        "employee": employee_data
+        "employee": employee_data,
+        "attendance": attendance_data
     }), 200
 
 # Reload users.json into the in-memory RFID lookup database.
@@ -1254,9 +1543,13 @@ def receive_rfid():
         }
         scan_events.append(scan_event)
 
+        scan_result = "not_found"
         if employee:
             print(f"RFID matched: {employee['firstname']} {employee['lastname']}")
-            record_attendance_scan(employee, scanned_at)
+            # Record attendance with the new logic
+            record, result = record_attendance_scan(employee, scanned_at)
+            scan_result = result
+            print(f"Attendance record result: {result}")
         else:
             print(f"RFID not found in database: {rfid}")
 
@@ -1267,7 +1560,8 @@ def receive_rfid():
             "message": "RFID received",
             "rfid": rfid,
             "scanned_at": scanned_at,
-            "found": found
+            "found": found,
+            "scan_result": scan_result  # success, skipped, already_exists, not_found
         }
         
         if employee:

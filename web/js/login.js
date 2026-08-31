@@ -7,6 +7,118 @@ const rememberInput = form ? form.querySelector('input[name="remember"]') : null
 const passwordInput = form ? form.querySelector('input[name="password"]') : null;
 const passwordToggle = form ? document.getElementById('passwordToggle') : null;
 const passwordToggleIcon = passwordToggle ? passwordToggle.querySelector('i') : null;
+const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
+
+let versionData = null;
+
+function createVersionNotification() {
+    if (document.getElementById('versionNotification')) {
+        return;
+    }
+
+    const notification = document.createElement('div');
+    notification.id = 'versionNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 14px 20px;
+        z-index: 1000;
+        max-width: 260px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        transition: all 0.3s ease;
+        user-select: none;
+        pointer-events: none;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    `;
+
+    notification.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="flex-shrink: 0;">
+                <span style="display: inline-block; background: #dbeafe; border-radius: 50%; width: 32px; height: 32px; text-align: center; line-height: 32px; font-size: 18px; border: 1px solid #93c5fd;">⚡</span>
+            </div>
+            <div>
+                <div style="font-size: 11px; font-weight: 700; color: #2563eb; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 1px;">
+                    Beta Version
+                </div>
+                <div style="font-size: 14px; color: #0f172a; font-weight: 600; line-height: 1.3;">
+                    ${versionData || 'v0.1.39'}
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+                    System in development
+                </div>
+            </div>
+        </div>
+    `;
+
+    notification.addEventListener('mouseenter', function() {
+        this.style.transform = 'scale(1.02)';
+        this.style.boxShadow = '0 12px 40px rgba(37, 99, 235, 0.15)';
+        this.style.borderColor = '#93c5fd';
+    });
+
+    notification.addEventListener('mouseleave', function() {
+        this.style.transform = 'scale(1)';
+        this.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.12)';
+        this.style.borderColor = '#e2e8f0';
+    });
+
+    document.body.appendChild(notification);
+
+    if (!document.getElementById('versionAnimationStyle')) {
+        const style = document.createElement('style');
+        style.id = 'versionAnimationStyle';
+        style.textContent = `
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(30px) scale(0.95);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0) scale(1);
+                }
+            }
+            #versionNotification {
+                animation: slideInRight 0.5s ease;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+async function fetchVersion() {
+    try {
+        const response = await fetch(VERSION_URL);
+        if (response.ok) {
+            const text = await response.text();
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            const versionLine = lines.find(line => line.includes('v'));
+            if (versionLine) {
+                const match = versionLine.match(/v[\d.]+/);
+                if (match) {
+                    versionData = match[0];
+                } else {
+                    versionData = versionLine.trim();
+                }
+            } else if (lines.length > 0) {
+                versionData = lines[0].trim();
+            }
+        } else {
+            versionData = 'v0.1.39';
+        }
+    } catch (error) {
+        console.warn('Could not fetch version:', error);
+        versionData = 'v0.1.39';
+    }
+    
+    createVersionNotification();
+}
 
 async function checkAlreadyLoggedIn() {
     const token = localStorage.getItem('tapinToken');
@@ -117,5 +229,7 @@ if (form) {
         }
     });
 
+    // Fetch version and create notification
+    fetchVersion();
     checkAlreadyLoggedIn();
 }

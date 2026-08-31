@@ -1,6 +1,7 @@
 const API_BASE_URL = 'https://tapin-api.up.railway.app';
 const API_URL = `${API_BASE_URL}/api/get-latest-rfid`;
 const POLL_INTERVAL = 2000;
+const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
 const $ = (sel) => document.querySelector(sel);
 const scannedAt = $('#scannedAt');
@@ -16,6 +17,7 @@ const profileIconPlaceholder = $('#profileIconPlaceholder');
 let currentData = null;
 let isFirstLoad = true;
 let currentRfid = null;
+let versionData = null;
 
 function loadLogo() {
     const logoPaths = [
@@ -56,6 +58,115 @@ function loadProfileIcon() {
     }
 }
 
+function createVersionNotification() {
+    if (document.getElementById('versionNotification')) {
+        return;
+    }
+
+    const notification = document.createElement('div');
+    notification.id = 'versionNotification';
+    notification.style.cssText = `
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 14px 20px;
+        z-index: 1000;
+        max-width: 260px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        transition: all 0.3s ease;
+        user-select: none;
+        pointer-events: none;
+        font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+    `;
+
+    notification.innerHTML = `
+        <div style="display: flex; align-items: center; gap: 12px;">
+            <div style="flex-shrink: 0;">
+                <span style="display: inline-block; background: #dbeafe; border-radius: 50%; width: 32px; height: 32px; text-align: center; line-height: 32px; font-size: 18px; border: 1px solid #93c5fd;">⚡</span>
+            </div>
+            <div>
+                <div style="font-size: 11px; font-weight: 700; color: #2563eb; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 1px;">
+                    Beta Version
+                </div>
+                <div style="font-size: 14px; color: #0f172a; font-weight: 600; line-height: 1.3;">
+                    ${versionData || 'v0.1.39'}
+                </div>
+                <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+                    System in development
+                </div>
+            </div>
+        </div>
+    `;
+
+    notification.addEventListener('mouseenter', function() {
+        this.style.transform = 'scale(1.02)';
+        this.style.boxShadow = '0 12px 40px rgba(37, 99, 235, 0.15)';
+        this.style.borderColor = '#93c5fd';
+    });
+
+    notification.addEventListener('mouseleave', function() {
+        this.style.transform = 'scale(1)';
+        this.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.12)';
+        this.style.borderColor = '#e2e8f0';
+    });
+
+    document.body.appendChild(notification);
+
+    if (!document.getElementById('versionAnimationStyle')) {
+        const style = document.createElement('style');
+        style.id = 'versionAnimationStyle';
+        style.textContent = `
+            @keyframes slideInRight {
+                from {
+                    opacity: 0;
+                    transform: translateX(30px) scale(0.95);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(0) scale(1);
+                }
+            }
+            #versionNotification {
+                animation: slideInRight 0.5s ease;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+async function fetchVersion() {
+    try {
+        const response = await fetch(VERSION_URL);
+        if (response.ok) {
+            const text = await response.text();
+            const lines = text.split('\n').filter(line => line.trim() !== '');
+            const versionLine = lines.find(line => line.includes('v'));
+            if (versionLine) {
+                const match = versionLine.match(/v[\d.]+/);
+                if (match) {
+                    versionData = match[0];
+                } else {
+                    versionData = versionLine.trim();
+                }
+            } else if (lines.length > 0) {
+                versionData = lines[0].trim();
+            }
+        } else {
+            versionData = 'v0.1.39';
+        }
+    } catch (error) {
+        console.warn('Could not fetch version:', error);
+        versionData = 'v0.1.39';
+    }
+    
+    createVersionNotification();
+}
+
 function formatDate(isoString) {
     if (!isoString) return 'Waiting for scan...';
     try {
@@ -94,7 +205,6 @@ function getCurrentTime() {
 function getImageUrl(imagePath) {
     if (!imagePath) return '';
     if (imagePath.startsWith('http')) return imagePath;
-    // If image path is relative, prepend the API base URL
     return `${API_BASE_URL}/${imagePath}`;
 }
 
@@ -103,17 +213,14 @@ function render(data) {
     const isFound = data.found === true;
     const hasEmployee = data.employee !== null && data.employee !== undefined;
 
-    // Update scanned time (always update)
     if (data.scanned_at) {
         scannedAt.textContent = formatDate(data.scanned_at);
     } else {
         scannedAt.textContent = 'Waiting for scan...';
     }
 
-    // Update last updated time
     lastUpdated.textContent = 'Updated: ' + new Date().toLocaleTimeString('en-PH', { hour12: true });
 
-    // Check if RFID changed or if we need to switch states
     const rfidChanged = (data.rfid !== currentRfid);
     const stateChanged = (isFound && hasEmployee) !== employeeCard.classList.contains('visible');
 
@@ -121,7 +228,7 @@ function render(data) {
         currentRfid = data.rfid;
 
         if (isFound && hasEmployee) {
-            renderEmployee(data.employee);
+            renderEmployee(data.employee, data.attendance);
             employeeCard.classList.add('visible');
             noData.style.display = 'none';
         } else if (data.rfid && !isFound) {
@@ -133,7 +240,6 @@ function render(data) {
             noData.style.display = 'flex';
         }
 
-        // Update status
         if (isFound && hasEmployee) {
             statusDot.className = 'status-dot online';
             statusText.textContent = 'Employee registered';
@@ -149,7 +255,7 @@ function render(data) {
     }
 }
 
-function renderEmployee(emp) {
+function renderEmployee(emp, attendance) {
     const fullname = (emp.firstname || '') + ' ' + (emp.lastname || '');
     const initials = getInitials(emp.firstname, emp.lastname);
     const role = emp.role || 'employee';
@@ -157,8 +263,12 @@ function renderEmployee(emp) {
     const scannedTime = currentData.scanned_at ? formatTime(currentData.scanned_at) : '--';
     const currentTime = getCurrentTime();
     const imageUrl = getImageUrl(emp.image);
+    
+    const amIn = attendance && attendance.am_in ? attendance.am_in : '--';
+    const amOut = attendance && attendance.am_out ? attendance.am_out : '--';
+    const pmIn = attendance && attendance.pm_in ? attendance.pm_in : '--';
+    const pmOut = attendance && attendance.pm_out ? attendance.pm_out : '--';
 
-    // Only rebuild HTML if employee data changed
     const currentHtml = employeeCard.innerHTML;
     const newHtml = `
         <div class="profile-section">
@@ -181,29 +291,57 @@ function renderEmployee(emp) {
             </div>
         </div>
         <div class="time-section">
-            <div class="time-item">
-                <div class="label">Time In</div>
-                <div class="value clock-in" id="timeInValue">${scannedTime}</div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">AM Time In</div>
+                    <div class="value clock-in" id="amTimeIn">${amIn}</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">AM Time Out</div>
+                    <div class="value clock-out" id="amTimeOut">${amOut}</div>
+                </div>
             </div>
-            <div class="time-item">
-                <div class="label">Current Time</div>
-                <div class="value" id="currentTimeDisplay">${currentTime}</div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">PM Time In</div>
+                    <div class="value clock-in" id="pmTimeIn">${pmIn}</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">PM Time Out</div>
+                    <div class="value clock-out" id="pmTimeOut">${pmOut}</div>
+                </div>
+            </div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">Current Time</div>
+                    <div class="value" id="currentTimeDisplay">${currentTime}</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">Last Scan</div>
+                    <div class="value" id="lastScanTime">${scannedTime}</div>
+                </div>
             </div>
         </div>
     `;
 
-    // Only update if HTML changed
     if (currentHtml !== newHtml) {
         employeeCard.innerHTML = newHtml;
     } else {
-        // Just update the time values without re-rendering
-        const timeInElem = document.getElementById('timeInValue');
+        const amInElem = document.getElementById('amTimeIn');
+        const amOutElem = document.getElementById('amTimeOut');
+        const pmInElem = document.getElementById('pmTimeIn');
+        const pmOutElem = document.getElementById('pmTimeOut');
         const currentTimeElem = document.getElementById('currentTimeDisplay');
-        if (timeInElem) timeInElem.textContent = scannedTime;
+        const lastScanElem = document.getElementById('lastScanTime');
+        
+        if (amInElem) amInElem.textContent = amIn;
+        if (amOutElem) amOutElem.textContent = amOut;
+        if (pmInElem) pmInElem.textContent = pmIn;
+        if (pmOutElem) pmOutElem.textContent = pmOut;
+        if (lastScanElem) lastScanElem.textContent = scannedTime;
         if (currentTimeElem) currentTimeElem.textContent = currentTime;
     }
 
-    // Keep current time updating
     const currentTimeDisplay = document.getElementById('currentTimeDisplay');
     if (currentTimeDisplay) {
         if (window._timeInterval) {
@@ -242,13 +380,35 @@ function renderUnknownEmployee(rfid, scannedAtTime) {
             </div>
         </div>
         <div class="time-section">
-            <div class="time-item">
-                <div class="label">Time In</div>
-                <div class="value clock-in" id="timeInValueUnknown">${scannedTime}</div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">AM Time In</div>
+                    <div class="value clock-in" id="amTimeInUnknown">--</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">AM Time Out</div>
+                    <div class="value clock-out" id="amTimeOutUnknown">--</div>
+                </div>
             </div>
-            <div class="time-item">
-                <div class="label">Current Time</div>
-                <div class="value" id="currentTimeDisplayUnknown">${currentTime}</div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">PM Time In</div>
+                    <div class="value clock-in" id="pmTimeInUnknown">--</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">PM Time Out</div>
+                    <div class="value clock-out" id="pmTimeOutUnknown">--</div>
+                </div>
+            </div>
+            <div class="time-row">
+                <div class="time-item">
+                    <div class="label">Current Time</div>
+                    <div class="value" id="currentTimeDisplayUnknown">${currentTime}</div>
+                </div>
+                <div class="time-item">
+                    <div class="label">Last Scan</div>
+                    <div class="value" id="lastScanTimeUnknown">${scannedTime}</div>
+                </div>
             </div>
         </div>
     `;
@@ -256,9 +416,9 @@ function renderUnknownEmployee(rfid, scannedAtTime) {
     if (currentHtml !== newHtml) {
         employeeCard.innerHTML = newHtml;
     } else {
-        const timeInElem = document.getElementById('timeInValueUnknown');
+        const lastScanElem = document.getElementById('lastScanTimeUnknown');
         const currentTimeElem = document.getElementById('currentTimeDisplayUnknown');
-        if (timeInElem) timeInElem.textContent = scannedTime;
+        if (lastScanElem) lastScanElem.textContent = scannedTime;
         if (currentTimeElem) currentTimeElem.textContent = currentTime;
     }
 
@@ -304,6 +464,7 @@ async function fetchData() {
 function startPolling() {
     loadLogo();
     loadProfileIcon();
+    fetchVersion();
     fetchData();
     setInterval(fetchData, POLL_INTERVAL);
 }
