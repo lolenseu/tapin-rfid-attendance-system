@@ -1647,14 +1647,16 @@ def get_latest_rfid():
             "image": image_url
         }
         
-        # Get today's attendance data
-        today = datetime.now().date().strftime("%Y-%m-%d")
-        month_key = datetime.now().strftime("%Y-%m")
+        # Get today's attendance data - ALWAYS try to get or create record
+        today = datetime.now()
+        today_str = today.strftime("%Y-%m-%d")
+        month_key = today.strftime("%Y-%m")
         
+        # Try to find existing record
         for record in attendance_records:
             if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
                 for key, day in record.get("dtr", {}).items():
-                    if day.get("date") == today:
+                    if day.get("date") == today_str:
                         attendance_data = {
                             "am_in": day.get("am_in", ""),
                             "am_out": day.get("am_out", ""),
@@ -1664,6 +1666,25 @@ def get_latest_rfid():
                         }
                         break
                 break
+        
+        # If no record found, create one and return empty data
+        if attendance_data is None:
+            # Create a new attendance record for this employee
+            record = get_attendance_record(employee, today)
+            # Get the newly created record's data
+            for key, day in record.get("dtr", {}).items():
+                if day.get("date") == today_str:
+                    attendance_data = {
+                        "am_in": "",
+                        "am_out": "",
+                        "pm_in": "",
+                        "pm_out": "",
+                        "status": ""
+                    }
+                    break
+            # Save the new record
+            save_attendance_data()
+            print(f"Created new attendance record for {employee.get('firstname')} for today")
 
     return jsonify({
         "status": "success",
