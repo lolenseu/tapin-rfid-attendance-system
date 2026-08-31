@@ -59,10 +59,11 @@ def check_api_connectivity():
     try:
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(10)
+        s.settimeout(5)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
+        s.settimeout(5)
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
@@ -77,7 +78,7 @@ def check_api_connectivity():
         )
         
         s.write(request.encode())
-        response = s.read(128)
+        response = s.read(64)
         s.close()
         
         if b"200" in response:
@@ -115,17 +116,18 @@ def restart_device():
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL"""
+    """Send device ping using raw socket with SSL - Optimized"""
     if not check_wifi_connection():
         return False
         
     try:
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(10)
+        s.settimeout(5)
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
+        s.settimeout(5)
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
@@ -139,23 +141,20 @@ def send_ping():
             + data
         )
         
-        tprint(PRINTSTATUS.INFO, f"Sending ping: https://{API_ADDR}/api/device-ping")
         s.write(request.encode())
-        response = s.read(128)
+        response = s.read(64)
         s.close()
         
         if b"200" in response:
-            tprint(PRINTSTATUS.INFO, "Ping sent: Device alive")
             return True
         else:
-            tprint(PRINTSTATUS.WARN, f"Ping returned: {response[:50]}")
             return False
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Ping failed: {str(e)}")
         return False
 
 def post_data(rfid_str):
-    """Send RFID data using raw socket with SSL - Memory optimized for ESP32"""
+    """Send RFID data using raw socket with SSL - Most efficient version for ESP32"""
     if not check_wifi_connection():
         return False
         
@@ -171,15 +170,13 @@ def post_data(rfid_str):
     })
     
     try:
-        tprint(PRINTSTATUS.INFO, f"Sending RFID: https://{API_ADDR}/api/receive-rfid")
-        tprint(PRINTSTATUS.INFO, f"Data: {data}")
-        
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(10)
+        s.settimeout(5)  # Reduced timeout for faster failure detection
         s.connect(addr)
         # Wrap the connected socket with SSL
         s = ssl.wrap_socket(s)
+        s.settimeout(5)  # SSL timeout
         
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
@@ -192,29 +189,31 @@ def post_data(rfid_str):
         )
         
         s.write(request.encode())
-        # Read smaller buffer - just need to check for 200 OK
-        response = s.read(128)
+        
+        # Read only the HTTP status line (first line)
+        # This is the most memory-efficient way - reads only until newline
+        status_line = b""
+        while len(status_line) < 12:
+            chunk = s.read(1)
+            if not chunk:
+                break
+            status_line += chunk
+            # Stop when we see a newline (end of status line)
+            if chunk == b'\n':
+                break
+        
         s.close()
         
-        # Check if we got a 200 OK response
-        if b"200" in response:
-            tprint(PRINTSTATUS.SUCCESS, "RFID sent successfully (200 OK)")
+        # Check for 200 OK
+        if b"200" in status_line:
             return True
         else:
-            # Try to extract scan_result from response if possible
-            response_str = str(response)
-            if "skipped" in response_str:
-                tprint(PRINTSTATUS.WARN, "Attendance skipped (cooldown or on leave)")
+            # Check for known responses in the status line
+            status_str = status_line.decode('utf-8', errors='ignore').lower()
+            if "skipped" in status_str or "already" in status_str:
                 return True
-            elif "already_exists" in response_str:
-                tprint(PRINTSTATUS.WARN, "Attendance already recorded")
-                return True
-            elif "not_found" in response_str:
-                tprint(PRINTSTATUS.WARN, "RFID not found in database")
-                return False
-            else:
-                tprint(PRINTSTATUS.WARN, f"RFID send returned: {response[:50]}")
-                return False
+            return False
+            
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
         return False
