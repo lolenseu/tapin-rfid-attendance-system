@@ -55,15 +55,14 @@ def check_internet_connection():
             return False
 
 def check_api_connectivity():
-    """Check if API is reachable using raw socket with SSL"""
+    """Check if API is reachable using raw socket with HTTP (NO SSL)"""
     try:
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        # Use HTTP port 80 instead of HTTPS port 443
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)
+        # NO SSL WRAP - using plain HTTP
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
@@ -81,7 +80,7 @@ def check_api_connectivity():
         response = s.read(64)
         s.close()
         
-        if b"200" in response:
+        if b"200" in response or b"OK" in response:
             return True
         return False
     except:
@@ -116,18 +115,19 @@ def restart_device():
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL - Simplified"""
+    """Send device ping using raw socket with HTTP (NO SSL) - Simplified"""
     if not check_wifi_connection():
         return False
         
     try:
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        tprint(PRINTSTATUS.INFO, "Sending ping...")
+        
+        # Use HTTP port 80 instead of HTTPS port 443
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)
+        # NO SSL WRAP - plain HTTP
         
         # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
@@ -142,7 +142,7 @@ def send_ping():
         )
         
         s.write(request.encode())
-        # Read just enough to check for 200
+        # Read just enough to check for 200 or OK
         response = b""
         attempts = 0
         while attempts < 10:
@@ -157,15 +157,17 @@ def send_ping():
         s.close()
         
         if b"200" in response or b"OK" in response:
+            tprint(PRINTSTATUS.SUCCESS, "Ping OK")
             return True
         else:
+            tprint(PRINTSTATUS.WARN, f"Ping response: {response[:30]}")
             return False
     except Exception as e:
-        tprint(PRINTSTATUS.ERROR, f"Ping failed: {str(e)}")
+        tprint(PRINTSTATUS.ERROR, f"Ping error: {str(e)}")
         return False
 
 def post_data(rfid_str):
-    """Send RFID data - Simplified: only checks for 200 or OK in response"""
+    """Send RFID data using HTTP (NO SSL) - Only checks for 200 or OK in response"""
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "WiFi not connected")
         return False
@@ -184,16 +186,15 @@ def post_data(rfid_str):
     try:
         tprint(PRINTSTATUS.INFO, f"Sending RFID: {rfid_str}")
         
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        # Use HTTP port 80 instead of HTTPS port 443
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(8)
         
-        # Connect and wrap with SSL
+        # Connect - NO SSL
         s.connect(addr)
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)
         
-        # Build request
+        # Build request - using HTTP not HTTPS
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
@@ -210,7 +211,7 @@ def post_data(rfid_str):
         # Read response - just look for 200 or OK
         response = b""
         attempts = 0
-        while attempts < 15:  # Read up to 15 bytes or until we see 200/OK
+        while attempts < 20:  # Read up to 20 bytes or until we see 200/OK
             chunk = s.read(1)
             if not chunk:
                 break
@@ -286,7 +287,7 @@ def monitor_internet_and_restart():
             restart_device()
         return False
     
-    # Check API connectivity
+    # Check API connectivity - using HTTP
     if not check_api_connectivity():
         tprint(PRINTSTATUS.ERROR, "API not reachable!")
         no_internet_count += 1

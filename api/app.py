@@ -1752,7 +1752,7 @@ def device_ping():
             "message": str(e)
         }), 500
 
-## Receive an RFID scan and match it to a user record - RETURNS PLAIN TEXT FOR ESP32
+## Receive an RFID scan and match it to a user record - RETURNS PLAIN TEXT FOR ESP32 (HTTP compatible)
 @app.route("/api/receive-rfid", methods=["POST"])
 def receive_rfid():
     try:
@@ -1847,4 +1847,6 @@ def handle_options():
 ## Main ------------------------------------
 if __name__ == "__main__":
     initialize_attendance_records()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Get port from environment variable (Railway sets PORT)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
