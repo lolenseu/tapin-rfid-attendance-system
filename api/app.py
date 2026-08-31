@@ -1752,7 +1752,7 @@ def device_ping():
             "message": str(e)
         }), 500
 
-# Receive an RFID scan and match it to a user record.
+## Receive an RFID scan and match it to a user record - RETURNS PLAIN TEXT FOR ESP32
 @app.route("/api/receive-rfid", methods=["POST"])
 def receive_rfid():
     try:
@@ -1762,16 +1762,10 @@ def receive_rfid():
         
         data = request.get_json()
         if not data:
-            return jsonify({
-                "status": "error",
-                "message": "Invalid JSON or missing data"
-            }), 400
+            return "ERROR: Invalid JSON or missing data", 400
             
         if "rfid" not in data or "scanned_at" not in data:
-            return jsonify({
-                "status": "error",
-                "message": "Missing required fields: rfid and scanned_at"
-            }), 400
+            return "ERROR: Missing required fields: rfid and scanned_at", 400
 
         rfid = str(data["rfid"]).strip().upper()
         scanned_at = str(data["scanned_at"])
@@ -1806,34 +1800,15 @@ def receive_rfid():
             print(f"Attendance record result: {result}")
             # Save attendance data (ONLY records, no scan events)
             save_attendance_data()
+            # Return simple OK with scan result
+            return f"OK: {scan_result}", 200
         else:
             print(f"RFID not found in database: {rfid}")
-
-        response_data = {
-            "status": "success",
-            "message": "RFID received",
-            "rfid": rfid,
-            "scanned_at": scanned_at,
-            "found": found,
-            "scan_result": scan_result
-        }
-        
-        if employee:
-            response_data["employee"] = {
-                "uid": employee.get("uid"),
-                "employeeid": employee.get("employeeid"),
-                "firstname": employee.get("firstname"),
-                "lastname": employee.get("lastname")
-            }
-
-        return jsonify(response_data), 200
+            return "ERROR: RFID not found", 404
 
     except Exception as e:
         print(f"Error in receive_rfid: {str(e)}")
-        return jsonify({
-            "status": "error",
-            "message": f"Server error: {str(e)}"
-        }), 500
+        return f"ERROR: {str(e)}", 500
 
 ## Error Handlers ------------------------------------
 @app.errorhandler(404)

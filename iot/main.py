@@ -116,7 +116,7 @@ def restart_device():
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL - Optimized"""
+    """Send device ping using raw socket with SSL - Simplified"""
     if not check_wifi_connection():
         return False
         
@@ -142,10 +142,21 @@ def send_ping():
         )
         
         s.write(request.encode())
-        response = s.read(64)
+        # Read just enough to check for 200
+        response = b""
+        attempts = 0
+        while attempts < 10:
+            chunk = s.read(1)
+            if not chunk:
+                break
+            response += chunk
+            if b"200" in response or b"OK" in response:
+                break
+            attempts += 1
+        
         s.close()
         
-        if b"200" in response:
+        if b"200" in response or b"OK" in response:
             return True
         else:
             return False
@@ -154,7 +165,7 @@ def send_ping():
         return False
 
 def post_data(rfid_str):
-    """Send RFID data - Reliable version for ESP32 with full response reading"""
+    """Send RFID data - Simplified: only checks for 200 or OK in response"""
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "WiFi not connected")
         return False
@@ -196,48 +207,33 @@ def post_data(rfid_str):
         # Send request
         s.write(request.encode())
         
-        # Read the entire response in chunks
+        # Read response - just look for 200 or OK
         response = b""
-        while True:
-            chunk = s.read(64)
+        attempts = 0
+        while attempts < 15:  # Read up to 15 bytes or until we see 200/OK
+            chunk = s.read(1)
             if not chunk:
                 break
             response += chunk
-            # Stop if we have enough to check status
-            if len(response) > 200:
+            # Stop if we see 200 or OK
+            if b"200" in response or b"OK" in response:
                 break
+            attempts += 1
         
         s.close()
         
-        # Check for 200 OK in response
-        if b"200" in response:
+        # Check for success - 200 OK or OK: in response
+        if b"200" in response or b"OK" in response:
             tprint(PRINTSTATUS.SUCCESS, "RFID sent OK")
             return True
         else:
-            # Try to decode response for checking keywords
+            # Show what we got for debugging
             try:
                 response_str = response.decode('utf-8', errors='ignore')
-                tprint(PRINTSTATUS.INFO, f"Response contains: {response_str[:50]}")
-                
-                # Check for known response messages
-                if "skipped" in response_str:
-                    tprint(PRINTSTATUS.WARN, "Attendance skipped (cooldown or on leave)")
-                    return True
-                elif "already" in response_str:
-                    tprint(PRINTSTATUS.WARN, "Attendance already recorded")
-                    return True
-                elif "not_found" in response_str:
-                    tprint(PRINTSTATUS.WARN, "RFID not found in database")
-                    return False
-                elif "success" in response_str:
-                    tprint(PRINTSTATUS.SUCCESS, "RFID processed successfully")
-                    return True
-                else:
-                    tprint(PRINTSTATUS.WARN, "Unknown response")
-                    return False
+                tprint(PRINTSTATUS.WARN, f"Response: {response_str[:30]}")
             except:
-                tprint(PRINTSTATUS.WARN, "Could not decode response")
-                return False
+                tprint(PRINTSTATUS.WARN, f"Response: {response[:30]}")
+            return False
             
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
@@ -476,7 +472,7 @@ def main():
             last_internet_check = current_time
             monitor_internet_and_restart()  # This will restart if no internet
 
-        # 2. Send ping
+        # 2. Send ping - simplified, only checks 200/OK
         if time.ticks_diff(current_time, last_ping) >= param.PING_INTERVAL:
             last_ping = current_time
             if not send_ping():
@@ -576,9 +572,10 @@ def main():
                         pass
 
                     # Send RFID data to API - Show status on LCD
+                    # Check WiFi and internet before sending
                     if check_wifi_connection() and check_internet_connection():
                         if post_data(rfid_str):
-                            # Success - show OK (only when status 200)
+                            # Success - show OK
                             try:
                                 lcd.move_to(14, 1)
                                 lcd.putstr("OK")
@@ -586,7 +583,7 @@ def main():
                             except:
                                 pass
                         else:
-                            # Failed - show ER (for any non-200 response)
+                            # Failed - show ER
                             try:
                                 lcd.move_to(14, 1)
                                 lcd.putstr("ER")
