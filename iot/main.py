@@ -9,6 +9,7 @@ import network
 import sys
 import ssl
 import usocket
+import gc
 
 from boot import *
 from configs.config import *
@@ -19,6 +20,25 @@ from driver import BUZZER, PCF8574, PN532
 buzzer = None
 lcd = None
 rfid = None
+
+## SSL Memory Optimization
+def optimize_memory():
+    """Force garbage collection and defragment memory before SSL operations"""
+    gc.collect()
+    time.sleep_ms(10)
+    return gc.mem_free()
+
+def create_ssl_socket(sock):
+    """Create SSL socket with reduced buffer size"""
+    try:
+        # Try to set max_content_len to reduce buffer size (4KB instead of 16KB)
+        return ssl.wrap_socket(sock, max_content_len=4096)
+    except TypeError:
+        # Fallback for older MicroPython versions
+        return ssl.wrap_socket(sock)
+    except Exception as e:
+        tprint(PRINTSTATUS.ERROR, f"SSL wrap error: {str(e)}")
+        raise
 
 ## Functions
 def check_wifi_connection():
@@ -57,20 +77,21 @@ def check_internet_connection():
 def check_api_connectivity():
     """Check if API is reachable using raw socket with SSL"""
     try:
+        free_mem = optimize_memory()
+        tprint(PRINTSTATUS.INFO, f"Free memory before API check: {free_mem} bytes")
+        
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)
+        s = create_ssl_socket(s)
         
-        # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
         request = (
             "POST /api/device-ping HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
             "Content-Type: application/json\r\n"
+            "Accept: application/json\r\n"
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
@@ -80,6 +101,9 @@ def check_api_connectivity():
         s.write(request.encode())
         response = s.read(128)
         s.close()
+        
+        # Clean up after SSL
+        gc.collect()
         
         if b"200" in response or b"OK" in response:
             return True
@@ -117,9 +141,13 @@ def restart_device():
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL"""
+    """Send device ping using raw socket with SSL with reduced buffer"""
     if not check_wifi_connection():
         return False
+    
+    # Optimize memory before SSL
+    free_mem = optimize_memory()
+    tprint(PRINTSTATUS.INFO, f"Free memory before ping: {free_mem} bytes")
         
     try:
         tprint(PRINTSTATUS.INFO, "Sending ping...")
@@ -128,16 +156,14 @@ def send_ping():
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(5)
         s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(5)
+        s = create_ssl_socket(s)
         
-        # Use ujson to create JSON data
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
         request = (
             "POST /api/device-ping HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
             "Content-Type: application/json\r\n"
+            "Accept: application/json\r\n"
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
@@ -146,7 +172,6 @@ def send_ping():
         
         s.write(request.encode())
         
-        # Read response - look for 200 or OK
         response = b""
         for _ in range(30):
             try:
@@ -161,6 +186,8 @@ def send_ping():
         
         s.close()
         
+        gc.collect()
+        
         if b"200" in response or b"OK" in response:
             tprint(PRINTSTATUS.SUCCESS, "Ping OK")
             return True
@@ -172,50 +199,49 @@ def send_ping():
         return False
 
 def post_data(rfid_str):
-    """Send RFID data using HTTPS with SSL"""
+    """Send RFID data using HTTPS with SSL and reduced buffer"""
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "WiFi not connected")
         return False
+    
+    free_mem = optimize_memory()
+    tprint(PRINTSTATUS.INFO, f"Free memory before RFID send: {free_mem} bytes")
         
     t = time.localtime()
     scanned_time = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
         t[0], t[1], t[2], t[3], t[4], t[5]
     )
     
-    # Use ujson to create JSON data
     data = json.dumps({
+        "device_id": param.DEVICE_ID,
         "rfid": rfid_str,
         "scanned_at": scanned_time
     })
     
     try:
         tprint(PRINTSTATUS.INFO, f"Sending RFID: {rfid_str}")
-        
+        tprint(PRINTSTATUS.INFO, f"Data: {data}")
         addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
         s.settimeout(8)
         s.connect(addr)
-        # Wrap the connected socket with SSL
-        s = ssl.wrap_socket(s)
-        s.settimeout(8)
+        s = create_ssl_socket(s)
         
-        # Build request
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
             "Content-Type: application/json\r\n"
+            "Accept: application/json\r\n"
             "Content-Length: " + str(len(data)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
             + data
         )
         
-        # Send request
         s.write(request.encode())
         
-        # Read response - look for 200 or OK
         response = b""
-        for _ in range(35):
+        for _ in range(50):
             try:
                 chunk = s.read(1)
                 if not chunk:
@@ -228,17 +254,23 @@ def post_data(rfid_str):
         
         s.close()
         
-        # Check for success - 200 OK or OK: in response
+        gc.collect()
+        
+        try:
+            response_str = response.decode('utf-8', errors='ignore')
+            tprint(PRINTSTATUS.INFO, f"Full response: {response_str[:100]}")
+        except:
+            tprint(PRINTSTATUS.INFO, f"Full response: {response[:100]}")
+        
         if b"200" in response or b"OK" in response:
             tprint(PRINTSTATUS.SUCCESS, "RFID sent OK")
             return True
         else:
-            # Show what we got for debugging
             try:
                 response_str = response.decode('utf-8', errors='ignore')
-                tprint(PRINTSTATUS.WARN, f"Response: {response_str[:40]}")
+                tprint(PRINTSTATUS.WARN, f"Response: {response_str[:100]}")
             except:
-                tprint(PRINTSTATUS.WARN, f"Response: {response[:40]}")
+                tprint(PRINTSTATUS.WARN, f"Response: {response[:100]}")
             return False
             
     except Exception as e:

@@ -1758,13 +1758,19 @@ def receive_rfid():
     try:
         print(f"RFID receive request received")
         print(f"Content-Type: {request.headers.get('Content-Type')}")
-        print(f"Raw data: {request.get_data()}")
         
+        # Get raw data for debugging
+        raw_data = request.get_data()
+        print(f"Raw data: {raw_data}")
+        
+        # Try to parse JSON
         data = request.get_json()
         if not data:
+            print("ERROR: Invalid JSON or missing data")
             return "ERROR: Invalid JSON or missing data", 400
             
         if "rfid" not in data or "scanned_at" not in data:
+            print("ERROR: Missing required fields: rfid and scanned_at")
             return "ERROR: Missing required fields: rfid and scanned_at", 400
 
         rfid = str(data["rfid"]).strip().upper()
@@ -1772,9 +1778,11 @@ def receive_rfid():
 
         print(f"Processing RFID: {rfid} at {scanned_at}")
 
+        # Update latest scan
         latest_scan["rfid"] = rfid
         latest_scan["scanned_at"] = scanned_at
         
+        # Check if employee exists
         employee = employee_database.get(rfid)
         found = bool(employee)
         
@@ -1788,26 +1796,27 @@ def receive_rfid():
             "scanned_on": datetime.now().date().isoformat()
         }
         scan_events.append(scan_event)
-        # Save scan events separately
+        # Save scan events
         scan_events_data = {"scan_events": scan_events[-10000:]}
         save_scan_events(scan_events_data)
 
-        scan_result = "not_found"
+        # Process attendance if employee found
         if employee:
             print(f"RFID matched: {employee['firstname']} {employee['lastname']}")
             record, result = record_attendance_scan(employee, scanned_at)
-            scan_result = result
             print(f"Attendance record result: {result}")
             # Save attendance data (ONLY records, no scan events)
             save_attendance_data()
             # Return simple OK with scan result
-            return f"OK: {scan_result}", 200
+            return f"OK: {result}", 200
         else:
             print(f"RFID not found in database: {rfid}")
             return "ERROR: RFID not found", 404
 
     except Exception as e:
         print(f"Error in receive_rfid: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return f"ERROR: {str(e)}", 500
 
 ## Error Handlers ------------------------------------
