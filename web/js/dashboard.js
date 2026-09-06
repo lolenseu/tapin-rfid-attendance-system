@@ -65,6 +65,59 @@ function updateDashboardStatistics(stats) {
         const element = document.getElementById(id);
         if (element) element.textContent = value;
     });
+    
+    // Update progress bars based on stats
+    updateStatProgressBars(stats);
+}
+
+// Update stat card progress bars based on actual data
+function updateStatProgressBars(stats) {
+    const total = stats.total_employees || 1;
+    const present = stats.present_today || 0;
+    const absent = stats.absent_today || 0;
+    const onLeave = stats.on_leave || 0;
+    const attendanceRate = stats.attendance_rate || 0;
+    const rfidScans = stats.rfid_scans_today || 0;
+    
+    // Total Employees bar (always full)
+    const totalBar = document.querySelector('.stat-blue .stat-progress-bar');
+    if (totalBar) totalBar.style.width = '100%';
+    
+    // Present Today bar
+    const presentBar = document.querySelector('.stat-green .stat-progress-bar');
+    if (presentBar) {
+        const pct = total > 0 ? (present / total) * 100 : 0;
+        presentBar.style.width = `${Math.min(pct, 100)}%`;
+    }
+    
+    // Absent Today bar
+    const absentBar = document.querySelector('.stat-red .stat-progress-bar');
+    if (absentBar) {
+        const pct = total > 0 ? (absent / total) * 100 : 0;
+        absentBar.style.width = `${Math.min(pct, 100)}%`;
+    }
+    
+    // On Leave bar
+    const leaveBar = document.querySelector('.stat-purple .stat-progress-bar');
+    if (leaveBar) {
+        const pct = total > 0 ? (onLeave / total) * 100 : 0;
+        leaveBar.style.width = `${Math.min(pct, 100)}%`;
+    }
+    
+    // Attendance Rate bar
+    const rateBar = document.querySelector('.stat-cyan .stat-progress-bar');
+    if (rateBar) {
+        rateBar.style.width = `${Math.min(attendanceRate, 100)}%`;
+    }
+    
+    // RFID Scans bar
+    const rfidBar = document.querySelector('.stat-blue:last-child .stat-progress-bar');
+    if (rfidBar) {
+        // Use a reasonable max (e.g., 100 scans) or scale dynamically
+        const maxScans = 100;
+        const pct = Math.min((rfidScans / maxScans) * 100, 100);
+        rfidBar.style.width = `${pct}%`;
+    }
 }
 
 function escapeHtml(value) {
@@ -77,21 +130,603 @@ function initials(user) {
     return `${user.firstname || ''} ${user.lastname || ''}`.trim().split(/\s+/).map((part) => part[0] || '').join('').slice(0, 2).toUpperCase() || '--';
 }
 
-function updateEmployeeTable(users) {
-    const body = document.getElementById('dashboardEmployeeBody');
-    if (!body) return;
-    body.innerHTML = users.map((user) => `<tr>
-        <td><div class="emp-avatar" style="width:32px;height:32px;font-size:11px;">${escapeHtml(initials(user))}</div></td>
-        <td><strong>${escapeHtml(user.employeeid || user.uid || '--')}</strong></td>
-        <td><div class="emp-name">${escapeHtml(`${user.firstname || ''} ${user.lastname || ''}`.trim())}</div></td>
-        <td>${escapeHtml(user.role || 'employee')}</td>
-        <td>--</td>
-        <td>${escapeHtml(user.email || '--')}</td>
-        <td><span class="badge badge-approved">Registered</span></td>
-        <td>--</td>
-        <td><div class="table-actions"><button class="action-btn" title="View"><i class="fa-solid fa-eye"></i></button></div></td>
-    </tr>`).join('') || '<tr><td colspan="9">No users registered.</td></tr>';
+// ============ EMPLOYEE DIRECTORY FUNCTIONS ============
+
+// Store all employees for filtering
+let allEmployees = [];
+let filteredEmployees = [];
+let employeeCardsExpanded = false;
+let previousEmployeesData = '';
+
+// Update the employees grid with cards
+function updateEmployeesGrid(users) {
+    const grid = document.getElementById('employeesGrid');
+    if (!grid) return;
+    
+    // Store all employees for filtering (only update if data changed)
+    const currentData = JSON.stringify(users || []);
+    if (currentData !== previousEmployeesData) {
+        allEmployees = users || [];
+        filteredEmployees = [...allEmployees];
+        previousEmployeesData = currentData;
+        // Populate department filter dropdown
+        populateDepartmentFilter(allEmployees);
+        // Reset filter values to 'all' when data changes
+        document.getElementById('employeeRoleFilter').value = 'all';
+        document.getElementById('employeeDeptFilter').value = 'all';
+        document.getElementById('employeeSearchInput').value = '';
+    }
+    
+    // Render the grid
+    renderEmployeeCards(filteredEmployees);
 }
+
+// Populate department filter dropdown with unique departments
+function populateDepartmentFilter(employees) {
+    const deptFilter = document.getElementById('employeeDeptFilter');
+    if (!deptFilter) return;
+    
+    // Get unique departments
+    const departments = new Set();
+    employees.forEach(emp => {
+        if (emp.department && emp.department.trim()) {
+            departments.add(emp.department.trim());
+        }
+    });
+    
+    // Clear existing options except the first one (All Departments)
+    while (deptFilter.options.length > 1) {
+        deptFilter.remove(1);
+    }
+    
+    // Sort departments alphabetically
+    const sortedDepts = Array.from(departments).sort();
+    
+    // Add departments to dropdown
+    sortedDepts.forEach(dept => {
+        const option = document.createElement('option');
+        option.value = dept;
+        option.textContent = dept;
+        deptFilter.appendChild(option);
+    });
+}
+
+// Render employee cards with limit (6 cards initially)
+function renderEmployeeCards(employees) {
+    const grid = document.getElementById('employeesGrid');
+    if (!grid) return;
+    
+    const footer = document.getElementById('employeeGridFooter');
+    const countDisplay = document.getElementById('employeeCountDisplay');
+    
+    if (!employees || employees.length === 0) {
+        grid.innerHTML = `
+            <div class="empty-state" style="grid-column:1/-1;padding:40px 20px;">
+                <i class="fa-solid fa-users-slash"></i>
+                <p style="font-size:14px;color:var(--text-muted);">No employees found matching your filters.</p>
+            </div>
+        `;
+        if (footer) footer.style.display = 'none';
+        return;
+    }
+    
+    // Determine how many cards to show (6 initially, all if expanded)
+    const showCount = employeeCardsExpanded ? employees.length : Math.min(employees.length, 6);
+    const visibleEmployees = employees.slice(0, showCount);
+    
+    // Generate card HTML - Simplified display: ID, Name, Email, Department, Role only
+    grid.innerHTML = visibleEmployees.map((user, index) => {
+        const fullname = `${user.firstname || ''} ${user.lastname || ''}`.trim() || 'Unknown';
+        const initialsText = fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--';
+        const role = user.role || 'employee';
+        const roleColor = role === 'admin' ? 'var(--danger)' : role === 'hr' ? 'var(--primary)' : 'var(--success)';
+        const roleBg = role === 'admin' ? 'var(--danger-light)' : role === 'hr' ? 'var(--primary-light)' : 'var(--success-light)';
+        const employeeId = user.employeeid || user.uid || 'N/A';
+        const email = user.email || 'N/A';
+        const department = user.department || 'N/A';
+        
+        return `
+            <div class="emp-card" data-index="${index}" data-role="${escapeHtml(role)}" data-name="${escapeHtml(fullname.toLowerCase())}" data-id="${escapeHtml(employeeId)}" data-email="${escapeHtml(email)}">
+                <div class="emp-card-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
+                    <div class="emp-card-avatar" style="display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:white;">
+                        ${escapeHtml(initialsText)}
+                    </div>
+                    <div class="emp-card-name">${escapeHtml(fullname)}</div>
+                    <div class="emp-card-pos">${escapeHtml(role.toUpperCase())}</div>
+                </div>
+                <div class="emp-card-body">
+                    <div class="emp-card-info">
+                        <div class="emp-info-row">
+                            <i class="fa-solid fa-id-badge"></i>
+                            <span class="emp-info-val">${escapeHtml(employeeId)}</span>
+                        </div>
+                        <div class="emp-info-row">
+                            <i class="fa-solid fa-envelope"></i>
+                            <span class="emp-info-val">${escapeHtml(email)}</span>
+                        </div>
+                        <div class="emp-info-row">
+                            <i class="fa-solid fa-building"></i>
+                            <span class="emp-info-val">${escapeHtml(department)}</span>
+                        </div>
+                        <div class="emp-info-row">
+                            <i class="fa-solid fa-user-tag"></i>
+                            <span class="emp-info-val" style="display:inline-flex;align-items:center;gap:6px;">
+                                <span class="badge" style="background:${roleBg};color:${roleColor};font-size:10px;padding:2px 10px;">${escapeHtml(role.toUpperCase())}</span>
+                            </span>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:8px;">
+                        <button class="btn btn-outline btn-sm" onclick="viewEmployee('${escapeHtml(user.uid || '')}')" style="flex:1;justify-content:center;">
+                            <i class="fa-solid fa-eye"></i> View
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="editEmployee('${escapeHtml(user.uid || '')}')" style="flex:1;justify-content:center;">
+                            <i class="fa-solid fa-edit"></i> Edit
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    // Handle footer visibility
+    if (footer) {
+        if (employees.length > 6) {
+            footer.style.display = 'block';
+            const btn = document.getElementById('employeeToggleBtn');
+            if (btn) {
+                btn.innerHTML = employeeCardsExpanded 
+                    ? '<i class="fa-solid fa-chevron-up"></i> View Less Employees' 
+                    : `<i class="fa-solid fa-chevron-down"></i> View More Employees (${employees.length - 6} more)`;
+            }
+            if (countDisplay) {
+                countDisplay.textContent = `Showing ${visibleEmployees.length} of ${employees.length} employees`;
+            }
+        } else {
+            footer.style.display = 'none';
+        }
+    }
+}
+
+// Toggle employee cards between 6 and all
+function toggleEmployeeCards() {
+    employeeCardsExpanded = !employeeCardsExpanded;
+    renderEmployeeCards(filteredEmployees);
+    
+    // Scroll to grid after toggle
+    const grid = document.getElementById('employeesGrid');
+    if (grid) {
+        setTimeout(() => {
+            grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    }
+}
+
+// Toggle filter bar visibility
+function toggleEmployeeFilter() {
+    const filterBar = document.getElementById('employeeFilterBar');
+    if (filterBar) {
+        const isVisible = filterBar.style.display !== 'none';
+        filterBar.style.display = isVisible ? 'none' : 'block';
+        
+        // Update button text
+        const btn = document.querySelector('.section-actions .btn-outline');
+        if (btn) {
+            btn.innerHTML = isVisible ? '<i class="fa-solid fa-filter"></i> Filter' : '<i class="fa-solid fa-filter"></i> Hide Filter';
+        }
+    }
+}
+
+// Filter employees based on search and dropdowns
+function filterEmployees() {
+    const searchInput = document.getElementById('employeeSearchInput');
+    const roleFilter = document.getElementById('employeeRoleFilter');
+    const deptFilter = document.getElementById('employeeDeptFilter');
+    
+    const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    const role = roleFilter ? roleFilter.value : 'all';
+    const department = deptFilter ? deptFilter.value : 'all';
+    
+    filteredEmployees = allEmployees.filter(emp => {
+        // Search filter
+        let matchesSearch = true;
+        if (searchTerm) {
+            const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
+            const employeeId = (emp.employeeid || '').toLowerCase();
+            const email = (emp.email || '').toLowerCase();
+            matchesSearch = fullname.includes(searchTerm) || 
+                           employeeId.includes(searchTerm) || 
+                           email.includes(searchTerm);
+        }
+        
+        // Role filter
+        let matchesRole = true;
+        if (role !== 'all') {
+            matchesRole = (emp.role || 'employee').toLowerCase() === role;
+        }
+        
+        // Department filter
+        let matchesDept = true;
+        if (department !== 'all') {
+            const empDept = (emp.department || '').toLowerCase();
+            matchesDept = empDept === department.toLowerCase();
+        }
+        
+        return matchesSearch && matchesRole && matchesDept;
+    });
+    
+    // Reset expansion state when filtering
+    employeeCardsExpanded = false;
+    renderEmployeeCards(filteredEmployees);
+}
+
+// Clear all filters
+function clearEmployeeFilters() {
+    const searchInput = document.getElementById('employeeSearchInput');
+    const roleFilter = document.getElementById('employeeRoleFilter');
+    const deptFilter = document.getElementById('employeeDeptFilter');
+    
+    if (searchInput) searchInput.value = '';
+    if (roleFilter) roleFilter.value = 'all';
+    if (deptFilter) deptFilter.value = 'all';
+    
+    employeeCardsExpanded = false;
+    filteredEmployees = [...allEmployees];
+    renderEmployeeCards(filteredEmployees);
+}
+
+// ============ VIEW EMPLOYEE MODAL ============
+
+// Get employee by UID
+function getEmployeeByUid(uid) {
+    return allEmployees.find(emp => emp.uid === uid);
+}
+
+// View employee details in modal
+function viewEmployee(uid) {
+    const employee = getEmployeeByUid(uid);
+    if (!employee) {
+        showNotification('Employee not found.', 'error');
+        return;
+    }
+    
+    const fullname = `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
+    const role = employee.role || 'employee';
+    const roleColor = role === 'admin' ? 'var(--danger)' : role === 'hr' ? 'var(--primary)' : 'var(--success)';
+    const roleBg = role === 'admin' ? 'var(--danger-light)' : role === 'hr' ? 'var(--primary-light)' : 'var(--success-light)';
+    
+    // Build modal HTML
+    const modalHtml = `
+        <div class="modal-overlay" id="viewEmployeeModal" onclick="if(event.target===this) closeViewEmployeeModal()">
+            <div class="modal-content view-modal">
+                <div class="modal-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
+                    <div class="modal-avatar">${escapeHtml(fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--')}</div>
+                    <div class="modal-user-info">
+                        <h2>${escapeHtml(fullname)}</h2>
+                        <span class="badge" style="background:${roleBg};color:${roleColor};font-size:12px;padding:4px 14px;">${escapeHtml(role.toUpperCase())}</span>
+                    </div>
+                    <button class="modal-close" onclick="closeViewEmployeeModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-id-badge"></i> Employee ID</span>
+                            <span class="detail-value">${escapeHtml(employee.employeeid || employee.uid || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-envelope"></i> Email</span>
+                            <span class="detail-value">${escapeHtml(employee.email || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-building"></i> Department</span>
+                            <span class="detail-value">${escapeHtml(employee.department || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-briefcase"></i> Position</span>
+                            <span class="detail-value">${escapeHtml(employee.position || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-phone"></i> Contact Number</span>
+                            <span class="detail-value">${escapeHtml(employee.cpnumber || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-calendar"></i> Birth Date</span>
+                            <span class="detail-value">${escapeHtml(employee.bdate || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-home"></i> Address</span>
+                            <span class="detail-value">${escapeHtml(employee.address || 'N/A')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-user-tag"></i> Role</span>
+                            <span class="detail-value"><span class="badge" style="background:${roleBg};color:${roleColor};">${escapeHtml(role.toUpperCase())}</span></span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-id-card"></i> RFID</span>
+                            <span class="detail-value"><code>${escapeHtml(employee.rfid || 'N/A')}</code></span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label"><i class="fa-solid fa-clock"></i> Registered</span>
+                            <span class="detail-value">${employee.timestamp_creation ? new Date(employee.timestamp_creation).toLocaleString() : 'N/A'}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-outline" onclick="closeViewEmployeeModal()"><i class="fa-solid fa-times"></i> Close</button>
+                    <button class="btn btn-primary" onclick="closeViewEmployeeModal(); editEmployee('${escapeHtml(employee.uid || '')}')"><i class="fa-solid fa-edit"></i> Edit</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('viewEmployeeModal');
+    if (existingModal) existingModal.remove();
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
+}
+
+// Close view employee modal
+function closeViewEmployeeModal() {
+    const modal = document.getElementById('viewEmployeeModal');
+    if (modal) modal.remove();
+    document.body.style.overflow = '';
+}
+
+// ============ EDIT EMPLOYEE MODAL ============
+
+// Edit employee details in modal
+function editEmployee(uid) {
+    const employee = getEmployeeByUid(uid);
+    if (!employee) {
+        showNotification('Employee not found.', 'error');
+        return;
+    }
+    
+    const fullname = `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
+    const role = employee.role || 'employee';
+    const roleColor = role === 'admin' ? 'var(--danger)' : role === 'hr' ? 'var(--primary)' : 'var(--success)';
+    
+    // Build edit modal HTML
+    const modalHtml = `
+        <div class="modal-overlay" id="editEmployeeModal" onclick="if(event.target===this) closeEditEmployeeModal()">
+            <div class="modal-content edit-modal">
+                <div class="modal-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
+                    <div class="modal-avatar">${escapeHtml(fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--')}</div>
+                    <div class="modal-user-info">
+                        <h2>Edit Employee</h2>
+                        <span style="font-size:13px;opacity:0.8;">${escapeHtml(fullname)}</span>
+                    </div>
+                    <button class="modal-close" onclick="closeEditEmployeeModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <form id="editEmployeeForm" onsubmit="return submitEditEmployee(event)">
+                        <div class="edit-grid">
+                            <div class="form-group">
+                                <label>Employee ID</label>
+                                <input class="form-control" type="text" id="editEmployeeId" value="${escapeHtml(employee.employeeid || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>RFID</label>
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required readonly />
+                            </div>
+                            <div class="form-group">
+                                <label>First Name</label>
+                                <input class="form-control" type="text" id="editFirstname" value="${escapeHtml(employee.firstname || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Last Name</label>
+                                <input class="form-control" type="text" id="editLastname" value="${escapeHtml(employee.lastname || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Email</label>
+                                <input class="form-control" type="email" id="editEmail" value="${escapeHtml(employee.email || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Contact Number</label>
+                                <input class="form-control" type="text" id="editCpnumber" value="${escapeHtml(employee.cpnumber || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Address</label>
+                                <input class="form-control" type="text" id="editAddress" value="${escapeHtml(employee.address || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Birth Date</label>
+                                <input class="form-control" type="date" id="editBdate" value="${escapeHtml(employee.bdate || '')}" required />
+                            </div>
+                            <div class="form-group">
+                                <label>Department</label>
+                                <input class="form-control" type="text" id="editDepartment" value="${escapeHtml(employee.department || '')}" />
+                            </div>
+                            <div class="form-group">
+                                <label>Position</label>
+                                <input class="form-control" type="text" id="editPosition" value="${escapeHtml(employee.position || '')}" />
+                            </div>
+                            <div class="form-group">
+                                <label>Role</label>
+                                <select class="form-control" id="editRole">
+                                    <option value="employee" ${employee.role === 'employee' ? 'selected' : ''}>Employee</option>
+                                    <option value="hr" ${employee.role === 'hr' ? 'selected' : ''}>HR</option>
+                                    <option value="admin" ${employee.role === 'admin' ? 'selected' : ''}>Admin</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Username</label>
+                                <input class="form-control" type="text" id="editUsername" value="${escapeHtml(employee.username || '')}" required />
+                            </div>
+                        </div>
+                        <div class="form-group" style="margin-top:12px;">
+                            <label>New Password (leave blank to keep current)</label>
+                            <input class="form-control" type="password" id="editPassword" placeholder="Enter new password to change" />
+                        </div>
+                        <input type="hidden" id="editUid" value="${escapeHtml(employee.uid || '')}" />
+                        <input type="hidden" id="editRfidHidden" value="${escapeHtml(employee.rfid || '')}" />
+                        <div id="editMessage" style="margin-top:10px;font-size:13px;display:none;"></div>
+                        <div class="modal-footer" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+                            <button type="button" class="btn btn-outline" onclick="closeEditEmployeeModal()"><i class="fa-solid fa-times"></i> Cancel</button>
+                            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save Changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Remove existing modal if any
+    const existingModal = document.getElementById('editEmployeeModal');
+    if (existingModal) existingModal.remove();
+    
+    // Add modal to body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Prevent body scroll
+    document.body.style.overflow = 'hidden';
+}
+
+// Close edit employee modal
+function closeEditEmployeeModal() {
+    const modal = document.getElementById('editEmployeeModal');
+    if (modal) modal.remove();
+    document.body.style.overflow = '';
+}
+
+// Submit edit employee form
+async function submitEditEmployee(event) {
+    event.preventDefault();
+    
+    const uid = document.getElementById('editUid').value;
+    const rfid = document.getElementById('editRfidHidden').value;
+    
+    // Get form data
+    const formData = new FormData();
+    formData.append('employeeid', document.getElementById('editEmployeeId').value);
+    formData.append('rfid', document.getElementById('editRfid').value);
+    formData.append('firstname', document.getElementById('editFirstname').value);
+    formData.append('lastname', document.getElementById('editLastname').value);
+    formData.append('email', document.getElementById('editEmail').value);
+    formData.append('cpnumber', document.getElementById('editCpnumber').value);
+    formData.append('address', document.getElementById('editAddress').value);
+    formData.append('bdate', document.getElementById('editBdate').value);
+    formData.append('department', document.getElementById('editDepartment').value);
+    formData.append('position', document.getElementById('editPosition').value);
+    formData.append('role', document.getElementById('editRole').value);
+    formData.append('username', document.getElementById('editUsername').value);
+    
+    const password = document.getElementById('editPassword').value;
+    if (password) {
+        formData.append('password', password);
+    }
+    
+    const msgEl = document.getElementById('editMessage');
+    msgEl.style.display = 'block';
+    msgEl.style.color = '#3B82F6';
+    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Updating employee...';
+    
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/update-employee/${rfid}`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+            },
+            body: formData,
+            credentials: 'include'
+        });
+        
+        const result = await response.json();
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Update failed.'}`;
+            return;
+        }
+        
+        msgEl.style.color = '#10B981';
+        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Employee updated successfully!';
+        
+        // Update the local data
+        const updatedEmp = result.data;
+        const index = allEmployees.findIndex(e => e.uid === uid);
+        if (index !== -1) {
+            allEmployees[index] = updatedEmp;
+            filteredEmployees = [...allEmployees];
+            renderEmployeeCards(filteredEmployees);
+            populateDepartmentFilter(allEmployees);
+        }
+        
+        // Close modal after delay
+        setTimeout(() => {
+            closeEditEmployeeModal();
+            showNotification('Employee updated successfully!', 'success');
+        }, 1500);
+        
+    } catch (error) {
+        console.error('Error updating employee:', error);
+        msgEl.style.color = '#EF4444';
+        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
+    }
+}
+
+// Show notification
+function showNotification(message, type = 'info') {
+    const colors = {
+        success: '#10B981',
+        error: '#EF4444',
+        warning: '#F59E0B',
+        info: '#3B82F6'
+    };
+    
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${colors[type] || colors.info};
+        color: white;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        z-index: 9999;
+        max-width: 400px;
+        transition: all 0.3s ease;
+        opacity: 0;
+        transform: translateY(20px);
+    `;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.opacity = '1';
+        notification.style.transform = 'translateY(0)';
+    }, 50);
+    
+    setTimeout(() => {
+        notification.style.opacity = '0';
+        notification.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+        }, 300);
+    }, 3000);
+}
+
+// Override the updateEmployeeTable function to use cards
+function updateEmployeeTable(users) {
+    // Use the new card-based display instead of table
+    updateEmployeesGrid(users);
+}
+
+// ============ END EMPLOYEE FUNCTIONS ============
 
 function updateScanTable(scans) {
     const body = document.getElementById('dashboardScanBody');
@@ -263,6 +898,409 @@ async function loadActivityFeed() {
     }
 }
 
+// ============ DTR FUNCTIONS ============
+
+// Load DTR employees for the dropdown
+async function loadDTREmployees() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/employees`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load DTR employees:', response.status);
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            const select = document.getElementById('dtrEmployeeSelect');
+            if (!select) return;
+            
+            // Clear existing options except the first one
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            
+            // Add employees to dropdown
+            result.data.forEach(emp => {
+                const option = document.createElement('option');
+                option.value = emp.rfid;
+                option.textContent = `${emp.fullname} (${emp.employeeid || 'N/A'})`;
+                option.dataset.fullname = emp.fullname;
+                option.dataset.employeeid = emp.employeeid || '';
+                option.dataset.position = emp.position || '';
+                option.dataset.department = emp.department || '';
+                option.dataset.role = emp.role || 'employee';
+                select.appendChild(option);
+            });
+            
+            // Auto-load first employee if available
+            if (result.data.length > 0) {
+                select.value = result.data[0].rfid;
+                // Load the DTR automatically
+                loadDTRRecord();
+            }
+        }
+    } catch (error) {
+        console.error('Error loading DTR employees:', error);
+    }
+}
+
+// Load available months for DTR
+async function loadDTRMonths() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/months`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load DTR months:', response.status);
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            const select = document.getElementById('dtrMonthSelect');
+            if (!select) return;
+            
+            // Clear existing options except the first one
+            while (select.options.length > 1) {
+                select.remove(1);
+            }
+            
+            // Add months to dropdown
+            result.data.forEach(month => {
+                const option = document.createElement('option');
+                option.value = month.value;
+                option.textContent = month.label;
+                select.appendChild(option);
+            });
+            
+            // Set current month as default if available
+            const currentMonth = new Date().toISOString().slice(0, 7);
+            for (let i = 0; i < select.options.length; i++) {
+                if (select.options[i].value === currentMonth) {
+                    select.selectedIndex = i;
+                    break;
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error loading DTR months:', error);
+    }
+}
+
+// Load DTR record for selected employee
+async function loadDTRRecord() {
+    const select = document.getElementById('dtrEmployeeSelect');
+    const monthSelect = document.getElementById('dtrMonthSelect');
+    const rfid = select.value;
+    const month = monthSelect.value;
+    
+    if (!rfid || rfid === '') {
+        showDTRMessage('Please select an employee.', 'warning');
+        return;
+    }
+    
+    if (!month || month === '') {
+        showDTRMessage('Please select a month.', 'warning');
+        return;
+    }
+    
+    // Get employee info from selected option
+    const option = select.options[select.selectedIndex];
+    const fullname = option.dataset.fullname || '';
+    const employeeid = option.dataset.employeeid || '';
+    const role = option.dataset.role || 'employee';
+    
+    // Update employee info display - simplified (only name, ID, role, month)
+    document.getElementById('dtrEmployeeName').textContent = fullname || '--';
+    document.getElementById('dtrEmployeeId').textContent = employeeid || '--';
+    document.getElementById('dtrRole').textContent = role ? role.toUpperCase() : '--';
+    document.getElementById('dtrSigEmployee').textContent = fullname || 'Employee Signature';
+    
+    try {
+        // Show loading state
+        const tbody = document.getElementById('dtrTableBody');
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">
+                <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading DTR...
+            </td></tr>`;
+        }
+        
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load DTR record:', response.status);
+            showDTRMessage('Failed to load DTR record.', 'error');
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            const record = result.data.record;
+            const dtr = record.dtr || [];
+            
+            // Update month display
+            document.getElementById('dtrMonth').textContent = record.month_display || month;
+            
+            // Update totals
+            document.getElementById('dtrTotalHours').textContent = record.total_hours || '0.00';
+            document.getElementById('dtrTotalOt').textContent = record.total_ot || '0.00';
+            document.getElementById('dtrTotalUt').textContent = record.total_ut || '0.00';
+            
+            // Update DTR table
+            const tbody = document.getElementById('dtrTableBody');
+            if (!tbody) return;
+            
+            if (!dtr || dtr.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--text-muted);">
+                    No attendance records for this month.
+                </td></tr>`;
+                showDTRMessage('No attendance records found for this month.', 'info');
+                return;
+            }
+            
+            // Display all days
+            tbody.innerHTML = dtr.map(day => {
+                const isWeekend = day.day === 'Sat' || day.day === 'Sun';
+                const isLeave = day.status === 'on_leave';
+                let rowStyle = '';
+                let statusText = day.status || '';
+                
+                if (isLeave) {
+                    rowStyle = 'background-color:#FEF3C7;';
+                    statusText = 'ON LEAVE';
+                } else if (isWeekend) {
+                    rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
+                    statusText = 'Weekend';
+                }
+                
+                return `<tr style="${rowStyle}">
+                    <td>${escapeHtml(day.day || '')}</td>
+                    <td>${escapeHtml(day.date || '')}</td>
+                    <td>${escapeHtml(day.am_in || '')}</td>
+                    <td>${escapeHtml(day.am_out || '')}</td>
+                    <td>${escapeHtml(day.pm_in || '')}</td>
+                    <td>${escapeHtml(day.pm_out || '')}</td>
+                    <td>${escapeHtml(day.hours || '0.00')}</td>
+                    <td>${escapeHtml(day.ut || '0.00')}</td>
+                    <td>${escapeHtml(day.ot || '0.00')}</td>
+                    <td>${escapeHtml(statusText)}</td>
+                </tr>`;
+            }).join('');
+            
+            showDTRMessage(`DTR loaded for ${fullname} (${record.month_display})`, 'success');
+        }
+    } catch (error) {
+        console.error('Error loading DTR record:', error);
+        showDTRMessage('Error loading DTR record.', 'error');
+    }
+}
+
+// Show DTR message
+function showDTRMessage(message, type = 'info') {
+    const msgEl = document.getElementById('dtrMessage');
+    if (!msgEl) return;
+    
+    const colors = {
+        success: '#10B981',
+        error: '#EF4444',
+        warning: '#F59E0B',
+        info: '#3B82F6'
+    };
+    
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    };
+    
+    msgEl.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${message}`;
+    msgEl.style.color = colors[type] || colors.info;
+    msgEl.style.display = 'block';
+    msgEl.className = `dtr-message dtr-message-${type}`;
+    
+    // Auto hide after 5 seconds for success messages
+    if (type === 'success') {
+        clearTimeout(msgEl._timeout);
+        msgEl._timeout = setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+    }
+}
+
+// Generate DTR PDF - Downloads the PDF using the API
+async function generateDTRPDF() {
+    const select = document.getElementById('dtrEmployeeSelect');
+    const monthSelect = document.getElementById('dtrMonthSelect');
+    const rfid = select.value;
+    const month = monthSelect.value;
+    
+    if (!rfid || rfid === '') {
+        showDTRMessage('Please select an employee first.', 'warning');
+        return;
+    }
+    
+    if (!month || month === '') {
+        showDTRMessage('Please select a month.', 'warning');
+        return;
+    }
+    
+    try {
+        showDTRMessage('Generating PDF...', 'info');
+        
+        // The API endpoint that generates the PDF
+        const url = `${dashboardApiBaseUrl}/api/dtr/generate-pdf/${rfid}?month=${month}`;
+        
+        // Fetch with authorization
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            showDTRMessage(errorData.message || 'Failed to generate PDF.', 'error');
+            return;
+        }
+        
+        // Get the blob from response
+        const blob = await response.blob();
+        
+        // Create download link
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        
+        // Get filename from Content-Disposition header or generate one
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'DTR.pdf';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="([^"]+)"/);
+            if (match) {
+                filename = match[1];
+            }
+        }
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        // Revoke the URL after a delay
+        setTimeout(() => {
+            URL.revokeObjectURL(link.href);
+        }, 1000);
+        
+        showDTRMessage('PDF downloaded successfully!', 'success');
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        showDTRMessage('Error generating PDF.', 'error');
+    }
+}
+
+// Print DTR - Uses browser print functionality
+function printDTR() {
+    window.print();
+}
+
+// ============ END DTR FUNCTIONS ============
+
+// Update Realtime Attendance rate circle and progress bars
+function updateAttendanceRate(stats) {
+    const total = stats.total_employees || 0;
+    const present = stats.present_today || 0;
+    const absent = stats.absent_today || 0;
+    const onLeave = stats.on_leave || 0;
+    const rate = stats.attendance_rate || 0;
+    
+    // Update rate circle
+    const rateCircle = document.querySelector('.rate-circle');
+    const rateValue = document.querySelector('.rate-value');
+    if (rateCircle && rateValue) {
+        const percentage = Math.min(rate, 100);
+        rateCircle.style.background = `conic-gradient(var(--success) 0% ${percentage}%, var(--border) ${percentage}% 100%)`;
+        rateValue.textContent = `${percentage}%`;
+    }
+    
+    // Update attendance rate text
+    const rateText = document.getElementById('attendanceRateText');
+    if (rateText) {
+        rateText.textContent = `${present} of ${total} employees present`;
+    }
+    
+    // Update progress bars
+    const presentFill = document.getElementById('presentFill');
+    const lateFill = document.getElementById('lateFill');
+    const absentFill = document.getElementById('absentFill');
+    const leaveFill = document.getElementById('leaveFill');
+    
+    const presentCount = document.getElementById('presentCount');
+    const lateCount = document.getElementById('lateCount');
+    const absentCount = document.getElementById('absentCount');
+    const leaveCount = document.getElementById('leaveCount');
+    
+    if (total > 0) {
+        const presentPct = (present / total) * 100;
+        const latePct = 0; // No late data from API yet
+        const absentPct = (absent / total) * 100;
+        const leavePct = (onLeave / total) * 100;
+        
+        if (presentFill) presentFill.style.width = `${Math.min(presentPct, 100)}%`;
+        if (lateFill) lateFill.style.width = `${Math.min(latePct, 100)}%`;
+        if (absentFill) absentFill.style.width = `${Math.min(absentPct, 100)}%`;
+        if (leaveFill) leaveFill.style.width = `${Math.min(leavePct, 100)}%`;
+        
+        if (presentCount) presentCount.textContent = present;
+        if (lateCount) lateCount.textContent = 0;
+        if (absentCount) absentCount.textContent = absent;
+        if (leaveCount) leaveCount.textContent = onLeave;
+    } else {
+        if (presentFill) presentFill.style.width = '0%';
+        if (lateFill) lateFill.style.width = '0%';
+        if (absentFill) absentFill.style.width = '0%';
+        if (leaveFill) leaveFill.style.width = '0%';
+        
+        if (presentCount) presentCount.textContent = 0;
+        if (lateCount) lateCount.textContent = 0;
+        if (absentCount) absentCount.textContent = 0;
+        if (leaveCount) leaveCount.textContent = 0;
+    }
+}
+
 async function loadDashboardData() {
     try {
         const response = await fetch(`${dashboardApiBaseUrl}/api/dashboard-data`, {
@@ -279,11 +1317,17 @@ async function loadDashboardData() {
 
         const result = await response.json();
         const data = result.data || {};
-        updateDashboardStatistics(data.stats || {});
+        const stats = data.stats || {};
+        
+        updateDashboardStatistics(stats);
+        updateAttendanceRate(stats);
         updateEmployeeTable(data.users || []);
         updateScanTable(data.scans || []);
         updateAttendanceTable(data.scans || []);
         updateDeviceDisplay(data.devices || []);
+        
+        // Update system status indicators
+        updateSystemStatus(data);
         
         // Update activity timeline from dashboard data or fetch separately
         if (data.activities && data.activities.length > 0) {
@@ -303,6 +1347,29 @@ async function loadDashboardData() {
     } catch (error) {
         updateDeviceDisplay([]);
     }
+}
+
+// Update system status indicators (RFID Reader, Database, Server, Network)
+function updateSystemStatus(data) {
+    const devices = data.devices || [];
+    const isOnline = devices.length > 0;
+    
+    // RFID Reader status
+    const readerIndicator = document.getElementById('readerStatusIndicator');
+    const readerStatusText = document.getElementById('readerStatusText');
+    if (readerIndicator) {
+        readerIndicator.className = `status-indicator ${isOnline ? 'status-online' : 'status-offline'}`;
+    }
+    if (readerStatusText) {
+        readerStatusText.className = `status-text ${isOnline ? 'text-online' : 'text-offline'}`;
+        readerStatusText.innerHTML = isOnline
+            ? '<i class="fa-solid fa-circle-check"></i> Online'
+            : '<i class="fa-solid fa-circle-xmark"></i> Offline';
+    }
+    
+    // Database status - always online if API responds
+    // Server status - always online if API responds
+    // Network status - always online if API responds
 }
 
 async function verifyDashboardSession() {
@@ -329,6 +1396,9 @@ async function verifyDashboardSession() {
         const data = await response.json();
         updateUserDisplay(data.user);
         await loadDashboardData();
+        // Load DTR data after dashboard loads
+        await loadDTREmployees();
+        await loadDTRMonths();
     } catch (error) {
         redirectToLogin();
     }
@@ -426,10 +1496,10 @@ const pageHeaderMap = {
         title: 'Employee Directory',
         subtitle: 'Manage employee personal information and records.'
     },
-    '#employee-list': {
+    '#employee-register': {
         breadcrumb: 'IPO — Employees Personal Info',
-        title: 'Employee List',
-        subtitle: 'Browse and search registered employees.'
+        title: 'Employee Register',
+        subtitle: 'Register new employees and manage user accounts.'
     },
     '#dtr': {
         breadcrumb: 'IPO — Employees Personal Info',
@@ -628,48 +1698,328 @@ if (logoutConfirmYes) {
     });
 }
 
+// ============ SETTINGS FUNCTIONS ============
+
+// Load settings
+async function loadSettings() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load settings:', response.status);
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            populateSettingsForm(result.data);
+            
+            // Update version display with GitHub version info
+            updateVersionDisplay(result.data);
+        }
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+// Populate settings form with data
+function populateSettingsForm(settings) {
+    // Attendance settings
+    if (settings.attendance) {
+        const att = settings.attendance;
+        document.getElementById('settingsWorkStart').value = att.work_start || '08:00';
+        document.getElementById('settingsWorkEnd').value = att.work_end || '17:00';
+        document.getElementById('settingsLunchStart').value = att.lunch_start || '12:00';
+        document.getElementById('settingsLunchEnd').value = att.lunch_end || '13:00';
+        document.getElementById('settingsGracePeriod').value = att.grace_period || 10;
+    }
+    
+    // Institution settings
+    if (settings.institution) {
+        const inst = settings.institution;
+        document.getElementById('settingsInstitutionName').value = inst.name || '';
+        document.getElementById('settingsSystemName').value = inst.system_name || '';
+        document.getElementById('settingsAcademicYear').value = inst.academic_year || '';
+        document.getElementById('settingsHREmail').value = inst.hr_email || '';
+    }
+    
+    // System settings
+    if (settings.system) {
+        document.getElementById('settingsVersion').value = settings.system.version || '1.0.0';
+        document.getElementById('settingsVersionUrl').value = settings.system.version_url || '';
+    }
+}
+
+// Update version display with GitHub version info
+function updateVersionDisplay(settings) {
+    const versionInput = document.getElementById('settingsVersion');
+    const versionStatus = document.getElementById('settingsVersionStatus');
+    const checkBtn = document.getElementById('checkVersionBtn');
+    
+    if (!versionInput || !versionStatus) return;
+    
+    const currentVersion = settings.system?.version || '1.0.0';
+    const githubVersion = settings.system?.github_version || null;
+    
+    versionInput.value = currentVersion;
+    
+    if (githubVersion) {
+        const isNewer = settings.system?.is_newer_available || false;
+        if (isNewer) {
+            versionStatus.innerHTML = `
+                <span style="color:var(--warning);">
+                    <i class="fa-solid fa-arrow-up"></i> New version ${githubVersion} available!
+                </span>
+            `;
+            if (checkBtn) {
+                checkBtn.innerHTML = '<i class="fa-solid fa-download"></i> Update Available';
+                checkBtn.style.background = 'var(--warning)';
+                checkBtn.style.color = 'white';
+            }
+        } else {
+            versionStatus.innerHTML = `
+                <span style="color:var(--success);">
+                    <i class="fa-solid fa-check-circle"></i> Up to date (v${githubVersion})
+                </span>
+            `;
+            if (checkBtn) {
+                checkBtn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check for Updates';
+                checkBtn.style.background = '';
+                checkBtn.style.color = '';
+            }
+        }
+    } else {
+        versionStatus.innerHTML = `
+            <span style="color:var(--text-muted);">
+                <i class="fa-solid fa-link"></i> Unable to check for updates
+            </span>
+        `;
+    }
+}
+
+// Save settings
+async function saveSettings() {
+    const settingsData = {
+        attendance: {
+            work_start: document.getElementById('settingsWorkStart').value,
+            work_end: document.getElementById('settingsWorkEnd').value,
+            lunch_start: document.getElementById('settingsLunchStart').value,
+            lunch_end: document.getElementById('settingsLunchEnd').value,
+            grace_period: parseInt(document.getElementById('settingsGracePeriod').value) || 10
+        },
+        institution: {
+            name: document.getElementById('settingsInstitutionName').value,
+            system_name: document.getElementById('settingsSystemName').value,
+            academic_year: document.getElementById('settingsAcademicYear').value,
+            hr_email: document.getElementById('settingsHREmail').value
+        },
+        system: {
+            version_url: document.getElementById('settingsVersionUrl').value
+        }
+    };
+    
+    const msgEl = document.getElementById('settingsMessage');
+    msgEl.style.display = 'block';
+    msgEl.style.color = '#3B82F6';
+    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving settings...';
+    
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
+            method: 'PUT',
+            headers: {
+                ...getAuthHeaders(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settingsData),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to save settings.'}`;
+            return;
+        }
+        
+        msgEl.style.color = '#10B981';
+        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings saved successfully!';
+        
+        // Refresh settings to get updated version info
+        setTimeout(() => {
+            loadSettings();
+        }, 1000);
+        
+        // Auto hide after 3 seconds
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        msgEl.style.color = '#EF4444';
+        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
+    }
+}
+
+// Check for version update
+async function checkVersionUpdate() {
+    const msgEl = document.getElementById('settingsMessage');
+    const checkBtn = document.getElementById('checkVersionBtn');
+    
+    msgEl.style.display = 'block';
+    msgEl.style.color = '#3B82F6';
+    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking for updates...';
+    
+    if (checkBtn) {
+        checkBtn.disabled = true;
+        checkBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
+    }
+    
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings/check-version`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to check version.'}`;
+            return;
+        }
+        
+        if (result.status === 'success' && result.data) {
+            const data = result.data;
+            const versionInput = document.getElementById('settingsVersion');
+            const versionStatus = document.getElementById('settingsVersionStatus');
+            
+            versionInput.value = data.current_version;
+            
+            if (data.is_newer_available) {
+                versionStatus.innerHTML = `
+                    <span style="color:var(--warning);">
+                        <i class="fa-solid fa-arrow-up"></i> New version ${data.github_version} available! (Current: ${data.current_version})
+                    </span>
+                `;
+                if (checkBtn) {
+                    checkBtn.innerHTML = '<i class="fa-solid fa-download"></i> Update Available';
+                    checkBtn.style.background = 'var(--warning)';
+                    checkBtn.style.color = 'white';
+                }
+                msgEl.style.color = '#F59E0B';
+                msgEl.innerHTML = `<i class="fa-solid fa-arrow-up"></i> Version ${data.github_version} is available!`;
+            } else {
+                versionStatus.innerHTML = `
+                    <span style="color:var(--success);">
+                        <i class="fa-solid fa-check-circle"></i> Up to date (v${data.github_version || data.current_version})
+                    </span>
+                `;
+                if (checkBtn) {
+                    checkBtn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check for Updates';
+                    checkBtn.style.background = '';
+                    checkBtn.style.color = '';
+                }
+                msgEl.style.color = '#10B981';
+                msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> You have the latest version!';
+            }
+        }
+        
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error checking version:', error);
+        msgEl.style.color = '#EF4444';
+        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Error checking for updates.';
+    } finally {
+        if (checkBtn) {
+            checkBtn.disabled = false;
+        }
+    }
+}
+
+// Reset settings to defaults
+async function resetSettings() {
+    if (!confirm('Are you sure you want to reset all settings to default values?')) {
+        return;
+    }
+    
+    const msgEl = document.getElementById('settingsMessage');
+    msgEl.style.display = 'block';
+    msgEl.style.color = '#3B82F6';
+    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting settings...';
+    
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings/reset`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to reset settings.'}`;
+            return;
+        }
+        
+        msgEl.style.color = '#10B981';
+        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings reset to defaults!';
+        
+        // Reload settings
+        setTimeout(() => {
+            loadSettings();
+        }, 1000);
+        
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error resetting settings:', error);
+        msgEl.style.color = '#EF4444';
+        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
+    }
+}
+
+// ============ END SETTINGS FUNCTIONS ============
+
 window.addEventListener('pageshow', verifyDashboardSession);
 setInterval(updateClock, 1000);
 setInterval(loadDashboardData, 5000);
 setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds
 updateClock();
-// Collapse employee cards to first 5 with a "View more" toggle
-function setupEmployeeCardCollapse() {
-    const grid = document.querySelector('.employees-grid');
-    if (!grid) return;
-    const cards = Array.from(grid.querySelectorAll('.emp-card'));
-    const MAX_VISIBLE = 5;
-    if (cards.length <= MAX_VISIBLE) return;
-    // hide cards beyond MAX_VISIBLE
-    cards.forEach((c, i) => { if (i >= MAX_VISIBLE) c.style.display = 'none'; });
 
-    // create footer toggle
-    const footer = document.createElement('div');
-    footer.className = 'emp-grid-footer';
-    footer.style.textAlign = 'center';
-    footer.style.marginTop = '12px';
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-outline emp-toggle-btn';
-    btn.type = 'button';
-    btn.textContent = `View more (${cards.length - MAX_VISIBLE})`;
-    btn.setAttribute('data-expanded', 'false');
-    btn.addEventListener('click', () => {
-        const expanded = btn.getAttribute('data-expanded') === 'true';
-        if (!expanded) {
-            cards.forEach((c) => c.style.display = '');
-            btn.textContent = 'View less';
-            btn.setAttribute('data-expanded', 'true');
-        } else {
-            cards.forEach((c, idx) => { if (idx >= MAX_VISIBLE) c.style.display = 'none'; });
-            btn.textContent = `View more (${cards.length - MAX_VISIBLE})`;
-            btn.setAttribute('data-expanded', 'false');
-            // bring grid into view
-            grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-    });
-    footer.appendChild(btn);
-    grid.parentNode.insertBefore(footer, grid.nextSibling);
-}
-
-setupEmployeeCardCollapse();
+// Remove the old employee card collapse function since we have a new one
+// The new functions handle everything
 verifyDashboardSession();

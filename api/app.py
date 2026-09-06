@@ -5,16 +5,59 @@ import hashlib
 import calendar
 import jwt
 import secrets
-
-from flask import Flask, jsonify, request, session, send_from_directory, send_file
-from werkzeug.utils import secure_filename
+import io
+import re
 from datetime import datetime, timedelta
+
+from flask import Flask, jsonify, request, session, send_from_directory, send_file, make_response
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+
+# Try to import PIL for image processing
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("Warning: Pillow not installed. Image compression will be disabled.")
+
+# Try to import reportlab, fallback if not installed
+try:
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch, cm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    print("Warning: reportlab not installed. PDF generation will be disabled.")
+
+# Try to import requests for version checking
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("Warning: requests not installed. Version checking will be disabled.")
 
 ## Variables ------------------------------------
 # Create the Flask application.
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "tapin-development-secret-key")
 app.permanent_session_lifetime = timedelta(hours=3)
+
+# Enable CORS for Railway
+CORS(app, origins=[
+    "https://tapin-2s5w.onrender.com",
+    "https://tapin-api.up.railway.app",
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "http://localhost:5500",
+    "http://127.0.0.1:5500"
+], supports_credentials=True, allow_headers=["Content-Type", "Authorization", "Cookie", "Set-Cookie"])
 
 # JWT Configuration
 JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
@@ -23,11 +66,12 @@ JWT_EXPIRATION = timedelta(hours=3)
 # Update session cookie settings for better compatibility
 app.config.update(
     SESSION_COOKIE_SAMESITE='None',
-    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_SECURE=False,  # Set to True in production with HTTPS
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_PATH='/',
     SESSION_COOKIE_DOMAIN=None,
-    SESSION_COOKIE_NAME='tapin_session'
+    SESSION_COOKIE_NAME='tapin_session',
+    SESSION_TYPE='filesystem'
 )
 
 # FIXED: Get the base directory more reliably
@@ -64,6 +108,9 @@ LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves.json")
 # Activity feed storage - keeps all system activities for timeline
 ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.json")
 
+# Settings storage
+SETTINGS_FILE = os.path.join(BASE_DIR, "storage", "config", "settings.json")
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
@@ -72,6 +119,7 @@ os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
@@ -82,6 +130,31 @@ print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
 print(f"SCAN_EVENTS_FILE: {SCAN_EVENTS_FILE}")
 print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
 print(f"ACTIVITY_FEED_FILE: {ACTIVITY_FEED_FILE}")
+print(f"SETTINGS_FILE: {SETTINGS_FILE}")
+print(f"REPORTLAB_AVAILABLE: {REPORTLAB_AVAILABLE}")
+print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
+print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
+
+# Default settings
+DEFAULT_SETTINGS = {
+    "attendance": {
+        "work_start": "08:00",
+        "work_end": "17:00",
+        "lunch_start": "12:00",
+        "lunch_end": "13:00",
+        "grace_period": 10
+    },
+    "institution": {
+        "name": "ISPSC Tagudin Campus",
+        "system_name": "TAPIN",
+        "academic_year": "2025-2026",
+        "hr_email": "hr@ispsc.edu.ph"
+    },
+    "system": {
+        "version": "1.0.0",
+        "version_url": "https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt"
+    }
+}
 
 # Open the shared dashboard after a successful login.
 WEB_DASHBOARD = "/pages/dashboard.html"
@@ -134,6 +207,174 @@ latest_scan = {
 last_scan_tracking = {}
 
 ## Functions ------------------------------------
+# Image compression function
+def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_dimensions=(300, 300)):
+    """
+    Compress and resize an image to reduce file size.
+    
+    Args:
+        image_file: The uploaded image file
+        rfid: The RFID to use as filename
+        max_size_kb: Maximum file size in KB (default: 100KB)
+        quality: Initial JPEG quality (1-100)
+        max_dimensions: Max width and height (default: 300x300)
+    
+    Returns:
+        str: The saved file path or None if failed
+    """
+    if not PIL_AVAILABLE:
+        # Fallback: save without compression
+        extension = os.path.splitext(image_file.filename)[1].lower()
+        rfid_filename = secure_filename(rfid)
+        os.makedirs(PROFILE_STORAGE, exist_ok=True)
+        filename = rfid_filename + extension
+        image_file.save(os.path.join(PROFILE_STORAGE, filename))
+        return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+    
+    try:
+        # Open the image
+        img = Image.open(image_file)
+        
+        # Convert to RGB if necessary (for PNG with transparency)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+            img = background
+        
+        # Resize image maintaining aspect ratio
+        img.thumbnail(max_dimensions, Image.Resampling.LANCZOS)
+        
+        # Determine file extension
+        extension = os.path.splitext(image_file.filename)[1].lower()
+        rfid_filename = secure_filename(rfid)
+        os.makedirs(PROFILE_STORAGE, exist_ok=True)
+        
+        # Try to save as JPEG for better compression
+        if extension in ['.jpg', '.jpeg']:
+            filename = rfid_filename + '.jpg'
+            filepath = os.path.join(PROFILE_STORAGE, filename)
+            
+            # Try different quality settings to achieve target size
+            current_quality = quality
+            while current_quality > 10:
+                # Save to buffer to check size
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
+                size_kb = len(buffer.getvalue()) / 1024
+                
+                if size_kb <= max_size_kb:
+                    # Save to file
+                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
+                    print(f"Image compressed to {size_kb:.1f}KB (quality: {current_quality})")
+                    return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+                
+                # Reduce quality by 5
+                current_quality -= 5
+            
+            # If still too large, save with minimum quality
+            img.save(filepath, format='JPEG', quality=10, optimize=True)
+            return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+        
+        elif extension in ['.png']:
+            # For PNG, convert to JPEG for better compression
+            filename = rfid_filename + '.jpg'
+            filepath = os.path.join(PROFILE_STORAGE, filename)
+            
+            # Try different quality settings
+            current_quality = quality
+            while current_quality > 10:
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
+                size_kb = len(buffer.getvalue()) / 1024
+                
+                if size_kb <= max_size_kb:
+                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
+                    print(f"PNG compressed to JPEG {size_kb:.1f}KB (quality: {current_quality})")
+                    return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+                
+                current_quality -= 5
+            
+            img.save(filepath, format='JPEG', quality=10, optimize=True)
+            return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+        
+        else:
+            # For other formats, try to save as JPEG
+            filename = rfid_filename + '.jpg'
+            filepath = os.path.join(PROFILE_STORAGE, filename)
+            img.save(filepath, format='JPEG', quality=quality, optimize=True)
+            return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+            
+    except Exception as e:
+        print(f"Error compressing image: {e}")
+        # Fallback: save without compression
+        try:
+            extension = os.path.splitext(image_file.filename)[1].lower()
+            rfid_filename = secure_filename(rfid)
+            os.makedirs(PROFILE_STORAGE, exist_ok=True)
+            filename = rfid_filename + extension
+            image_file.save(os.path.join(PROFILE_STORAGE, filename))
+            return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+        except:
+            return None
+
+# Load settings
+def load_settings():
+    """Load settings from JSON file"""
+    if not os.path.exists(SETTINGS_FILE):
+        # Create default settings file
+        save_settings(DEFAULT_SETTINGS)
+        return DEFAULT_SETTINGS.copy()
+    
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # Merge with defaults to ensure all keys exist
+            merged = DEFAULT_SETTINGS.copy()
+            for key in merged:
+                if key in data:
+                    if isinstance(merged[key], dict) and isinstance(data[key], dict):
+                        merged[key].update(data[key])
+                    else:
+                        merged[key] = data[key]
+            return merged
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading settings file: {e}")
+        return DEFAULT_SETTINGS.copy()
+
+# Save settings
+def save_settings(settings_data):
+    """Save settings to JSON file"""
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings_data, f, indent=4)
+        f.write("\n")
+    print(f"Settings saved to {SETTINGS_FILE}")
+
+# Load settings on startup
+settings = load_settings()
+
+# Get current version from GitHub
+def fetch_version_from_github():
+    """Fetch version from GitHub raw URL"""
+    if not REQUESTS_AVAILABLE:
+        return None
+    try:
+        url = settings.get("system", {}).get("version_url", "https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt")
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            version_text = response.text.strip()
+            # Parse version from text (e.g., "test - v0.1.55" -> "0.1.55")
+            match = re.search(r'v?(\d+\.\d+\.\d+)', version_text)
+            if match:
+                return match.group(1)
+            return version_text
+        return None
+    except Exception as e:
+        print(f"Error fetching version from GitHub: {e}")
+        return None
+
 # Load activity feed data
 def load_activity_feed():
     """Load activity feed data from JSON file"""
@@ -1014,6 +1255,399 @@ def get_employee_attendance(rfid):
     
     return jsonify(response_data), 200
 
+## DTR GENERATION ROUTES ------------------------------------
+# Get all employees (excluding admin and hr) for DTR selection
+@app.route("/api/dtr/employees", methods=["GET"])
+def get_dtr_employees():
+    """Get list of all employees (excluding admin and hr) for DTR selection"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    employees = []
+    for rfid, emp in employee_database.items():
+        role = emp.get("role", "").lower()
+        if role not in ["admin", "hr"]:
+            employees.append({
+                "uid": emp.get("uid"),
+                "employeeid": emp.get("employeeid"),
+                "rfid": emp.get("rfid"),
+                "fullname": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                "firstname": emp.get("firstname"),
+                "lastname": emp.get("lastname"),
+                "position": emp.get("position", ""),
+                "department": emp.get("department", ""),
+                "role": role
+            })
+    
+    # Sort by fullname
+    employees.sort(key=lambda x: x.get("fullname", ""))
+    
+    return jsonify({
+        "status": "success",
+        "data": employees
+    }), 200
+
+# Get attendance record for a specific employee for DTR generation
+@app.route("/api/dtr/record/<rfid>", methods=["GET"])
+def get_dtr_record(rfid):
+    """Get attendance record for a specific employee for DTR generation"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    rfid = rfid.strip().upper()
+    employee = employee_database.get(rfid)
+    
+    if not employee:
+        return jsonify({
+            "status": "error",
+            "message": "Employee not found"
+        }), 404
+    
+    # Get month parameter (default to current month)
+    month = request.args.get("month", datetime.now().strftime("%Y-%m"))
+    
+    # Find attendance record for this employee and month
+    attendance_record = None
+    for record in attendance_records:
+        if record.get("uid") == employee.get("uid") and record.get("month") == month:
+            attendance_record = record
+            break
+    
+    if not attendance_record:
+        # Create a new record for this employee and month
+        scan_date = datetime.strptime(month + "-01", "%Y-%m-%d")
+        attendance_record = get_attendance_record(employee, scan_date)
+        save_attendance_data()
+    
+    # Prepare the response with DTR data
+    dtr_data = []
+    for date_key, day_data in attendance_record.get("dtr", {}).items():
+        dtr_data.append({
+            "date": day_data.get("date", ""),
+            "day": day_data.get("day", ""),
+            "am_in": day_data.get("am_in", ""),
+            "am_out": day_data.get("am_out", ""),
+            "pm_in": day_data.get("pm_in", ""),
+            "pm_out": day_data.get("pm_out", ""),
+            "hours": day_data.get("hours", "0.00"),
+            "ut": day_data.get("ut", "0.00"),
+            "ot": day_data.get("ot", "0.00"),
+            "status": day_data.get("status", "")
+        })
+    
+    # Log activity
+    add_activity(
+        "dtr_viewed",
+        f"DTR viewed for {employee.get('firstname', '')} {employee.get('lastname', '')} for {attendance_record.get('month_display', '')}",
+        {"name": session.get("user", {}).get("fullname", "User")},
+        "attendance"
+    )
+    
+    return jsonify({
+        "status": "success",
+        "data": {
+            "employee": {
+                "uid": employee.get("uid"),
+                "employeeid": employee.get("employeeid"),
+                "rfid": employee.get("rfid"),
+                "fullname": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+                "firstname": employee.get("firstname"),
+                "lastname": employee.get("lastname"),
+                "position": employee.get("position", ""),
+                "department": employee.get("department", ""),
+                "image": employee.get("image", "")
+            },
+            "record": {
+                "id": attendance_record.get("id"),
+                "month": attendance_record.get("month"),
+                "month_display": attendance_record.get("month_display"),
+                "total_hours": attendance_record.get("total_hours", "0.00"),
+                "total_ut": attendance_record.get("total_ut", "0.00"),
+                "total_ot": attendance_record.get("total_ot", "0.00"),
+                "dtr": dtr_data
+            }
+        }
+    }), 200
+
+# Generate and download DTR as PDF
+@app.route("/api/dtr/generate-pdf/<rfid>", methods=["GET"])
+def generate_dtr_pdf(rfid):
+    """Generate DTR PDF for a specific employee"""
+    # Check if reportlab is available
+    if not REPORTLAB_AVAILABLE:
+        return jsonify({
+            "status": "error",
+            "message": "PDF generation is not available. Please install reportlab."
+        }), 500
+    
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    rfid = rfid.strip().upper()
+    employee = employee_database.get(rfid)
+    
+    if not employee:
+        return jsonify({
+            "status": "error",
+            "message": "Employee not found"
+        }), 404
+    
+    # Get month parameter (default to current month)
+    month = request.args.get("month", datetime.now().strftime("%Y-%m"))
+    
+    # Find attendance record for this employee and month
+    attendance_record = None
+    for record in attendance_records:
+        if record.get("uid") == employee.get("uid") and record.get("month") == month:
+            attendance_record = record
+            break
+    
+    if not attendance_record:
+        scan_date = datetime.strptime(month + "-01", "%Y-%m-%d")
+        attendance_record = get_attendance_record(employee, scan_date)
+        save_attendance_data()
+    
+    # Create PDF
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), 
+                           rightMargin=0.5*inch, leftMargin=0.5*inch,
+                           topMargin=0.5*inch, bottomMargin=0.5*inch)
+    
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CenterTitle',
+        parent=styles['Normal'],
+        fontSize=14,
+        alignment=TA_CENTER,
+        fontName='Helvetica-Bold',
+        spaceAfter=6
+    ))
+    styles.add(ParagraphStyle(
+        name='CenterSubtitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        alignment=TA_CENTER,
+        fontName='Helvetica',
+        spaceAfter=4
+    ))
+    styles.add(ParagraphStyle(
+        name='CenterSmall',
+        parent=styles['Normal'],
+        fontSize=8,
+        alignment=TA_CENTER,
+        fontName='Helvetica',
+        spaceAfter=2
+    ))
+    styles.add(ParagraphStyle(
+        name='RightText',
+        parent=styles['Normal'],
+        fontSize=9,
+        alignment=TA_RIGHT,
+        fontName='Helvetica'
+    ))
+    styles.add(ParagraphStyle(
+        name='InfoText',
+        parent=styles['Normal'],
+        fontSize=9,
+        fontName='Helvetica',
+        spaceAfter=2
+    ))
+    
+    elements = []
+    
+    # Title
+    elements.append(Paragraph("DAILY TIME RECORD", styles['CenterTitle']))
+    elements.append(Paragraph("Civil Service Commission · Republic of the Philippines", styles['CenterSubtitle']))
+    elements.append(Paragraph("CSC Form No. 48 — Revised 2018", styles['CenterSmall']))
+    elements.append(Spacer(1, 0.15*inch))
+    
+    # Employee Info
+    fullname = f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip()
+    employee_info = [
+        [Paragraph(f"<b>Employee:</b> {fullname}", styles['InfoText']),
+         Paragraph(f"<b>Employee ID:</b> {employee.get('employeeid', '')}", styles['InfoText'])],
+        [Paragraph(f"<b>Position:</b> {employee.get('position', '')}", styles['InfoText']),
+         Paragraph(f"<b>Department:</b> {employee.get('department', '')}", styles['InfoText'])],
+        [Paragraph(f"<b>Month:</b> {attendance_record.get('month_display', '')}", styles['InfoText']),
+         Paragraph(f"<b>RFID:</b> {employee.get('rfid', '')}", styles['InfoText'])]
+    ]
+    
+    info_table = Table(employee_info, colWidths=[4.5*inch, 4.5*inch])
+    info_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(info_table)
+    elements.append(Spacer(1, 0.15*inch))
+    
+    # DTR Table
+    dtr_data = []
+    header = ['Day', 'Date', 'AM In', 'AM Out', 'PM In', 'PM Out', 'Hours', 'UT', 'OT', 'Status']
+    dtr_data.append(header)
+    
+    for date_key, day in attendance_record.get("dtr", {}).items():
+        row = [
+            day.get("day", ""),
+            day.get("date", ""),
+            day.get("am_in", ""),
+            day.get("am_out", ""),
+            day.get("pm_in", ""),
+            day.get("pm_out", ""),
+            day.get("hours", "0.00"),
+            day.get("ut", "0.00"),
+            day.get("ot", "0.00"),
+            day.get("status", "")
+        ]
+        dtr_data.append(row)
+    
+    # Add totals row
+    dtr_data.append([
+        "TOTALS", "", "", "", "", "",
+        attendance_record.get("total_hours", "0.00"),
+        attendance_record.get("total_ut", "0.00"),
+        attendance_record.get("total_ot", "0.00"),
+        ""
+    ])
+    
+    # Create table with column widths - landscape gives more room
+    col_widths = [0.5*inch, 0.9*inch, 0.65*inch, 0.65*inch, 0.65*inch, 0.65*inch, 0.6*inch, 0.5*inch, 0.5*inch, 0.7*inch]
+    dtr_table = Table(dtr_data, colWidths=col_widths, repeatRows=1)
+    
+    # Style the table
+    table_style = TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 7),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('GRID', (0, 0), (-1, -2), 0.5, colors.black),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 7),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.lightgrey),
+        ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, -1), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+        ('LEFTPADDING', (0, 0), (-1, -1), 2),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+    ])
+    
+    # Color rows that are on leave
+    for i, row in enumerate(dtr_data[1:], start=1):
+        if len(row) > 9 and row[9] == "on_leave":
+            table_style.add('BACKGROUND', (0, i), (-1, i), colors.yellow)
+    
+    dtr_table.setStyle(table_style)
+    elements.append(dtr_table)
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Signature lines
+    sig_data = [
+        ['', '', ''],
+        ['______________________', '______________________', '______________________'],
+        ['Employee Signature', 'Prepared By', 'Approved By'],
+        ['', 'HR Officer', 'Department Head']
+    ]
+    sig_table = Table(sig_data, colWidths=[2.7*inch, 2.7*inch, 2.7*inch])
+    sig_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+    ]))
+    elements.append(sig_table)
+    
+    # Build PDF
+    doc.build(elements)
+    buffer.seek(0)
+    
+    # Log activity
+    add_activity(
+        "dtr_generated",
+        f"DTR PDF generated for {employee.get('firstname', '')} {employee.get('lastname', '')} for {attendance_record.get('month_display', '')}",
+        {"name": session.get("user", {}).get("fullname", "User")},
+        "attendance"
+    )
+    
+    # Return PDF
+    filename = f"DTR_{employee.get('lastname', 'unknown')}_{employee.get('firstname', 'unknown')}_{month}.pdf"
+    response = make_response(buffer.getvalue())
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    
+    return response
+
+# Get available months for DTR
+@app.route("/api/dtr/months", methods=["GET"])
+def get_dtr_months():
+    """Get list of available months with attendance records"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    months = set()
+    for record in attendance_records:
+        month = record.get("month")
+        month_display = record.get("month_display")
+        if month and month_display:
+            months.add((month, month_display))
+    
+    # Sort by month descending (newest first)
+    sorted_months = sorted(list(months), key=lambda x: x[0], reverse=True)
+    
+    # If no months exist, add current month
+    if not sorted_months:
+        current_month = datetime.now().strftime("%Y-%m")
+        current_display = datetime.now().strftime("%B %Y")
+        sorted_months = [(current_month, current_display)]
+    
+    return jsonify({
+        "status": "success",
+        "data": [{"value": m[0], "label": m[1]} for m in sorted_months]
+    }), 200
+
 ## LEAVE MANAGEMENT ROUTES ------------------------------------
 # Request leave
 @app.route("/api/request-leave", methods=["POST"])
@@ -1266,6 +1900,189 @@ def reject_leave(request_id):
         print(f"Reject leave error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
+## Settings Routes ------------------------------------
+# Update settings
+@app.route("/api/settings", methods=["GET"])
+def get_settings():
+    """Get current system settings"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    # Check for version update from GitHub
+    github_version = fetch_version_from_github()
+    current_version = settings.get("system", {}).get("version", "1.0.0")
+    
+    # Return settings with version info
+    response_data = settings.copy()
+    response_data["system"] = response_data.get("system", {}).copy()
+    response_data["system"]["version"] = current_version
+    response_data["system"]["github_version"] = github_version
+    response_data["system"]["version_url"] = settings.get("system", {}).get("version_url", "")
+    
+    return jsonify({
+        "status": "success",
+        "data": response_data
+    }), 200
+
+# Update settings
+@app.route("/api/settings", methods=["PUT"])
+def update_settings():
+    """Update system settings"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "No data provided"
+            }), 400
+        
+        # Update attendance settings
+        if "attendance" in data:
+            for key in ["work_start", "work_end", "lunch_start", "lunch_end", "grace_period"]:
+                if key in data["attendance"]:
+                    settings["attendance"][key] = data["attendance"][key]
+        
+        # Update institution settings
+        if "institution" in data:
+            for key in ["name", "system_name", "academic_year", "hr_email"]:
+                if key in data["institution"]:
+                    settings["institution"][key] = data["institution"][key]
+        
+        # Update system settings (except version which is auto-managed)
+        if "system" in data:
+            if "version_url" in data["system"]:
+                settings["system"]["version_url"] = data["system"]["version_url"]
+        
+        # Save settings
+        save_settings(settings)
+        
+        # Log activity
+        add_activity(
+            "settings_updated",
+            "System settings were updated",
+            {"name": session.get("user", {}).get("fullname", "User")},
+            "system"
+        )
+        
+        return jsonify({
+            "status": "success",
+            "message": "Settings updated successfully",
+            "data": settings
+        }), 200
+        
+    except Exception as e:
+        print(f"Error updating settings: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+# Check for version update
+@app.route("/api/settings/check-version", methods=["GET"])
+def check_version():
+    """Check for newer version from GitHub"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    github_version = fetch_version_from_github()
+    current_version = settings.get("system", {}).get("version", "1.0.0")
+    
+    is_newer = False
+    if github_version:
+        try:
+            # Simple version comparison
+            current_parts = current_version.split('.')
+            github_parts = github_version.split('.')
+            
+            # Pad to same length
+            while len(current_parts) < len(github_parts):
+                current_parts.append('0')
+            while len(github_parts) < len(current_parts):
+                github_parts.append('0')
+            
+            for i in range(len(current_parts)):
+                if int(github_parts[i]) > int(current_parts[i]):
+                    is_newer = True
+                    break
+                elif int(github_parts[i]) < int(current_parts[i]):
+                    break
+        except:
+            is_newer = github_version != current_version
+    
+    return jsonify({
+        "status": "success",
+        "data": {
+            "current_version": current_version,
+            "github_version": github_version,
+            "is_newer_available": is_newer,
+            "version_url": settings.get("system", {}).get("version_url", "")
+        }
+    }), 200
+
+# Reset settings to defaults
+@app.route("/api/settings/reset", methods=["POST"])
+def reset_settings():
+    """Reset settings to default values"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+    
+    global settings
+    settings = DEFAULT_SETTINGS.copy()
+    save_settings(settings)
+    
+    # Log activity
+    add_activity(
+        "settings_reset",
+        "System settings were reset to defaults",
+        {"name": session.get("user", {}).get("fullname", "User")},
+        "system"
+    )
+    
+    return jsonify({
+        "status": "success",
+        "message": "Settings reset to defaults",
+        "data": settings
+    }), 200
+
 ## Web Routes ------------------------------------
 # Add CORS and no-cache headers to API responses.
 @app.after_request
@@ -1502,6 +2319,7 @@ def register_employee():
         role_uids = [value for value in employee_uids if uid_start <= value <= uid_end]
         uid = str(max([uid_start - 1] + role_uids) + 1).zfill(3)
 
+        # Process image with compression
         if image_file and image_file.filename:
             extension = os.path.splitext(image_file.filename)[1].lower()
             if extension not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
@@ -1510,12 +2328,16 @@ def register_employee():
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
             
-            rfid_filename = secure_filename(rfid)
-            os.makedirs(PROFILE_STORAGE, exist_ok=True)
+            # Use the compression function
+            image_path = compress_and_save_image(image_file, rfid)
             
-            filename = rfid_filename + extension
-            image_file.save(os.path.join(PROFILE_STORAGE, filename))
-            image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+            if not image_path:
+                # Fallback to original saving method if compression fails
+                rfid_filename = secure_filename(rfid)
+                os.makedirs(PROFILE_STORAGE, exist_ok=True)
+                filename = rfid_filename + extension
+                image_file.save(os.path.join(PROFILE_STORAGE, filename))
+                image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         employee = {
             "uid": uid,
@@ -1643,6 +2465,7 @@ def update_employee(rfid):
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
             
+            # Delete old image
             old_image = updated_employee.get("image")
             if old_image:
                 old_image_path = os.path.join(BASE_DIR, old_image)
@@ -1652,11 +2475,18 @@ def update_employee(rfid):
                     except:
                         pass
             
-            rfid_filename = secure_filename(rfid)
-            os.makedirs(PROFILE_STORAGE, exist_ok=True)
-            filename = rfid_filename + extension
-            image_file.save(os.path.join(PROFILE_STORAGE, filename))
-            updated_employee["image"] = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+            # Use the compression function for new image
+            image_path = compress_and_save_image(image_file, rfid)
+            
+            if not image_path:
+                # Fallback to original saving method if compression fails
+                rfid_filename = secure_filename(rfid)
+                os.makedirs(PROFILE_STORAGE, exist_ok=True)
+                filename = rfid_filename + extension
+                image_file.save(os.path.join(PROFILE_STORAGE, filename))
+                image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
+            
+            updated_employee["image"] = image_path
         
         updated_employee["timestamp_modified"] = now
         
@@ -2051,6 +2881,13 @@ def page_not_found(e):
 @app.route("/api/leave-requests", methods=["OPTIONS"])
 @app.route("/api/approve-leave/<request_id>", methods=["OPTIONS"])
 @app.route("/api/reject-leave/<request_id>", methods=["OPTIONS"])
+@app.route("/api/dtr/employees", methods=["OPTIONS"])
+@app.route("/api/dtr/record/<rfid>", methods=["OPTIONS"])
+@app.route("/api/dtr/generate-pdf/<rfid>", methods=["OPTIONS"])
+@app.route("/api/dtr/months", methods=["OPTIONS"])
+@app.route("/api/settings", methods=["OPTIONS"])
+@app.route("/api/settings/check-version", methods=["OPTIONS"])
+@app.route("/api/settings/reset", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
@@ -2066,4 +2903,4 @@ if __name__ == "__main__":
     initialize_attendance_records()
     # Get port from environment variable (Railway sets PORT)
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
