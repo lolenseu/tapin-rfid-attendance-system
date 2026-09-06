@@ -117,6 +117,152 @@ function updateAttendanceTable(scans) {
     }).join('') || '<tr><td colspan="10">No RFID scans received.</td></tr>';
 }
 
+// Update the activity timeline with data from the activity feed
+function updateActivityTimeline(activities) {
+    const timeline = document.getElementById('dashboardTimeline');
+    if (!timeline) return;
+    
+    if (!activities || activities.length === 0) {
+        timeline.innerHTML = `
+            <div class="timeline-item" style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+                No recent activities
+            </div>
+        `;
+        return;
+    }
+    
+    // Show latest 10 activities
+    const displayActivities = activities.slice(0, 10);
+    
+    timeline.innerHTML = displayActivities.map((activity) => {
+        const timestamp = new Date(activity.timestamp);
+        const timeStr = timestamp.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        // Determine icon and color based on activity type
+        let icon = 'fa-solid fa-circle-info';
+        let color = 'var(--primary)';
+        let bgColor = 'var(--primary-light)';
+        
+        switch (activity.type) {
+            case 'attendance':
+                if (activity.action === 'attendance_time_in') {
+                    icon = 'fa-solid fa-sign-in-alt';
+                    color = 'var(--success)';
+                    bgColor = 'var(--success-light)';
+                } else if (activity.action === 'attendance_time_out') {
+                    icon = 'fa-solid fa-sign-out-alt';
+                    color = 'var(--warning)';
+                    bgColor = 'var(--warning-light)';
+                } else {
+                    icon = 'fa-solid fa-clock';
+                    color = 'var(--primary)';
+                    bgColor = 'var(--primary-light)';
+                }
+                break;
+            case 'leave':
+                if (activity.action === 'leave_approved') {
+                    icon = 'fa-solid fa-check-circle';
+                    color = 'var(--success)';
+                    bgColor = 'var(--success-light)';
+                } else if (activity.action === 'leave_rejected') {
+                    icon = 'fa-solid fa-times-circle';
+                    color = 'var(--danger)';
+                    bgColor = 'var(--danger-light)';
+                } else {
+                    icon = 'fa-solid fa-umbrella-beach';
+                    color = 'var(--leave)';
+                    bgColor = 'var(--leave-light)';
+                }
+                break;
+            case 'employee':
+                if (activity.action === 'employee_registered') {
+                    icon = 'fa-solid fa-user-plus';
+                    color = 'var(--success)';
+                    bgColor = 'var(--success-light)';
+                } else {
+                    icon = 'fa-solid fa-user-edit';
+                    color = 'var(--primary)';
+                    bgColor = 'var(--primary-light)';
+                }
+                break;
+            case 'system':
+                if (activity.action === 'user_login') {
+                    icon = 'fa-solid fa-sign-in-alt';
+                    color = 'var(--primary)';
+                    bgColor = 'var(--primary-light)';
+                } else if (activity.action === 'user_logout') {
+                    icon = 'fa-solid fa-sign-out-alt';
+                    color = 'var(--warning)';
+                    bgColor = 'var(--warning-light)';
+                } else {
+                    icon = 'fa-solid fa-server';
+                    color = 'var(--accent)';
+                    bgColor = 'var(--accent-light)';
+                }
+                break;
+            default:
+                icon = 'fa-solid fa-circle-info';
+                color = 'var(--primary)';
+                bgColor = 'var(--primary-light)';
+        }
+        
+        // Get user info for display
+        let userDisplay = '';
+        if (activity.user && activity.user.name) {
+            userDisplay = `<span class="timeline-user">${escapeHtml(activity.user.name)}</span>`;
+        }
+        
+        return `
+            <div class="timeline-item">
+                <div class="timeline-icon" style="background:${bgColor};color:${color};">
+                    <i class="${icon}"></i>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-text">${escapeHtml(activity.details)}</div>
+                    <div class="timeline-meta">
+                        <span>${escapeHtml(timeStr)}</span>
+                        ${userDisplay ? `&nbsp;·&nbsp;${userDisplay}` : ''}
+                        <span class="timeline-badge" style="background:${bgColor};color:${color};">
+                            ${escapeHtml(activity.type)}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Fetch activity feed data
+async function loadActivityFeed() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/activity-feed?limit=50`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load activity feed:', response.status);
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            updateActivityTimeline(result.data.activities);
+        }
+    } catch (error) {
+        console.error('Error loading activity feed:', error);
+    }
+}
+
 async function loadDashboardData() {
     try {
         const response = await fetch(`${dashboardApiBaseUrl}/api/dashboard-data`, {
@@ -138,6 +284,14 @@ async function loadDashboardData() {
         updateScanTable(data.scans || []);
         updateAttendanceTable(data.scans || []);
         updateDeviceDisplay(data.devices || []);
+        
+        // Update activity timeline from dashboard data or fetch separately
+        if (data.activities && data.activities.length > 0) {
+            updateActivityTimeline(data.activities);
+        } else {
+            // If activities not in dashboard data, fetch separately
+            loadActivityFeed();
+        }
 
         const latestScanTime = document.getElementById('latestScanTime');
         if (latestScanTime) {
@@ -477,6 +631,7 @@ if (logoutConfirmYes) {
 window.addEventListener('pageshow', verifyDashboardSession);
 setInterval(updateClock, 1000);
 setInterval(loadDashboardData, 5000);
+setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds
 updateClock();
 // Collapse employee cards to first 5 with a "View more" toggle
 function setupEmployeeCardCollapse() {

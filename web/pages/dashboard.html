@@ -264,15 +264,18 @@
             </div>
           </div>
 
-          <!-- Activity Timeline -->
+          <!-- Activity Timeline - UPDATED with proper styling -->
           <div class="card">
             <div class="card-header">
               <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Activity Timeline</div>
               <a href="#admin-dashboard" class="btn btn-outline btn-sm">View All</a>
             </div>
-            <div class="card-body">
+            <div class="card-body" style="padding:0;max-height:400px;overflow-y:auto;">
               <div class="timeline" id="dashboardTimeline">
-                <!-- Filled dynamically from API -->
+                <!-- Filled dynamically from activity_feed.json API -->
+                <div class="timeline-loading" style="display:flex;justify-content:center;align-items:center;padding:30px 0;color:var(--text-muted);font-size:13px;">
+                  <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading activities...
+                </div>
               </div>
             </div>
           </div>

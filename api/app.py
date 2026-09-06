@@ -61,6 +61,9 @@ SCAN_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_events.json")
 # Leave requests storage (moved to feed)
 LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves.json")
 
+# Activity feed storage - keeps all system activities for timeline
+ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.json")
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
@@ -68,6 +71,7 @@ os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
@@ -77,6 +81,7 @@ print(f"PROFILE_STORAGE: {PROFILE_STORAGE}")
 print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
 print(f"SCAN_EVENTS_FILE: {SCAN_EVENTS_FILE}")
 print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
+print(f"ACTIVITY_FEED_FILE: {ACTIVITY_FEED_FILE}")
 
 # Open the shared dashboard after a successful login.
 WEB_DASHBOARD = "/pages/dashboard.html"
@@ -129,6 +134,93 @@ latest_scan = {
 last_scan_tracking = {}
 
 ## Functions ------------------------------------
+# Load activity feed data
+def load_activity_feed():
+    """Load activity feed data from JSON file"""
+    if not os.path.exists(ACTIVITY_FEED_FILE):
+        default_data = {
+            "activities": [],
+            "total_activities": 0,
+            "last_cleanup": datetime.now().isoformat()
+        }
+        with open(ACTIVITY_FEED_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+            f.write("\n")
+        print(f"Created new activity feed file: {ACTIVITY_FEED_FILE}")
+        return default_data
+    
+    try:
+        with open(ACTIVITY_FEED_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if "activities" not in data:
+                data["activities"] = []
+            if "total_activities" not in data:
+                data["total_activities"] = len(data["activities"])
+            if "last_cleanup" not in data:
+                data["last_cleanup"] = datetime.now().isoformat()
+            return data
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading activity feed file: {e}")
+        return {"activities": [], "total_activities": 0, "last_cleanup": datetime.now().isoformat()}
+
+# Save activity feed data
+def save_activity_feed(activity_data):
+    """Save activity feed data to JSON file"""
+    os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
+    with open(ACTIVITY_FEED_FILE, "w", encoding="utf-8") as f:
+        json.dump(activity_data, f, indent=4)
+        f.write("\n")
+
+# Add activity to feed
+def add_activity(action, details, user=None, activity_type="system"):
+    """
+    Add a system activity to the feed.
+    
+    Args:
+        action (str): The action performed (e.g., "employee_registered", "rfid_scanned")
+        details (str): Description of the activity
+        user (dict): User who performed the action
+        activity_type (str): Type of activity (system, employee, attendance, leave, etc.)
+    
+    Returns:
+        dict: The created activity entry
+    """
+    activity_feed_data = load_activity_feed()
+    
+    # Cleanup old activities if needed (keep last 500 entries)
+    last_cleanup = datetime.fromisoformat(activity_feed_data.get("last_cleanup", datetime.now().isoformat()))
+    days_since_cleanup = (datetime.now() - last_cleanup).days
+    
+    if days_since_cleanup >= 7:
+        # Keep only last 500 activities
+        if len(activity_feed_data["activities"]) > 500:
+            activity_feed_data["activities"] = activity_feed_data["activities"][:500]
+        activity_feed_data["last_cleanup"] = datetime.now().isoformat()
+        print("Weekly activity feed cleanup performed")
+    
+    activity_entry = {
+        "id": str(len(activity_feed_data["activities"]) + 1),
+        "action": action,
+        "details": details,
+        "type": activity_type,
+        "timestamp": datetime.now().isoformat(),
+        "user": user
+    }
+    
+    # Insert at the beginning (newest first)
+    activity_feed_data["activities"].insert(0, activity_entry)
+    
+    # Keep only last 1000 activities
+    if len(activity_feed_data["activities"]) > 1000:
+        activity_feed_data["activities"] = activity_feed_data["activities"][:1000]
+    
+    activity_feed_data["total_activities"] = len(activity_feed_data["activities"])
+    
+    save_activity_feed(activity_feed_data)
+    
+    print(f"Activity logged: {action} - {details}")
+    return activity_entry
+
 # Load leave data
 def load_leave_data():
     if not os.path.exists(LEAVE_DATA_FILE):
@@ -594,6 +686,13 @@ def record_attendance_scan(employee, scanned_at):
                 True, 
                 f"{period}_in"
             )
+            # Log activity
+            add_activity(
+                "attendance_time_in",
+                f"{employee.get('firstname', '')} {employee.get('lastname', '')} ({employee.get('employeeid', '')}) clocked in for {period.upper()} shift",
+                {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
+                "attendance"
+            )
         else:
             print(f"{period.upper()} TIME IN already exists for {rfid}")
             return record, "already_exists"
@@ -611,6 +710,13 @@ def record_attendance_scan(employee, scanned_at):
                 employee, 
                 True, 
                 f"{period}_out"
+            )
+            # Log activity
+            add_activity(
+                "attendance_time_out",
+                f"{employee.get('firstname', '')} {employee.get('lastname', '')} ({employee.get('employeeid', '')}) clocked out for {period.upper()} shift",
+                {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
+                "attendance"
             )
         else:
             print(f"{period.upper()} TIME OUT already exists for {rfid}")
@@ -802,6 +908,10 @@ def get_dashboard_data():
         }
         for employee in employee_database.values()
     ]
+    
+    # Load activity feed
+    activity_feed = load_activity_feed()
+    
     return {
         "stats": get_dashboard_statistics(),
         "users": users,
@@ -809,7 +919,8 @@ def get_dashboard_data():
         "scans": recent_scans,
         "devices": get_online_devices(),
         "latest_scan": recent_scans[0] if recent_scans else None,
-        "leaves": leave_data
+        "leaves": leave_data,
+        "activities": activity_feed.get("activities", [])
     }
 
 # Return only the supported role from a user record.
@@ -957,6 +1068,14 @@ def request_leave():
         leave_data["requests"].append(leave_request)
         save_leave_data(leave_data)
         
+        # Log activity
+        add_activity(
+            "leave_requested",
+            f"{employee.get('firstname', '')} {employee.get('lastname', '')} requested {data['leave_type']} leave from {data['start_date']} to {data['end_date']}",
+            {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
+            "leave"
+        )
+        
         return jsonify({
             "status": "success",
             "message": "Leave request submitted successfully",
@@ -1074,6 +1193,14 @@ def approve_leave(request_id):
         save_leave_data(leave_data)
         save_attendance_data()
         
+        # Log activity
+        add_activity(
+            "leave_approved",
+            f"Leave request #{request_id} for {request_to_approve.get('fullname', '')} was approved by {user_data.get('fullname') or user_data.get('username')}",
+            {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
+            "leave"
+        )
+        
         return jsonify({
             "status": "success",
             "message": "Leave request approved successfully",
@@ -1120,6 +1247,14 @@ def reject_leave(request_id):
         leave_data["requests"].pop(request_index)
         
         save_leave_data(leave_data)
+        
+        # Log activity
+        add_activity(
+            "leave_rejected",
+            f"Leave request #{request_id} for {request_to_reject.get('fullname', '')} was rejected by {user_data.get('fullname') or user_data.get('username')}",
+            {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
+            "leave"
+        )
         
         return jsonify({
             "status": "success",
@@ -1223,6 +1358,14 @@ def login():
                     
                     print("Login successful for:", username)
                     
+                    # Log login activity
+                    add_activity(
+                        "user_login",
+                        f"{user_data.get('fullname')} ({username}) logged in as {role.upper()}",
+                        {"name": user_data.get('fullname'), "uid": user_data.get('uid')},
+                        "system"
+                    )
+                    
                     return jsonify({
                         "status": "success",
                         "message": "Login successful",
@@ -1275,6 +1418,17 @@ def get_session():
 @app.route("/api/logout", methods=["POST", "GET", "OPTIONS"])
 def logout():
     try:
+        user = session.get("user")
+        
+        # Log logout activity before clearing session
+        if user:
+            add_activity(
+                "user_logout",
+                f"{user.get('fullname', 'User')} logged out",
+                {"name": user.get('fullname'), "uid": user.get('uid')},
+                "system"
+            )
+        
         session.clear()
         
         response = jsonify({
@@ -1395,6 +1549,15 @@ def register_employee():
         employee_database[rfid] = employee
 
         print("Registered:", employee["firstname"], employee["lastname"], "UID:", uid, "RFID:", rfid)
+        
+        # Log activity
+        add_activity(
+            "employee_registered",
+            f"New {role.upper()} registered: {employee['firstname']} {employee['lastname']} (ID: {employee['employeeid']})",
+            {"name": "System", "uid": "system"},
+            "employee"
+        )
+        
         return jsonify({
             "status": "success",
             "message": "Employee registered successfully",
@@ -1508,6 +1671,14 @@ def update_employee(rfid):
         
         employee_database[rfid] = updated_employee
         
+        # Log activity
+        add_activity(
+            "employee_updated",
+            f"Employee {updated_employee['firstname']} {updated_employee['lastname']} (ID: {updated_employee['employeeid']}) was updated",
+            {"name": "System", "uid": "system"},
+            "employee"
+        )
+        
         return jsonify({
             "status": "success",
             "message": "Employee updated successfully",
@@ -1556,6 +1727,26 @@ def get_scan_feed():
     return jsonify({
         "status": "success",
         "data": scan_feed_data
+    }), 200
+
+# Serve activity feed data for timeline
+@app.route("/api/activity-feed", methods=["GET"])
+def get_activity_feed():
+    """Get the activity feed data for the dashboard timeline"""
+    limit = request.args.get("limit", default=50, type=int)
+    activity_feed_data = load_activity_feed()
+    activities = activity_feed_data.get("activities", [])
+    
+    # Return limited activities
+    if limit and limit > 0:
+        activities = activities[:limit]
+    
+    return jsonify({
+        "status": "success",
+        "data": {
+            "activities": activities,
+            "total_activities": activity_feed_data.get("total_activities", 0)
+        }
     }), 200
 
 # Return devices that have sent a recent ping.
@@ -1714,6 +1905,15 @@ def reload_db():
     global employee_database
     employee_database = load_employee_database()
     initialize_attendance_records()
+    
+    # Log activity
+    add_activity(
+        "database_reloaded",
+        "Employee database was reloaded from storage",
+        {"name": "System", "uid": "system"},
+        "system"
+    )
+    
     return jsonify({
         "status": "success",
         "message": "Database reloaded",
@@ -1811,6 +2011,13 @@ def receive_rfid():
             return f"OK: {result}", 200
         else:
             print(f"RFID not found in database: {rfid}")
+            # Log unknown RFID scan
+            add_activity(
+                "unknown_rfid_scanned",
+                f"Unknown RFID card scanned: {rfid}",
+                None,
+                "system"
+            )
             return "ERROR: RFID not found", 404
 
     except Exception as e:
@@ -1839,6 +2046,7 @@ def page_not_found(e):
 @app.route("/api/receive-rfid", methods=["OPTIONS"])
 @app.route("/api/device-ping", methods=["OPTIONS"])
 @app.route("/api/scan-feed", methods=["OPTIONS"])
+@app.route("/api/activity-feed", methods=["OPTIONS"])
 @app.route("/api/request-leave", methods=["OPTIONS"])
 @app.route("/api/leave-requests", methods=["OPTIONS"])
 @app.route("/api/approve-leave/<request_id>", methods=["OPTIONS"])
