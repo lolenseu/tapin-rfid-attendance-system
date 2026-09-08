@@ -1,0 +1,14 @@
+{
+  "appId": "com.example.app",
+  "appName": "TapIn",
+  "webDir": "dist",
+  "server": {
+    "url": "https://tapin-ispsctagudin.vercel.app/login.html",
+    "cleartext": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false
+    }
+  }
+}

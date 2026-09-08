@@ -37,13 +37,13 @@
         <span class="nav-icon"><i class="fa-solid fa-gauge-high"></i></span>
         Dashboard
       </a>
-      <a href="#employees" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-user-tie"></i></span>
-        Employees Personal Info
-      </a>
       <a href="#dtr" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
         DTR CSC Form
+      </a>
+      <a href="#employees" class="nav-item">
+        <span class="nav-icon"><i class="fa-solid fa-user-tie"></i></span>
+        Employees Personal Info
       </a>
       <a href="#employee-register" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-user-plus"></i></span>
@@ -102,7 +102,7 @@
     <header class="topbar">
       <div class="search-wrap">
         <i class="fa-solid fa-magnifying-glass"></i>
-        <input class="search-input" type="search" placeholder="Search employees, reports, logs…" />
+        <input class="search-input" type="search" placeholder="Search employees, reports, logs… (Type to search)" />
       </div>
 
       <div class="topbar-center">
@@ -269,12 +269,11 @@
           <div class="card">
             <div class="card-header">
               <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Activity Timeline</div>
-              <a href="#admin-dashboard" class="btn btn-outline btn-sm">View All</a>
             </div>
-            <div class="card-body" style="padding:0;max-height:400px;overflow-y:auto;">
-              <div class="timeline" id="dashboardTimeline">
+            <div class="card-body" style="padding:0;max-height:340px;overflow-y:auto;scrollbar-width:thin;">
+              <div class="timeline" id="dashboardTimeline" style="padding:12px 16px 12px 40px;">
                 <!-- Filled dynamically from activity_feed.json API -->
-                <div class="timeline-loading" style="display:flex;justify-content:center;align-items:center;padding:30px 0;color:var(--text-muted);font-size:13px;">
+                <div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
                   <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading activities...
                 </div>
               </div>
@@ -284,70 +283,6 @@
         </div><!-- /grid-2 -->
       </section>
 
-      <section class="page-section" id="employees">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title" style="margin-top:6px;">Employee Directory</h1>
-            <p class="section-subtitle">View and manage employee personal information and profiles.</p>
-          </div>
-          <div class="flex gap-2">
-            <button class="btn btn-outline" onclick="toggleEmployeeFilter()"><i class="fa-solid fa-filter"></i> Filter</button>
-            <button class="btn btn-primary" onclick="document.getElementById('employeeRegistrationForm').scrollIntoView({ behavior: 'smooth' })"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
-          </div>
-        </div>
-
-        <!-- Filter Bar -->
-        <div class="employee-filter-bar" id="employeeFilterBar" style="display:none;">
-          <div class="card mb-4">
-            <div class="card-body">
-              <div class="filter-grid">
-                <div class="form-group">
-                  <label><i class="fa-solid fa-search"></i> Search</label>
-                  <input class="form-control" type="text" id="employeeSearchInput" placeholder="Search by name, ID, or email..." oninput="filterEmployees()">
-                </div>
-                <div class="form-group">
-                  <label><i class="fa-solid fa-tag"></i> Role</label>
-                  <select class="form-control" id="employeeRoleFilter" onchange="filterEmployees()">
-                    <option value="all">All Roles</option>
-                    <option value="admin">Admin</option>
-                    <option value="hr">HR</option>
-                    <option value="employee">Employee</option>
-                  </select>
-                </div>
-                <div class="form-group">
-                  <label><i class="fa-solid fa-building"></i> Department</label>
-                  <select class="form-control" id="employeeDeptFilter" onchange="filterEmployees()">
-                    <option value="all">All Departments</option>
-                    <option value="Information Technology">Information Technology</option>
-                    <option value="Human Resources">Human Resources</option>
-                    <option value="Finance & Accounting">Finance & Accounting</option>
-                    <option value="Academic Affairs">Academic Affairs</option>
-                    <option value="Administration">Administration</option>
-                    <option value="Library Services">Library Services</option>
-                  </select>
-                </div>
-                <div class="form-group" style="display:flex;align-items:flex-end;">
-                  <button class="btn btn-outline w-full" onclick="clearEmployeeFilters()"><i class="fa-solid fa-undo"></i> Clear Filters</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Employee Cards Grid - 6 cards max initially -->
-        <div class="employees-grid" id="employeesGrid">
-          <!-- Filled dynamically from API -->
-        </div>
-
-        <!-- View More / View Less Button -->
-        <div id="employeeGridFooter" style="text-align:center;margin-top:16px;display:none;">
-          <button class="btn btn-outline" id="employeeToggleBtn" onclick="toggleEmployeeCards()">
-            <i class="fa-solid fa-chevron-down"></i> View More Employees
-          </button>
-          <span id="employeeCountDisplay" style="display:block;font-size:12px;color:var(--text-muted);margin-top:6px;"></span>
-        </div>
-      </section>
-      
       <!-- DTR Section - Updated with simplified display -->
       <section class="page-section" id="dtr">
         <div class="section-actions">
@@ -482,6 +417,62 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="page-section" id="employees">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">Employee Directory</h1>
+            <p class="section-subtitle">View and manage employee personal information and profiles.</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-outline" onclick="toggleEmployeeFilter()"><i class="fa-solid fa-filter"></i> Filter</button>
+            <button class="btn btn-primary" onclick="document.getElementById('employeeRegistrationForm').scrollIntoView({ behavior: 'smooth' })"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
+          </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="employee-filter-bar" id="employeeFilterBar" style="display:none;">
+          <div class="card mb-4">
+            <div class="card-body">
+              <div class="filter-grid">
+                <div class="form-group">
+                  <label><i class="fa-solid fa-search"></i> Search</label>
+                  <input class="form-control" type="text" id="employeeSearchInput" placeholder="Search by name, ID, or email..." oninput="filterEmployees()">
+                </div>
+                <div class="form-group">
+                  <label><i class="fa-solid fa-tag"></i> Role</label>
+                  <select class="form-control" id="employeeRoleFilter" onchange="filterEmployees()">
+                    <option value="all">All Roles</option>
+                    <option value="admin">Admin</option>
+                    <option value="hr">HR</option>
+                    <option value="employee">Employee</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label><i class="fa-solid fa-building"></i> Department</label>
+                  <select class="form-control" id="employeeDeptFilter" onchange="filterEmployees()">
+                    <option value="all">All Departments</option>
+                  </select>
+                </div>
+                <div class="form-group" style="display:flex;align-items:flex-end;">
+                  <button class="btn btn-outline w-full" onclick="clearEmployeeFilters()"><i class="fa-solid fa-undo"></i> Clear Filters</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Employee Cards Grid - 5 cards per page -->
+        <div class="employees-grid" id="employeesGrid">
+          <!-- Filled dynamically from API -->
+        </div>
+
+        <!-- Pagination Footer -->
+        <div id="employeeGridFooter" style="text-align:center;margin-top:16px;display:none;">
+          <span id="employeeCountDisplay" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:8px;"></span>
+          <div id="employeePagination"></div>
         </div>
       </section>
       
@@ -876,10 +867,6 @@
                   <div class="progress-track"><div class="progress-fill" id="presentFill" style="width:0%;background:var(--success);"></div></div>
                 </div>
                 <div class="progress-wrap">
-                  <div class="progress-label"><span>Late</span><span id="lateCount">0</span></div>
-                  <div class="progress-track"><div class="progress-fill" id="lateFill" style="width:0%;background:var(--warning);"></div></div>
-                </div>
-                <div class="progress-wrap">
                   <div class="progress-label"><span>Absent</span><span id="absentCount">0</span></div>
                   <div class="progress-track"><div class="progress-fill" id="absentFill" style="width:0%;background:var(--danger);"></div></div>
                 </div>
@@ -897,13 +884,12 @@
           <div class="card-header">
             <div class="card-title"><i class="fa-solid fa-tower-broadcast" style="color:#EF4444;"></i> Live RFID Attendance Feed</div>
             <div class="flex gap-2">
-              <select class="filter-select" id="attendanceFilterDept">
+              <select class="filter-select" id="attendanceFilterDept" onchange="applyAttendanceFilters()">
                 <option value="all">All Departments</option>
               </select>
-              <select class="filter-select" id="attendanceFilterStatus">
+              <select class="filter-select" id="attendanceFilterStatus" onchange="applyAttendanceFilters()">
                 <option value="all">All Status</option>
                 <option value="present">Present</option>
-                <option value="late">Late</option>
                 <option value="absent">Absent</option>
                 <option value="leave">On Leave</option>
               </select>
@@ -930,72 +916,11 @@
               </tbody>
             </table>
           </div>
-        </div>
-      </section>
-      
-      <section class="page-section" id="admin-dashboard">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title" style="margin-top:6px;">Admin &amp; HR Command Center</h1>
-            <p class="section-subtitle">Manage approvals, monitor alerts, and review HR activities in real time.</p>
+          <!-- Pagination Footer -->
+          <div id="attendancePaginationFooter" style="text-align:center;margin-top:12px;padding:8px 20px 16px;">
+            <span id="attendanceCountDisplay" style="display:block;font-size:12px;color:var(--text-muted);margin-bottom:8px;"></span>
+            <div id="attendancePagination"></div>
           </div>
-        </div>
-
-        <div class="widgets-grid">
-
-          <!-- Pending Leave Requests -->
-          <div class="widget-card">
-            <div class="widget-header">
-              <div class="widget-title"><i class="fa-solid fa-umbrella-beach" style="color:var(--leave);"></i> Pending Leave Requests</div>
-              <span class="widget-count" id="pendingLeaveCount">0</span>
-            </div>
-            <div class="widget-body" id="pendingLeaveList">
-              <!-- Filled dynamically -->
-            </div>
-          </div>
-
-          <!-- System Alerts -->
-          <div class="widget-card">
-            <div class="widget-header">
-              <div class="widget-title"><i class="fa-solid fa-bell" style="color:var(--warning);"></i> System Alerts</div>
-              <span class="widget-count" style="background:var(--warning);" id="alertCount">0</span>
-            </div>
-            <div class="widget-body" id="alertList">
-              <!-- Filled dynamically -->
-            </div>
-          </div>
-
-          <!-- Pending HR Letters -->
-          <div class="widget-card">
-            <div class="widget-header">
-              <div class="widget-title"><i class="fa-solid fa-envelope-open-text" style="color:var(--primary);"></i> Pending HR Letters</div>
-              <span class="widget-count" id="pendingLetterCount">0</span>
-            </div>
-            <div class="widget-body" id="pendingLetterList">
-              <!-- Filled dynamically -->
-            </div>
-          </div>
-
-          <!-- Department Summary -->
-          <div class="widget-card">
-            <div class="widget-header">
-              <div class="widget-title"><i class="fa-solid fa-building" style="color:var(--primary);"></i> Department Summary</div>
-            </div>
-            <div class="widget-body" id="departmentSummary">
-              <!-- Filled dynamically -->
-            </div>
-          </div>
-
-          <!-- Recent Activities -->
-          <div class="widget-card">
-            <div class="widget-header">
-              <div class="widget-title"><i class="fa-solid fa-clock-rotate-left" style="color:var(--accent);"></i> Recent Activities</div>
-            </div>
-            <div class="widget-body" id="recentActivities">
-              <!-- Filled dynamically -->
-            </div>
-          </div>
-
         </div>
       </section>
 
@@ -1116,7 +1041,6 @@
             <p class="section-subtitle">Configure TAPIN system preferences and operational parameters.</p>
           </div>
           <div class="flex gap-2">
-            <button class="btn btn-outline" onclick="resetSettings()"><i class="fa-solid fa-undo"></i> Reset Defaults</button>
             <button class="btn btn-primary" onclick="saveSettings()"><i class="fa-solid fa-floppy-disk"></i> Save Changes</button>
           </div>
         </div>
@@ -1167,25 +1091,16 @@
               </div>
               <div class="form-group mb-4">
                 <label>Academic Year</label>
-                <input class="form-control" type="text" id="settingsAcademicYear" value="2025–2026" />
+                <input class="form-control" type="text" id="settingsAcademicYear" value="2025-2026" />
               </div>
               <div class="form-group mb-4">
                 <label>HR Contact Email</label>
                 <input class="form-control" type="email" id="settingsHREmail" value="hr@ispsc.edu.ph" />
               </div>
-              <div class="form-group">
+              <div class="form-group" style="margin-bottom:0;">
                 <label>System Version</label>
-                <div style="display:flex;gap:10px;align-items:center;">
-                  <input class="form-control" type="text" id="settingsVersion" value="1.0.0" readonly style="flex:1;background:var(--bg);" />
-                  <button class="btn btn-outline" id="checkVersionBtn" onclick="checkVersionUpdate()" style="white-space:nowrap;">
-                    <i class="fa-solid fa-rotate"></i> Check for Updates
-                  </button>
-                </div>
-                <div id="settingsVersionStatus" style="margin-top:6px;font-size:12px;"></div>
-              </div>
-              <div class="form-group mt-4">
-                <label>Version Check URL</label>
-                <input class="form-control" type="url" id="settingsVersionUrl" value="https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt" />
+                <input class="form-control" type="text" id="settingsVersion" value="1.0.0" readonly style="background:var(--bg);" />
+                <div id="settingsVersionStatus" style="display:none;"></div>
               </div>
             </div>
           </div>

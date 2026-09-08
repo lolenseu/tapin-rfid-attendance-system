@@ -130,12 +130,458 @@ function initials(user) {
     return `${user.firstname || ''} ${user.lastname || ''}`.trim().split(/\s+/).map((part) => part[0] || '').join('').slice(0, 2).toUpperCase() || '--';
 }
 
+// ============ SEARCH FUNCTIONALITY ============
+
+// Store search results for autocomplete
+let searchSuggestions = [];
+let selectedSuggestionIndex = -1;
+
+// Initialize search functionality
+function initSearch() {
+    const searchInput = document.querySelector('.search-input');
+    if (!searchInput) return;
+    
+    // Create autocomplete dropdown container
+    let dropdown = document.getElementById('searchAutocomplete');
+    if (!dropdown) {
+        dropdown = document.createElement('div');
+        dropdown.id = 'searchAutocomplete';
+        dropdown.style.cssText = `
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow-lg);
+            max-height: 320px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            margin-top: 4px;
+        `;
+        // Add scrollbar styling
+        dropdown.style.scrollbarWidth = 'thin';
+        dropdown.style.scrollbarColor = 'var(--border-dark) transparent';
+        searchInput.parentNode.style.position = 'relative';
+        searchInput.parentNode.appendChild(dropdown);
+    }
+    
+    // Search on input with debounce
+    let searchTimeout;
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        const searchTerm = this.value.trim();
+        selectedSuggestionIndex = -1;
+        
+        if (searchTerm.length >= 1) {
+            searchTimeout = setTimeout(() => {
+                performSearch(searchTerm);
+            }, 300);
+        } else {
+            dropdown.style.display = 'none';
+            clearSearchHighlights();
+            searchSuggestions = [];
+        }
+    });
+    
+    // Search on Enter key - go to first result
+    searchInput.addEventListener('keydown', function(event) {
+        const items = dropdown.querySelectorAll('.search-suggestion-item');
+        
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const searchTerm = this.value.trim();
+            if (searchTerm) {
+                // If an item is selected via arrow keys, go to that
+                if (selectedSuggestionIndex >= 0 && items.length > 0) {
+                    const selectedItem = items[selectedSuggestionIndex];
+                    const sectionId = selectedItem.dataset.sectionId;
+                    if (sectionId) {
+                        goToSearchResult(sectionId);
+                        dropdown.style.display = 'none';
+                        this.value = '';
+                        clearSearchHighlights();
+                        return;
+                    }
+                }
+                // Otherwise go to first result
+                if (searchSuggestions.length > 0) {
+                    goToSearchResult(searchSuggestions[0].id);
+                }
+                dropdown.style.display = 'none';
+                this.value = '';
+                clearSearchHighlights();
+            }
+        }
+        
+        // Arrow key navigation
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            if (items.length === 0) return;
+            
+            // Remove active class from all items
+            items.forEach(item => item.classList.remove('active'));
+            
+            if (event.key === 'ArrowDown') {
+                selectedSuggestionIndex = Math.min(selectedSuggestionIndex + 1, items.length - 1);
+            } else {
+                selectedSuggestionIndex = Math.max(selectedSuggestionIndex - 1, 0);
+            }
+            
+            items[selectedSuggestionIndex].classList.add('active');
+            // Scroll to the active item
+            items[selectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+        }
+        
+        // Escape key - close dropdown
+        if (event.key === 'Escape') {
+            dropdown.style.display = 'none';
+            clearSearchHighlights();
+            this.value = '';
+            searchSuggestions = [];
+            selectedSuggestionIndex = -1;
+        }
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        if (!searchInput.parentNode.contains(event.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
+
+// Perform search across all sections
+function performSearch(searchTerm) {
+    const term = searchTerm.toLowerCase().trim();
+    if (!term) {
+        hideAutocomplete();
+        clearSearchHighlights();
+        return;
+    }
+    
+    // Clear previous highlights
+    clearSearchHighlights();
+    
+    // Search in all sections
+    const sections = document.querySelectorAll('.page-section');
+    let matchedSections = [];
+    let totalMatches = 0;
+    
+    sections.forEach(section => {
+        const sectionText = section.textContent.toLowerCase();
+        if (sectionText.includes(term)) {
+            const sectionId = section.id;
+            if (sectionId) {
+                const title = section.querySelector('.section-title')?.textContent || 
+                             section.querySelector('h1')?.textContent ||
+                             sectionId.replace('-', ' ').toUpperCase();
+                const matchCount = countMatchesInElement(section, term);
+                matchedSections.push({
+                    id: sectionId,
+                    title: title,
+                    element: section,
+                    matchCount: matchCount
+                });
+                totalMatches += matchCount;
+                
+                // Highlight matching section
+                section.style.border = '3px solid var(--primary)';
+                section.style.boxShadow = '0 0 20px rgba(37,99,235,0.3)';
+                section.style.transition = 'all 0.5s ease';
+                section.classList.add('search-match');
+                
+                // Highlight matching text within the section
+                highlightTextInElement(section, term);
+            }
+        }
+    });
+    
+    // Also search employees
+    const employeeMatches = searchEmployees(term);
+    if (employeeMatches) {
+        totalMatches += employeeMatches;
+    }
+    
+    // Store suggestions and show autocomplete
+    searchSuggestions = matchedSections;
+    if (matchedSections.length > 0) {
+        showAutocomplete(term, matchedSections, totalMatches);
+    } else if (totalMatches > 0) {
+        // If only employee matches, show a message
+        showAutocomplete(term, [], totalMatches);
+    } else {
+        showAutocomplete(term, [], 0);
+    }
+}
+
+// Count matches in an element
+function countMatchesInElement(element, term) {
+    let count = 0;
+    const walker = document.createTreeWalker(
+        element,
+        NodeFilter.SHOW_TEXT,
+        {
+            acceptNode: function(node) {
+                if (node.parentElement.tagName === 'SCRIPT' || 
+                    node.parentElement.tagName === 'STYLE' ||
+                    node.parentElement.tagName === 'INPUT' ||
+                    node.parentElement.tagName === 'TEXTAREA' ||
+                    node.parentElement.tagName === 'SELECT') {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        }
+    );
+    
+    let currentNode;
+    while (currentNode = walker.nextNode()) {
+        const text = currentNode.textContent.toLowerCase();
+        const matches = (text.match(new RegExp(term, 'gi')) || []).length;
+        count += matches;
+    }
+    return count;
+}
+
+// Highlight text within an element
+function highlightTextInElement(element, term) {
+    const walker = document.createTreeWalker(
+        element,
+        NodeFilter.SHOW_TEXT,
+        {
+            acceptNode: function(node) {
+                if (node.parentElement.tagName === 'SCRIPT' || 
+                    node.parentElement.tagName === 'STYLE' ||
+                    node.parentElement.tagName === 'INPUT' ||
+                    node.parentElement.tagName === 'TEXTAREA' ||
+                    node.parentElement.tagName === 'SELECT') {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                return NodeFilter.FILTER_ACCEPT;
+            }
+        }
+    );
+    
+    const nodesToReplace = [];
+    let currentNode;
+    while (currentNode = walker.nextNode()) {
+        if (currentNode.textContent.toLowerCase().includes(term)) {
+            nodesToReplace.push(currentNode);
+        }
+    }
+    
+    nodesToReplace.forEach(node => {
+        const parent = node.parentNode;
+        const text = node.textContent;
+        const parts = text.split(new RegExp(`(${term})`, 'gi'));
+        
+        const fragment = document.createDocumentFragment();
+        parts.forEach(part => {
+            if (part && part.toLowerCase() === term.toLowerCase()) {
+                const span = document.createElement('span');
+                span.textContent = part;
+                span.style.backgroundColor = '#FEF3C7';
+                span.style.color = '#92400E';
+                span.style.padding = '1px 3px';
+                span.style.borderRadius = '3px';
+                span.style.fontWeight = '700';
+                span.className = 'search-highlight';
+                fragment.appendChild(span);
+            } else if (part) {
+                const textNode = document.createTextNode(part);
+                fragment.appendChild(textNode);
+            }
+        });
+        
+        parent.replaceChild(fragment, node);
+    });
+}
+
+// Clear search highlights
+function clearSearchHighlights() {
+    // Remove border highlights from sections
+    document.querySelectorAll('.page-section').forEach(section => {
+        section.style.border = '';
+        section.style.boxShadow = '';
+        section.style.transition = '';
+        section.classList.remove('search-match');
+    });
+    
+    // Remove text highlights
+    document.querySelectorAll('.search-highlight').forEach(el => {
+        const parent = el.parentNode;
+        const text = el.textContent;
+        const textNode = document.createTextNode(text);
+        parent.replaceChild(textNode, el);
+        parent.normalize();
+    });
+}
+
+// Show autocomplete dropdown
+function showAutocomplete(searchTerm, matchedSections, totalMatches) {
+    const dropdown = document.getElementById('searchAutocomplete');
+    if (!dropdown) return;
+    
+    let html = '';
+    
+    // Header with search info
+    html += `
+        <div style="padding:8px 14px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text-muted);background:var(--bg);border-radius:var(--radius) var(--radius) 0 0;">
+            <strong style="color:var(--text);">${totalMatches}</strong> result${totalMatches !== 1 ? 's' : ''} found for "<strong>${escapeHtml(searchTerm)}</strong>"
+        </div>
+    `;
+    
+    if (matchedSections.length > 0) {
+        matchedSections.forEach((section, index) => {
+            const isActive = index === selectedSuggestionIndex;
+            html += `
+                <div class="search-suggestion-item ${isActive ? 'active' : ''}" 
+                     data-section-id="${escapeHtml(section.id)}"
+                     style="padding:8px 14px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);transition:background 0.15s ease;${isActive ? 'background:var(--primary-light);' : ''}"
+                     onmouseenter="this.style.background='var(--primary-light)'" 
+                     onmouseleave="this.style.background='${isActive ? 'var(--primary-light)' : 'transparent'}'"
+                     onclick="goToSearchResult('${escapeHtml(section.id)}')">
+                    <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0;">
+                        <i class="fa-solid fa-file-lines" style="color:var(--primary);font-size:13px;flex-shrink:0;"></i>
+                        <span style="font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(section.title)}</span>
+                    </div>
+                    <span class="badge badge-info" style="font-size:10px;flex-shrink:0;background:var(--primary-light);color:var(--primary);">${section.matchCount} match${section.matchCount !== 1 ? 'es' : ''}</span>
+                </div>
+            `;
+        });
+    } else if (totalMatches > 0) {
+        // Only employee matches
+        html += `
+            <div style="padding:12px 14px;color:var(--text-muted);text-align:center;font-size:13px;">
+                <i class="fa-solid fa-users" style="margin-right:8px;color:var(--primary);"></i>
+                Found ${totalMatches} employee(s) matching "<strong>${escapeHtml(searchTerm)}</strong>"
+                <br><span style="font-size:12px;">Check the Employee Directory section</span>
+            </div>
+        `;
+    } else {
+        html += `
+            <div style="padding:12px 14px;color:var(--text-muted);text-align:center;font-size:13px;">
+                <i class="fa-solid fa-search" style="margin-right:8px;opacity:0.5;"></i>
+                No results found for "<strong>${escapeHtml(searchTerm)}</strong>"
+            </div>
+        `;
+    }
+    
+    dropdown.innerHTML = html;
+    dropdown.style.display = 'block';
+}
+
+// Hide autocomplete dropdown
+function hideAutocomplete() {
+    const dropdown = document.getElementById('searchAutocomplete');
+    if (dropdown) {
+        dropdown.style.display = 'none';
+    }
+}
+
+// Go to a specific search result
+function goToSearchResult(sectionId) {
+    if (sectionId) {
+        // Close dropdown
+        hideAutocomplete();
+        // Clear search input
+        const searchInput = document.querySelector('.search-input');
+        if (searchInput) searchInput.value = '';
+        // Scroll to section
+        scrollToSection(`#${sectionId}`);
+        setActiveNavForHash(`#${sectionId}`);
+        // Highlight the selected section
+        document.querySelectorAll('.page-section').forEach(s => {
+            s.style.border = '';
+            s.style.boxShadow = '';
+        });
+        const selectedSection = document.getElementById(sectionId);
+        if (selectedSection) {
+            selectedSection.style.border = '3px solid var(--primary)';
+            selectedSection.style.boxShadow = '0 0 20px rgba(37,99,235,0.3)';
+            // Remove highlight after 3 seconds
+            setTimeout(() => {
+                selectedSection.style.border = '';
+                selectedSection.style.boxShadow = '';
+            }, 3000);
+        }
+        // Clear highlights after 4 seconds
+        setTimeout(() => {
+            clearSearchHighlights();
+        }, 4000);
+    }
+}
+
+// Search for employees in the directory
+function searchEmployees(term) {
+    // Check if we have employee data
+    if (allEmployees.length === 0) {
+        return 0;
+    }
+    
+    const matchingEmployees = allEmployees.filter(emp => {
+        const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
+        const employeeId = (emp.employeeid || '').toLowerCase();
+        const email = (emp.email || '').toLowerCase();
+        const department = (emp.department || '').toLowerCase();
+        
+        return fullname.includes(term) || 
+               employeeId.includes(term) || 
+               email.includes(term) ||
+               department.includes(term);
+    });
+    
+    if (matchingEmployees.length > 0) {
+        // Navigate to employee section
+        scrollToSection('#employees');
+        setActiveNavForHash('#employees');
+        
+        // Apply filter to show matching employees
+        const searchInput = document.getElementById('employeeSearchInput');
+        if (searchInput) {
+            searchInput.value = term;
+            // Show filter bar if hidden
+            const filterBar = document.getElementById('employeeFilterBar');
+            if (filterBar && filterBar.style.display === 'none') {
+                filterBar.style.display = 'block';
+                const btn = document.querySelector('.section-actions .btn-outline');
+                if (btn) {
+                    btn.innerHTML = '<i class="fa-solid fa-filter"></i> Hide Filter';
+                }
+            }
+            // Trigger filter
+            filterEmployees();
+        }
+        
+        // Highlight the employee section
+        const employeeSection = document.getElementById('employees');
+        if (employeeSection) {
+            employeeSection.style.border = '3px solid var(--primary)';
+            employeeSection.style.boxShadow = '0 0 20px rgba(37,99,235,0.3)';
+            setTimeout(() => {
+                employeeSection.style.border = '';
+                employeeSection.style.boxShadow = '';
+            }, 3000);
+        }
+        
+        return matchingEmployees.length;
+    }
+    
+    return 0;
+}
+
+// ============ END SEARCH FUNCTIONALITY ============
+
 // ============ EMPLOYEE DIRECTORY FUNCTIONS ============
 
 // Store all employees for filtering
 let allEmployees = [];
 let filteredEmployees = [];
-let employeeCardsExpanded = false;
+let currentPage = 1;
+const CARDS_PER_PAGE = 5;
 let previousEmployeesData = '';
 
 // Update the employees grid with cards
@@ -155,6 +601,8 @@ function updateEmployeesGrid(users) {
         document.getElementById('employeeRoleFilter').value = 'all';
         document.getElementById('employeeDeptFilter').value = 'all';
         document.getElementById('employeeSearchInput').value = '';
+        // Reset to page 1 when new data loads
+        currentPage = 1;
     }
     
     // Render the grid
@@ -191,13 +639,14 @@ function populateDepartmentFilter(employees) {
     });
 }
 
-// Render employee cards with limit (6 cards initially)
+// Render employee cards with pagination (5 cards per page)
 function renderEmployeeCards(employees) {
     const grid = document.getElementById('employeesGrid');
     if (!grid) return;
     
     const footer = document.getElementById('employeeGridFooter');
     const countDisplay = document.getElementById('employeeCountDisplay');
+    const paginationContainer = document.getElementById('employeePagination');
     
     if (!employees || employees.length === 0) {
         grid.innerHTML = `
@@ -210,11 +659,13 @@ function renderEmployeeCards(employees) {
         return;
     }
     
-    // Determine how many cards to show (6 initially, all if expanded)
-    const showCount = employeeCardsExpanded ? employees.length : Math.min(employees.length, 6);
-    const visibleEmployees = employees.slice(0, showCount);
+    // Calculate pagination
+    const totalPages = Math.ceil(employees.length / CARDS_PER_PAGE);
+    const startIndex = (currentPage - 1) * CARDS_PER_PAGE;
+    const endIndex = Math.min(startIndex + CARDS_PER_PAGE, employees.length);
+    const visibleEmployees = employees.slice(startIndex, endIndex);
     
-    // Generate card HTML - Simplified display: ID, Name, Email, Department, Role only
+    // Generate card HTML
     grid.innerHTML = visibleEmployees.map((user, index) => {
         const fullname = `${user.firstname || ''} ${user.lastname || ''}`.trim() || 'Unknown';
         const initialsText = fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--';
@@ -226,7 +677,7 @@ function renderEmployeeCards(employees) {
         const department = user.department || 'N/A';
         
         return `
-            <div class="emp-card" data-index="${index}" data-role="${escapeHtml(role)}" data-name="${escapeHtml(fullname.toLowerCase())}" data-id="${escapeHtml(employeeId)}" data-email="${escapeHtml(email)}">
+            <div class="emp-card" data-index="${startIndex + index}" data-role="${escapeHtml(role)}" data-name="${escapeHtml(fullname.toLowerCase())}" data-id="${escapeHtml(employeeId)}" data-email="${escapeHtml(email)}">
                 <div class="emp-card-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
                     <div class="emp-card-avatar" style="display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:white;">
                         ${escapeHtml(initialsText)}
@@ -268,18 +719,68 @@ function renderEmployeeCards(employees) {
         `;
     }).join('');
     
-    // Handle footer visibility
+    // Handle footer and pagination
     if (footer) {
-        if (employees.length > 6) {
+        if (employees.length > CARDS_PER_PAGE) {
             footer.style.display = 'block';
-            const btn = document.getElementById('employeeToggleBtn');
-            if (btn) {
-                btn.innerHTML = employeeCardsExpanded 
-                    ? '<i class="fa-solid fa-chevron-up"></i> View Less Employees' 
-                    : `<i class="fa-solid fa-chevron-down"></i> View More Employees (${employees.length - 6} more)`;
-            }
+            
+            // Update count display
             if (countDisplay) {
-                countDisplay.textContent = `Showing ${visibleEmployees.length} of ${employees.length} employees`;
+                countDisplay.textContent = `Showing ${startIndex + 1} - ${endIndex} of ${employees.length} employees`;
+            }
+            
+            // Generate pagination buttons
+            if (paginationContainer) {
+                let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
+                
+                // Previous button
+                paginationHTML += `
+                    <button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                `;
+                
+                // Page numbers
+                const maxVisiblePages = 5;
+                let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+                let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+                
+                if (endPage - startPage < maxVisiblePages - 1) {
+                    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+                }
+                
+                if (startPage > 1) {
+                    paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(1)">1</button>`;
+                    if (startPage > 2) {
+                        paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+                    }
+                }
+                
+                for (let i = startPage; i <= endPage; i++) {
+                    const isActive = i === currentPage;
+                    paginationHTML += `
+                        <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn" onclick="goToPage(${i})" ${isActive ? 'style="font-weight:700;"' : ''}>
+                            ${i}
+                        </button>
+                    `;
+                }
+                
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) {
+                        paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+                    }
+                    paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
+                }
+                
+                // Next button
+                paginationHTML += `
+                    <button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                `;
+                
+                paginationHTML += '</div>';
+                paginationContainer.innerHTML = paginationHTML;
             }
         } else {
             footer.style.display = 'none';
@@ -287,12 +788,14 @@ function renderEmployeeCards(employees) {
     }
 }
 
-// Toggle employee cards between 6 and all
-function toggleEmployeeCards() {
-    employeeCardsExpanded = !employeeCardsExpanded;
+// Go to specific page
+function goToPage(page) {
+    const totalPages = Math.ceil(filteredEmployees.length / CARDS_PER_PAGE);
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
     renderEmployeeCards(filteredEmployees);
     
-    // Scroll to grid after toggle
+    // Scroll to grid
     const grid = document.getElementById('employeesGrid');
     if (grid) {
         setTimeout(() => {
@@ -354,8 +857,8 @@ function filterEmployees() {
         return matchesSearch && matchesRole && matchesDept;
     });
     
-    // Reset expansion state when filtering
-    employeeCardsExpanded = false;
+    // Reset to page 1 when filtering
+    currentPage = 1;
     renderEmployeeCards(filteredEmployees);
 }
 
@@ -369,10 +872,12 @@ function clearEmployeeFilters() {
     if (roleFilter) roleFilter.value = 'all';
     if (deptFilter) deptFilter.value = 'all';
     
-    employeeCardsExpanded = false;
+    currentPage = 1;
     filteredEmployees = [...allEmployees];
     renderEmployeeCards(filteredEmployees);
 }
+
+// ============ END EMPLOYEE FUNCTIONS ============
 
 // ============ VIEW EMPLOYEE MODAL ============
 
@@ -503,7 +1008,7 @@ function editEmployee(uid) {
                     <button class="modal-close" onclick="closeEditEmployeeModal()">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <form id="editEmployeeForm" onsubmit="return submitEditEmployee(event)">
+                    <form id="editEmployeeForm" enctype="multipart/form-data" onsubmit="return submitEditEmployee(event)">
                         <div class="edit-grid">
                             <div class="form-group">
                                 <label>Employee ID</label>
@@ -562,6 +1067,16 @@ function editEmployee(uid) {
                             <label>New Password (leave blank to keep current)</label>
                             <input class="form-control" type="password" id="editPassword" placeholder="Enter new password to change" />
                         </div>
+                        <!-- Image upload field for editing -->
+                        <div class="form-group" style="margin-top:12px;">
+                            <label>Profile Image</label>
+                            <input class="form-control" type="file" id="editImage" name="image" accept=".jpg,.jpeg,.png,.gif,.webp,image/*" />
+                            <small style="color:var(--text-muted);font-size:11px;display:block;margin-top:4px;">Leave blank to keep current image. Upload new image to replace.</small>
+                            <div id="editImagePreview" style="margin-top:8px;display:none;">
+                                <img id="editImagePreviewImg" src="" alt="Preview" style="max-width:100px;max-height:100px;border-radius:8px;border:1px solid var(--border);padding:4px;" />
+                                <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('editImage').value='';document.getElementById('editImagePreview').style.display='none';" style="margin-left:8px;padding:2px 8px;font-size:11px;">Remove</button>
+                            </div>
+                        </div>
                         <input type="hidden" id="editUid" value="${escapeHtml(employee.uid || '')}" />
                         <input type="hidden" id="editRfidHidden" value="${escapeHtml(employee.rfid || '')}" />
                         <div id="editMessage" style="margin-top:10px;font-size:13px;display:none;"></div>
@@ -582,6 +1097,25 @@ function editEmployee(uid) {
     // Add modal to body
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
+    // Add image preview functionality
+    const imageInput = document.getElementById('editImage');
+    if (imageInput) {
+        imageInput.addEventListener('change', function() {
+            const previewDiv = document.getElementById('editImagePreview');
+            const previewImg = document.getElementById('editImagePreviewImg');
+            if (this.files && this.files[0]) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImg.src = e.target.result;
+                    previewDiv.style.display = 'block';
+                };
+                reader.readAsDataURL(this.files[0]);
+            } else {
+                previewDiv.style.display = 'none';
+            }
+        });
+    }
+    
     // Prevent body scroll
     document.body.style.overflow = 'hidden';
 }
@@ -600,7 +1134,7 @@ async function submitEditEmployee(event) {
     const uid = document.getElementById('editUid').value;
     const rfid = document.getElementById('editRfidHidden').value;
     
-    // Get form data
+    // Get form data - use FormData to handle file upload
     const formData = new FormData();
     formData.append('employeeid', document.getElementById('editEmployeeId').value);
     formData.append('rfid', document.getElementById('editRfid').value);
@@ -620,6 +1154,12 @@ async function submitEditEmployee(event) {
         formData.append('password', password);
     }
     
+    // Get image file if selected
+    const imageFile = document.getElementById('editImage').files[0];
+    if (imageFile) {
+        formData.append('image', imageFile);
+    }
+    
     const msgEl = document.getElementById('editMessage');
     msgEl.style.display = 'block';
     msgEl.style.color = '#3B82F6';
@@ -630,6 +1170,7 @@ async function submitEditEmployee(event) {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+                // Do not set Content-Type for FormData - browser will set it with boundary
             },
             body: formData,
             credentials: 'include'
@@ -728,6 +1269,236 @@ function updateEmployeeTable(users) {
 
 // ============ END EMPLOYEE FUNCTIONS ============
 
+// ============ ATTENDANCE TABLE FUNCTIONS ============
+
+// Store attendance data for pagination
+let attendanceData = [];
+let attendanceCurrentPage = 1;
+const ATTENDANCE_PER_PAGE = 20;
+let attendanceFilteredData = [];
+
+// Update attendance table with pagination
+function updateAttendanceTable(scans) {
+    const body = document.getElementById('dashboardAttendanceBody');
+    if (!body) return;
+    
+    // Store raw data for filtering
+    attendanceData = scans || [];
+    applyAttendanceFilters();
+}
+
+// Apply filters and render attendance table
+function applyAttendanceFilters() {
+    const deptFilter = document.getElementById('attendanceFilterDept');
+    const statusFilter = document.getElementById('attendanceFilterStatus');
+    
+    const dept = deptFilter ? deptFilter.value : 'all';
+    const status = statusFilter ? statusFilter.value : 'all';
+    
+    // Filter data
+    attendanceFilteredData = attendanceData.filter(scan => {
+        const employee = scan.employee;
+        
+        // Department filter
+        let matchesDept = true;
+        if (dept !== 'all') {
+            const empDept = (employee && employee.department) || '';
+            matchesDept = empDept.toLowerCase() === dept.toLowerCase();
+        }
+        
+        // Status filter - only filter by present/absent/leave
+        let matchesStatus = true;
+        if (status !== 'all') {
+            const isPresent = employee ? true : false;
+            const isOnLeave = false; // We don't have leave status in scan data
+            
+            if (status === 'present') {
+                matchesStatus = isPresent;
+            } else if (status === 'absent') {
+                matchesStatus = !isPresent;
+            } else if (status === 'leave') {
+                matchesStatus = isOnLeave;
+            }
+        }
+        
+        return matchesDept && matchesStatus;
+    });
+    
+    // Reset to page 1 when filtering
+    attendanceCurrentPage = 1;
+    renderAttendanceTable();
+}
+
+// Render attendance table with pagination
+function renderAttendanceTable() {
+    const body = document.getElementById('dashboardAttendanceBody');
+    const paginationContainer = document.getElementById('attendancePagination');
+    const countDisplay = document.getElementById('attendanceCountDisplay');
+    
+    if (!body) return;
+    
+    // Calculate pagination
+    const totalItems = attendanceFilteredData.length;
+    const totalPages = Math.ceil(totalItems / ATTENDANCE_PER_PAGE);
+    const startIndex = (attendanceCurrentPage - 1) * ATTENDANCE_PER_PAGE;
+    const endIndex = Math.min(startIndex + ATTENDANCE_PER_PAGE, totalItems);
+    const pageData = attendanceFilteredData.slice(startIndex, endIndex);
+    
+    if (pageData.length === 0) {
+        body.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text-muted);">
+            <i class="fa-solid fa-info-circle" style="font-size:20px;display:block;margin-bottom:10px;"></i>
+            No attendance records found.
+        </td></tr>`;
+        if (paginationContainer) paginationContainer.innerHTML = '';
+        if (countDisplay) countDisplay.textContent = '';
+        return;
+    }
+    
+    // Generate table rows
+    body.innerHTML = pageData.map((scan) => {
+        const employee = scan.employee;
+        const name = employee ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim() : 'Unknown card';
+        const role = employee ? employee.role || 'Unregistered' : 'Unregistered';
+        const department = employee ? employee.department || '--' : '--';
+        const position = employee ? employee.position || '--' : '--';
+        const rfid = scan.rfid || '--';
+        const scannedAt = scan.scanned_at || '--';
+        const isPresent = employee ? true : false;
+        
+        return `<tr>
+            <td><strong>${escapeHtml(employee ? employee.employeeid || employee.uid || '--' : '--')}</strong></td>
+            <td>${escapeHtml(name)}</td>
+            <td>${escapeHtml(department)}</td>
+            <td>${escapeHtml(position)}</td>
+            <td><code>${escapeHtml(rfid)}</code></td>
+            <td>${escapeHtml(scannedAt)}</td>
+            <td>--</td>
+            <td><span class="badge ${isPresent ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${isPresent ? 'Present' : 'Unknown'}</span></td>
+            <td>RFID device</td>
+            <td>Live scan</td>
+        </tr>`;
+    }).join('');
+    
+    // Update count display (above pagination)
+    if (countDisplay) {
+        if (totalItems > 0) {
+            countDisplay.textContent = `Showing ${startIndex + 1} - ${endIndex} of ${totalItems}`;
+        } else {
+            countDisplay.textContent = '';
+        }
+    }
+    
+    // Generate pagination controls
+    if (paginationContainer) {
+        if (totalPages > 1) {
+            let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
+            
+            // Previous button
+            paginationHTML += `
+                <button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${attendanceCurrentPage - 1})" ${attendanceCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                    <i class="fa-solid fa-chevron-left"></i> Prev
+                </button>
+            `;
+            
+            // Page numbers
+            const maxVisiblePages = 5;
+            let startPage = Math.max(1, attendanceCurrentPage - Math.floor(maxVisiblePages / 2));
+            let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+            
+            if (endPage - startPage < maxVisiblePages - 1) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+            }
+            
+            if (startPage > 1) {
+                paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(1)">1</button>`;
+                if (startPage > 2) {
+                    paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+                }
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const isActive = i === attendanceCurrentPage;
+                paginationHTML += `
+                    <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn" onclick="goToAttendancePage(${i})" ${isActive ? 'style="font-weight:700;"' : ''}>
+                        ${i}
+                    </button>
+                `;
+            }
+            
+            if (endPage < totalPages) {
+                if (endPage < totalPages - 1) {
+                    paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+                }
+                paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${totalPages})">${totalPages}</button>`;
+            }
+            
+            // Next button
+            paginationHTML += `
+                <button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${attendanceCurrentPage + 1})" ${attendanceCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                    Next <i class="fa-solid fa-chevron-right"></i>
+                </button>
+            `;
+            
+            paginationHTML += '</div>';
+            paginationContainer.innerHTML = paginationHTML;
+        } else {
+            // No pagination buttons needed, just clear the container
+            paginationContainer.innerHTML = '';
+        }
+    }
+}
+
+// Go to specific attendance page
+function goToAttendancePage(page) {
+    const totalPages = Math.ceil(attendanceFilteredData.length / ATTENDANCE_PER_PAGE);
+    if (page < 1 || page > totalPages) return;
+    attendanceCurrentPage = page;
+    renderAttendanceTable();
+    
+    // Scroll to table
+    const table = document.querySelector('#realtime .card');
+    if (table) {
+        setTimeout(() => {
+            table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 100);
+    }
+}
+
+// Populate department filter with unique departments
+function populateAttendanceDepartmentFilter(scans) {
+    const deptFilter = document.getElementById('attendanceFilterDept');
+    if (!deptFilter) return;
+    
+    // Get unique departments from employee data
+    const departments = new Set();
+    scans.forEach(scan => {
+        if (scan.employee && scan.employee.department) {
+            departments.add(scan.employee.department);
+        }
+    });
+    
+    // Clear existing options except the first one
+    while (deptFilter.options.length > 1) {
+        deptFilter.remove(1);
+    }
+    
+    // Sort departments alphabetically
+    const sortedDepts = Array.from(departments).sort();
+    
+    // Add departments to dropdown
+    sortedDepts.forEach(dept => {
+        if (dept && dept.trim()) {
+            const option = document.createElement('option');
+            option.value = dept;
+            option.textContent = dept;
+            deptFilter.appendChild(option);
+        }
+    });
+}
+
+// ============ END ATTENDANCE TABLE FUNCTIONS ============
+
+// ============ ORIGINAL updateScanTable (kept for backward compatibility) ============
 function updateScanTable(scans) {
     const body = document.getElementById('dashboardScanBody');
     if (!body) return;
@@ -742,16 +1513,6 @@ function updateScanTable(scans) {
     }).join('') || '<tr><td colspan="5">No RFID scans received today.</td></tr>';
 }
 
-function updateAttendanceTable(scans) {
-    const body = document.getElementById('dashboardAttendanceBody');
-    if (!body) return;
-    body.innerHTML = scans.slice(0, 20).map((scan) => {
-        const employee = scan.employee;
-        const name = employee ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim() : 'Unknown card';
-        return `<tr><td><strong>${escapeHtml(employee ? employee.employeeid || employee.uid : '--')}</strong></td><td>${escapeHtml(name)}</td><td>${escapeHtml(employee ? employee.role : 'Unregistered')}</td><td>--</td><td><code>${escapeHtml(scan.rfid)}</code></td><td>${escapeHtml(scan.scanned_at)}</td><td>--</td><td><span class="badge ${employee ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${employee ? 'Present' : 'Unknown'}</span></td><td>RFID device</td><td>Live scan</td></tr>`;
-    }).join('') || '<tr><td colspan="10">No RFID scans received.</td></tr>';
-}
-
 // Update the activity timeline with data from the activity feed
 function updateActivityTimeline(activities) {
     const timeline = document.getElementById('dashboardTimeline');
@@ -759,21 +1520,25 @@ function updateActivityTimeline(activities) {
     
     if (!activities || activities.length === 0) {
         timeline.innerHTML = `
-            <div class="timeline-item" style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
-                No recent activities
+            <div style="display:flex;justify-content:center;align-items:center;padding:30px 0;color:var(--text-muted);font-size:13px;">
+                <i class="fa-solid fa-info-circle" style="margin-right:8px;"></i> No recent activities
             </div>
         `;
         return;
     }
     
-    // Show latest 10 activities
-    const displayActivities = activities.slice(0, 10);
+    // Show latest 15 activities for better visibility
+    const displayActivities = activities.slice(0, 15);
     
     timeline.innerHTML = displayActivities.map((activity) => {
         const timestamp = new Date(activity.timestamp);
         const timeStr = timestamp.toLocaleTimeString(undefined, {
             hour: '2-digit',
             minute: '2-digit'
+        });
+        const dateStr = timestamp.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric'
         });
         
         // Determine icon and color based on activity type
@@ -858,7 +1623,7 @@ function updateActivityTimeline(activities) {
                 <div class="timeline-content">
                     <div class="timeline-text">${escapeHtml(activity.details)}</div>
                     <div class="timeline-meta">
-                        <span>${escapeHtml(timeStr)}</span>
+                        <span>${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</span>
                         ${userDisplay ? `&nbsp;·&nbsp;${userDisplay}` : ''}
                         <span class="timeline-badge" style="background:${bgColor};color:${color};">
                             ${escapeHtml(activity.type)}
@@ -1323,7 +2088,13 @@ async function loadDashboardData() {
         updateAttendanceRate(stats);
         updateEmployeeTable(data.users || []);
         updateScanTable(data.scans || []);
+        
+        // Update attendance table with pagination
         updateAttendanceTable(data.scans || []);
+        
+        // Populate department filter
+        populateAttendanceDepartmentFilter(data.scans || []);
+        
         updateDeviceDisplay(data.devices || []);
         
         // Update system status indicators
@@ -1372,6 +2143,152 @@ function updateSystemStatus(data) {
     // Network status - always online if API responds
 }
 
+// ============ SETTINGS FUNCTIONS ============
+
+// Load settings
+async function loadSettings() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            console.error('Failed to load settings:', response.status);
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            populateSettingsForm(result.data);
+            
+            // Update version display with GitHub version info
+            updateVersionDisplay(result.data);
+        }
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+// Populate settings form with data
+function populateSettingsForm(settings) {
+    // Attendance settings
+    if (settings.attendance) {
+        const att = settings.attendance;
+        document.getElementById('settingsWorkStart').value = att.work_start || '08:00';
+        document.getElementById('settingsWorkEnd').value = att.work_end || '17:00';
+        document.getElementById('settingsLunchStart').value = att.lunch_start || '12:00';
+        document.getElementById('settingsLunchEnd').value = att.lunch_end || '13:00';
+        document.getElementById('settingsGracePeriod').value = att.grace_period || 10;
+    }
+    
+    // Institution settings
+    if (settings.institution) {
+        const inst = settings.institution;
+        document.getElementById('settingsInstitutionName').value = inst.name || '';
+        document.getElementById('settingsSystemName').value = inst.system_name || '';
+        document.getElementById('settingsAcademicYear').value = inst.academic_year || '';
+        document.getElementById('settingsHREmail').value = inst.hr_email || '';
+    }
+}
+
+// Update version display with GitHub version info
+function updateVersionDisplay(settings) {
+    const versionInput = document.getElementById('settingsVersion');
+    const versionStatus = document.getElementById('settingsVersionStatus');
+    
+    if (!versionInput) return;
+    
+    const currentVersion = settings.system?.version || '1.0.0';
+    const githubVersion = settings.system?.github_version || null;
+    
+    // If GitHub version exists, use that as the displayed version
+    // Otherwise use the current version from settings
+    const displayVersion = githubVersion || currentVersion;
+    versionInput.value = displayVersion;
+    
+    // Hide the status message completely
+    if (versionStatus) {
+        versionStatus.style.display = 'none';
+    }
+}
+
+// Save settings
+async function saveSettings() {
+    const settingsData = {
+        attendance: {
+            work_start: document.getElementById('settingsWorkStart').value,
+            work_end: document.getElementById('settingsWorkEnd').value,
+            lunch_start: document.getElementById('settingsLunchStart').value,
+            lunch_end: document.getElementById('settingsLunchEnd').value,
+            grace_period: parseInt(document.getElementById('settingsGracePeriod').value) || 10
+        },
+        institution: {
+            name: document.getElementById('settingsInstitutionName').value,
+            system_name: document.getElementById('settingsSystemName').value,
+            academic_year: document.getElementById('settingsAcademicYear').value,
+            hr_email: document.getElementById('settingsHREmail').value
+        }
+    };
+    
+    const msgEl = document.getElementById('settingsMessage');
+    msgEl.style.display = 'block';
+    msgEl.style.color = '#3B82F6';
+    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving settings...';
+    
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
+            method: 'PUT',
+            headers: {
+                ...getAuthHeaders(),
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(settingsData),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        const result = await response.json();
+        
+        if (!response.ok) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to save settings.'}`;
+            return;
+        }
+        
+        msgEl.style.color = '#10B981';
+        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings saved successfully!';
+        
+        // Refresh settings to get updated version info
+        setTimeout(() => {
+            loadSettings();
+        }, 1000);
+        
+        // Auto hide after 3 seconds
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+        
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        msgEl.style.color = '#EF4444';
+        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
+    }
+}
+
+// ============ END SETTINGS FUNCTIONS ============
+
 async function verifyDashboardSession() {
     const token = localStorage.getItem('tapinToken');
     if (!token) {
@@ -1399,6 +2316,10 @@ async function verifyDashboardSession() {
         // Load DTR data after dashboard loads
         await loadDTREmployees();
         await loadDTRMonths();
+        // Load settings (which auto-checks version)
+        await loadSettings();
+        // Initialize search functionality
+        initSearch();
     } catch (error) {
         redirectToLogin();
     }
@@ -1697,322 +2618,6 @@ if (logoutConfirmYes) {
         }
     });
 }
-
-// ============ SETTINGS FUNCTIONS ============
-
-// Load settings
-async function loadSettings() {
-    try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
-            method: 'GET',
-            headers: getAuthHeaders(),
-            credentials: 'include',
-            cache: 'no-store'
-        });
-        
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-        
-        if (!response.ok) {
-            console.error('Failed to load settings:', response.status);
-            return;
-        }
-        
-        const result = await response.json();
-        if (result.status === 'success' && result.data) {
-            populateSettingsForm(result.data);
-            
-            // Update version display with GitHub version info
-            updateVersionDisplay(result.data);
-        }
-    } catch (error) {
-        console.error('Error loading settings:', error);
-    }
-}
-
-// Populate settings form with data
-function populateSettingsForm(settings) {
-    // Attendance settings
-    if (settings.attendance) {
-        const att = settings.attendance;
-        document.getElementById('settingsWorkStart').value = att.work_start || '08:00';
-        document.getElementById('settingsWorkEnd').value = att.work_end || '17:00';
-        document.getElementById('settingsLunchStart').value = att.lunch_start || '12:00';
-        document.getElementById('settingsLunchEnd').value = att.lunch_end || '13:00';
-        document.getElementById('settingsGracePeriod').value = att.grace_period || 10;
-    }
-    
-    // Institution settings
-    if (settings.institution) {
-        const inst = settings.institution;
-        document.getElementById('settingsInstitutionName').value = inst.name || '';
-        document.getElementById('settingsSystemName').value = inst.system_name || '';
-        document.getElementById('settingsAcademicYear').value = inst.academic_year || '';
-        document.getElementById('settingsHREmail').value = inst.hr_email || '';
-    }
-    
-    // System settings
-    if (settings.system) {
-        document.getElementById('settingsVersion').value = settings.system.version || '1.0.0';
-        document.getElementById('settingsVersionUrl').value = settings.system.version_url || '';
-    }
-}
-
-// Update version display with GitHub version info
-function updateVersionDisplay(settings) {
-    const versionInput = document.getElementById('settingsVersion');
-    const versionStatus = document.getElementById('settingsVersionStatus');
-    const checkBtn = document.getElementById('checkVersionBtn');
-    
-    if (!versionInput || !versionStatus) return;
-    
-    const currentVersion = settings.system?.version || '1.0.0';
-    const githubVersion = settings.system?.github_version || null;
-    
-    versionInput.value = currentVersion;
-    
-    if (githubVersion) {
-        const isNewer = settings.system?.is_newer_available || false;
-        if (isNewer) {
-            versionStatus.innerHTML = `
-                <span style="color:var(--warning);">
-                    <i class="fa-solid fa-arrow-up"></i> New version ${githubVersion} available!
-                </span>
-            `;
-            if (checkBtn) {
-                checkBtn.innerHTML = '<i class="fa-solid fa-download"></i> Update Available';
-                checkBtn.style.background = 'var(--warning)';
-                checkBtn.style.color = 'white';
-            }
-        } else {
-            versionStatus.innerHTML = `
-                <span style="color:var(--success);">
-                    <i class="fa-solid fa-check-circle"></i> Up to date (v${githubVersion})
-                </span>
-            `;
-            if (checkBtn) {
-                checkBtn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check for Updates';
-                checkBtn.style.background = '';
-                checkBtn.style.color = '';
-            }
-        }
-    } else {
-        versionStatus.innerHTML = `
-            <span style="color:var(--text-muted);">
-                <i class="fa-solid fa-link"></i> Unable to check for updates
-            </span>
-        `;
-    }
-}
-
-// Save settings
-async function saveSettings() {
-    const settingsData = {
-        attendance: {
-            work_start: document.getElementById('settingsWorkStart').value,
-            work_end: document.getElementById('settingsWorkEnd').value,
-            lunch_start: document.getElementById('settingsLunchStart').value,
-            lunch_end: document.getElementById('settingsLunchEnd').value,
-            grace_period: parseInt(document.getElementById('settingsGracePeriod').value) || 10
-        },
-        institution: {
-            name: document.getElementById('settingsInstitutionName').value,
-            system_name: document.getElementById('settingsSystemName').value,
-            academic_year: document.getElementById('settingsAcademicYear').value,
-            hr_email: document.getElementById('settingsHREmail').value
-        },
-        system: {
-            version_url: document.getElementById('settingsVersionUrl').value
-        }
-    };
-    
-    const msgEl = document.getElementById('settingsMessage');
-    msgEl.style.display = 'block';
-    msgEl.style.color = '#3B82F6';
-    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving settings...';
-    
-    try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
-            method: 'PUT',
-            headers: {
-                ...getAuthHeaders(),
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(settingsData),
-            credentials: 'include'
-        });
-        
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-        
-        const result = await response.json();
-        
-        if (!response.ok) {
-            msgEl.style.color = '#EF4444';
-            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to save settings.'}`;
-            return;
-        }
-        
-        msgEl.style.color = '#10B981';
-        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings saved successfully!';
-        
-        // Refresh settings to get updated version info
-        setTimeout(() => {
-            loadSettings();
-        }, 1000);
-        
-        // Auto hide after 3 seconds
-        setTimeout(() => {
-            msgEl.style.display = 'none';
-        }, 5000);
-        
-    } catch (error) {
-        console.error('Error saving settings:', error);
-        msgEl.style.color = '#EF4444';
-        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
-    }
-}
-
-// Check for version update
-async function checkVersionUpdate() {
-    const msgEl = document.getElementById('settingsMessage');
-    const checkBtn = document.getElementById('checkVersionBtn');
-    
-    msgEl.style.display = 'block';
-    msgEl.style.color = '#3B82F6';
-    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking for updates...';
-    
-    if (checkBtn) {
-        checkBtn.disabled = true;
-        checkBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking...';
-    }
-    
-    try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/settings/check-version`, {
-            method: 'GET',
-            headers: getAuthHeaders(),
-            credentials: 'include'
-        });
-        
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-        
-        const result = await response.json();
-        
-        if (!response.ok) {
-            msgEl.style.color = '#EF4444';
-            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to check version.'}`;
-            return;
-        }
-        
-        if (result.status === 'success' && result.data) {
-            const data = result.data;
-            const versionInput = document.getElementById('settingsVersion');
-            const versionStatus = document.getElementById('settingsVersionStatus');
-            
-            versionInput.value = data.current_version;
-            
-            if (data.is_newer_available) {
-                versionStatus.innerHTML = `
-                    <span style="color:var(--warning);">
-                        <i class="fa-solid fa-arrow-up"></i> New version ${data.github_version} available! (Current: ${data.current_version})
-                    </span>
-                `;
-                if (checkBtn) {
-                    checkBtn.innerHTML = '<i class="fa-solid fa-download"></i> Update Available';
-                    checkBtn.style.background = 'var(--warning)';
-                    checkBtn.style.color = 'white';
-                }
-                msgEl.style.color = '#F59E0B';
-                msgEl.innerHTML = `<i class="fa-solid fa-arrow-up"></i> Version ${data.github_version} is available!`;
-            } else {
-                versionStatus.innerHTML = `
-                    <span style="color:var(--success);">
-                        <i class="fa-solid fa-check-circle"></i> Up to date (v${data.github_version || data.current_version})
-                    </span>
-                `;
-                if (checkBtn) {
-                    checkBtn.innerHTML = '<i class="fa-solid fa-rotate"></i> Check for Updates';
-                    checkBtn.style.background = '';
-                    checkBtn.style.color = '';
-                }
-                msgEl.style.color = '#10B981';
-                msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> You have the latest version!';
-            }
-        }
-        
-        setTimeout(() => {
-            msgEl.style.display = 'none';
-        }, 5000);
-        
-    } catch (error) {
-        console.error('Error checking version:', error);
-        msgEl.style.color = '#EF4444';
-        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Error checking for updates.';
-    } finally {
-        if (checkBtn) {
-            checkBtn.disabled = false;
-        }
-    }
-}
-
-// Reset settings to defaults
-async function resetSettings() {
-    if (!confirm('Are you sure you want to reset all settings to default values?')) {
-        return;
-    }
-    
-    const msgEl = document.getElementById('settingsMessage');
-    msgEl.style.display = 'block';
-    msgEl.style.color = '#3B82F6';
-    msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Resetting settings...';
-    
-    try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/settings/reset`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            credentials: 'include'
-        });
-        
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-        
-        const result = await response.json();
-        
-        if (!response.ok) {
-            msgEl.style.color = '#EF4444';
-            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to reset settings.'}`;
-            return;
-        }
-        
-        msgEl.style.color = '#10B981';
-        msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings reset to defaults!';
-        
-        // Reload settings
-        setTimeout(() => {
-            loadSettings();
-        }, 1000);
-        
-        setTimeout(() => {
-            msgEl.style.display = 'none';
-        }, 5000);
-        
-    } catch (error) {
-        console.error('Error resetting settings:', error);
-        msgEl.style.color = '#EF4444';
-        msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
-    }
-}
-
-// ============ END SETTINGS FUNCTIONS ============
 
 window.addEventListener('pageshow', verifyDashboardSession);
 setInterval(updateClock, 1000);

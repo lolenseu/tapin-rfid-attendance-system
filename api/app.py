@@ -47,7 +47,7 @@ except ImportError:
 # Create the Flask application.
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "tapin-development-secret-key")
-app.permanent_session_lifetime = timedelta(hours=3)
+app.permanent_session_lifetime = timedelta(minutes=30)
 
 # Enable CORS for Railway
 CORS(app, origins=[
@@ -2391,7 +2391,7 @@ def register_employee():
             "message": "Registration failed: " + str(e)
         }), 500
 
-# Update employee data
+# Update employee data - FIXED to handle image updates
 @app.route("/api/update-employee/<rfid>", methods=["PUT"])
 def update_employee(rfid):
     try:
@@ -2434,6 +2434,7 @@ def update_employee(rfid):
         
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # Update text fields
         if "lastname" in data and data.get("lastname"):
             updated_employee["lastname"] = str(data.get("lastname", "")).strip()
         if "firstname" in data and data.get("firstname"):
@@ -2453,11 +2454,14 @@ def update_employee(rfid):
         if "position" in data:
             updated_employee["position"] = str(data.get("position", "")).strip()
         
+        # Update password if provided
         if "password" in data and data.get("password"):
             updated_employee["password_hash"] = hashlib.md5(str(data.get("password", "")).encode("utf-8")).hexdigest()
         
+        # Handle image update
         image_file = request.files.get("image")
         if image_file and image_file.filename:
+            # Validate file extension
             extension = os.path.splitext(image_file.filename)[1].lower()
             if extension not in [".jpg", ".jpeg", ".png", ".gif", ".webp"]:
                 return jsonify({
@@ -2465,40 +2469,48 @@ def update_employee(rfid):
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
             
-            # Delete old image
+            # Delete old image file if it exists
             old_image = updated_employee.get("image")
             if old_image:
                 old_image_path = os.path.join(BASE_DIR, old_image)
                 if os.path.exists(old_image_path):
                     try:
                         os.remove(old_image_path)
-                    except:
-                        pass
+                        print(f"Deleted old image: {old_image_path}")
+                    except Exception as e:
+                        print(f"Error deleting old image: {e}")
             
             # Use the compression function for new image
             image_path = compress_and_save_image(image_file, rfid)
             
-            if not image_path:
+            if image_path:
+                updated_employee["image"] = image_path
+                print(f"New image saved: {image_path}")
+            else:
                 # Fallback to original saving method if compression fails
                 rfid_filename = secure_filename(rfid)
                 os.makedirs(PROFILE_STORAGE, exist_ok=True)
                 filename = rfid_filename + extension
                 image_file.save(os.path.join(PROFILE_STORAGE, filename))
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-            
-            updated_employee["image"] = image_path
+                updated_employee["image"] = image_path
+                print(f"New image saved (fallback): {image_path}")
         
         updated_employee["timestamp_modified"] = now
         
+        # Update database
         database[category_found][index_found] = updated_employee
         
+        # Create backup
         import shutil
         shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
         
+        # Save to file
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(database, f, indent=4)
             f.write("\n")
         
+        # Update in-memory database
         employee_database[rfid] = updated_employee
         
         # Log activity
@@ -2516,6 +2528,9 @@ def update_employee(rfid):
         }), 200
         
     except Exception as e:
+        print(f"Update error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             "status": "error",
             "message": "Update failed: " + str(e)
