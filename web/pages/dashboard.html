@@ -23,6 +23,7 @@
       </div>
       <div class="brand-text">
         <div class="brand-name">TAPIN</div>
+        <div class="brand-sub">RFID Attendance System</div>
         <div class="brand-sub">ISPSC TAGUDIN</div>
       </div>
       <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle sidebar" aria-expanded="true">
@@ -65,18 +66,7 @@
         <span class="nav-icon"><i class="fa-solid fa-signal"></i></span>
         Realtime Employee Dashboard
       </a>
-      <a href="#admin-dashboard" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-user-shield"></i></span>
-        Admin / HR Dashboard
-      </a>
-      <a href="#introduction" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-book-open"></i></span>
-        Introduction
-      </a>
-      <a href="#iot-attendance" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
-        IoT-Based Attendance
-      </a>
+      <!-- removed Admin / HR Dashboard, Introduction, IoT-Based Attendance links per request -->
     </nav>
 
     <div class="sidebar-divider"></div>
@@ -147,43 +137,27 @@
             <div class="stat-icon-wrap"><i class="fa-solid fa-users"></i></div>
             <div class="stat-label">Total Employees</div>
             <div class="stat-value" id="statTotalEmployees">0</div>
-            <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> +0 this month</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:100%"></div></div>
           </div>
           <div class="stat-card stat-green">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-circle-check"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-user"></i></div>
             <div class="stat-label">Present Today</div>
             <div class="stat-value" id="statPresentToday">0</div>
-            <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> +0 vs yesterday</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:75%"></div></div>
           </div>
           <div class="stat-card stat-red">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-circle-xmark"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-user-slash"></i></div>
             <div class="stat-label">Absent Today</div>
             <div class="stat-value" id="statAbsentToday">0</div>
-            <div class="stat-trend trend-down"><i class="fa-solid fa-arrow-down"></i> −0 vs yesterday</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:10%"></div></div>
           </div>
           <div class="stat-card stat-purple">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-umbrella-beach"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-house"></i></div>
             <div class="stat-label">On Leave</div>
             <div class="stat-value" id="statOnLeave">0</div>
-            <div class="stat-trend trend-neutral"><i class="fa-solid fa-minus"></i> No change</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:8%"></div></div>
           </div>
-          <div class="stat-card stat-cyan">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-percent"></i></div>
-            <div class="stat-label">Attendance Rate</div>
-            <div class="stat-value" id="statAttendanceRate">0%</div>
-            <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> +0% vs last week</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:75%"></div></div>
-          </div>
+          <!-- Attendance Rate card removed to simplify dashboard -->
           <div class="stat-card stat-blue">
             <div class="stat-icon-wrap"><i class="fa-solid fa-wifi"></i></div>
             <div class="stat-label">RFID Scans Today</div>
             <div class="stat-value" id="statRfidScans">0</div>
-            <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> Live</div>
-            <div class="stat-progress"><div class="stat-progress-bar" style="width:80%"></div></div>
           </div>
         </div>
 
@@ -226,10 +200,7 @@
                 <div class="qa-icon"><i class="fa-solid fa-id-card"></i></div>
                 <div class="qa-label">Employee Records</div>
               </a>
-              <a href="#admin-dashboard" class="quick-action">
-                <div class="qa-icon"><i class="fa-solid fa-list-check"></i></div>
-                <div class="qa-label">System Logs</div>
-              </a>
+              <!-- removed quick-action linking to #admin-dashboard -->
             </div>
           </div>
         </div>
@@ -247,7 +218,7 @@
               </div>
               <a href="#realtime" class="btn btn-outline btn-sm">View Full Log</a>
             </div>
-            <div class="table-wrap">
+            <div class="table-wrap" id="realtimeTableWrap">
               <table class="data-table">
                 <thead>
                   <tr>
@@ -356,8 +327,8 @@
                 <table class="dtr-table" id="dtrTable">
                   <thead>
                     <tr>
-                      <th rowspan="2">Day</th>
                       <th rowspan="2">Date</th>
+                      <th rowspan="2">Day</th>
                       <th colspan="2">Morning</th>
                       <th colspan="2">Afternoon</th>
                       <th rowspan="2">Hours</th>
@@ -419,7 +390,7 @@
           </div>
         </div>
       </section>
-
+      
       <section class="page-section" id="employees">
         <div class="section-actions">
           <div>
@@ -530,33 +501,7 @@
         </div>
 
         <div class="hr-letters-grid">
-          <div class="letter-card">
-            <div class="letter-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-file-certificate"></i></div>
-            <div class="letter-title">Certificate of Employment</div>
-            <div class="letter-desc">Official document certifying the employment status, position, and tenure of an employee.</div>
-            <div class="letter-card-footer">
-              <button class="btn btn-primary btn-sm">Generate</button>
-              <button class="btn btn-outline btn-sm"><i class="fa-solid fa-print"></i></button>
-            </div>
-          </div>
-          <div class="letter-card">
-            <div class="letter-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-calendar-check"></i></div>
-            <div class="letter-title">Leave Approval</div>
-            <div class="letter-desc">Formal approval letter for employee leave requests including vacation, sick, and emergency leave.</div>
-            <div class="letter-card-footer">
-              <button class="btn btn-primary btn-sm">Generate</button>
-              <button class="btn btn-outline btn-sm"><i class="fa-solid fa-print"></i></button>
-            </div>
-          </div>
-          <div class="letter-card">
-            <div class="letter-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-triangle-exclamation"></i></div>
-            <div class="letter-title">Notice to Explain</div>
-            <div class="letter-desc">Formal notice requiring an employee to provide written explanation for a specific incident or behavior.</div>
-            <div class="letter-card-footer">
-              <button class="btn btn-primary btn-sm">Generate</button>
-              <button class="btn btn-outline btn-sm"><i class="fa-solid fa-print"></i></button>
-            </div>
-          </div>
+          <!-- IoT-Based Attendance section removed per request -->
           <div class="letter-card">
             <div class="letter-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-file-exclamation"></i></div>
             <div class="letter-title">Warning Letter</div>
@@ -630,7 +575,7 @@
             <div class="template-count">Monthly / Weekly / Daily</div>
           </div>
           <div class="template-card">
-            <div class="template-icon" style="color:var(--success);"><i class="fa-solid fa-umbrella-beach"></i></div>
+            <div class="template-icon" style="color:var(--success);"><i class="fa-solid fa-house"></i></div>
             <div class="template-title">Leave Application</div>
             <div class="template-count">CSC Form No. 6</div>
           </div>
@@ -678,7 +623,7 @@
 
         <div class="reports-grid">
 
-          <div class="report-card">
+          <div class="report-card" data-report="daily">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-calendar-day"></i></div>
               <div><div class="report-card-title">Daily Attendance</div><div class="report-card-desc">Complete daily attendance log of all employees including time in/out and status.</div></div>
@@ -695,7 +640,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="weekly">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-calendar-week"></i></div>
               <div><div class="report-card-title">Weekly Attendance</div><div class="report-card-desc">Weekly attendance summary with totals, absences, and tardiness per employee.</div></div>
@@ -712,7 +657,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="monthly">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-calendar"></i></div>
               <div><div class="report-card-title">Monthly Attendance</div><div class="report-card-desc">Month-end attendance consolidation for payroll and HR compliance reporting.</div></div>
@@ -729,7 +674,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="yearly">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-calendar-xmark"></i></div>
               <div><div class="report-card-title">Yearly Attendance</div><div class="report-card-desc">Annual attendance summary for performance reviews and leave entitlement computation.</div></div>
@@ -746,7 +691,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="summary">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-bar"></i></div>
               <div><div class="report-card-title">Attendance Summary</div><div class="report-card-desc">Consolidated attendance overview across all departments and employees.</div></div>
@@ -763,7 +708,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="absent">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-user-xmark"></i></div>
               <div><div class="report-card-title">Absent Employees</div><div class="report-card-desc">Absence tracking report with patterns, frequencies, and department breakdowns.</div></div>
@@ -780,9 +725,9 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="leave">
             <div class="report-card-header">
-              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-umbrella-beach"></i></div>
+              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-house"></i></div>
               <div><div class="report-card-title">Leave Report</div><div class="report-card-desc">Summary of leave applications, approvals, rejections, and leave balance per employee.</div></div>
             </div>
             <div class="report-card-preview">
@@ -797,7 +742,7 @@
             </div>
           </div>
 
-          <div class="report-card">
+          <div class="report-card" data-report="rfid-logs">
             <div class="report-card-header">
               <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-tower-broadcast"></i></div>
               <div><div class="report-card-title">RFID Scan Logs</div><div class="report-card-desc">Complete log of all RFID tap events including card ID, timestamp, device, and status.</div></div>
@@ -923,115 +868,6 @@
           </div>
         </div>
       </section>
-
-      <section class="page-section" id="introduction">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title" style="margin-top:6px;">Introduction &amp; Background</h1>
-            <p class="section-subtitle">Understanding TAPIN, the Civil Service Commission, and digital attendance transformation.</p>
-          </div>
-        </div>
-
-        <div class="info-hero">
-          <h2 class="info-hero-title"><i class="fa-solid fa-landmark"></i> Civil Service Commission (CSC)</h2>
-          <p class="info-hero-sub">The Civil Service Commission is the central personnel agency of the Philippine government, ensuring merit-based appointments and promoting employee welfare in the public sector through policies on attendance, accountability, and professional development.</p>
-        </div>
-
-        <div class="info-cards-grid">
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-landmark"></i></div>
-            <div class="info-card-title">What is the CSC?</div>
-            <div class="info-card-body">The Civil Service Commission (CSC) is a constitutional body established to promote merit, efficiency, and integrity in the government civil service. It establishes standards for government employee recruitment, promotion, and discipline across all branches of Philippine government.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-clock"></i></div>
-            <div class="info-card-title">Importance of Attendance</div>
-            <div class="info-card-body">Strict monitoring of attendance ensures that government employees fulfill their duty to the public. The CSC mandates accurate time records (DTR) as the official basis for salary computation, leave credits, and disciplinary actions for habitual tardiness or absenteeism.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-user-gear"></i></div>
-            <div class="info-card-title">Government Employee Monitoring</div>
-            <div class="info-card-body">Every government employee is required to maintain an accurate Daily Time Record (DTR) per CSC Memorandum Circular No. 21, series of 1991. Modern systems like TAPIN automate this process, reducing manual errors and administrative burden while ensuring full compliance.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-microchip"></i></div>
-            <div class="info-card-title">Digital Transformation</div>
-            <div class="info-card-body">The Philippine government's digital transformation agenda drives institutions toward technology-based solutions. TAPIN represents this shift — replacing paper-based timekeeping with RFID-automated tracking, providing real-time data access, and enabling smarter HR decision-making.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-file-lines"></i></div>
-            <div class="info-card-title">Daily Time Records (DTR)</div>
-            <div class="info-card-body">The DTR (CSC Form No. 48) is the official government timesheet. It records daily arrival and departure times for morning and afternoon shifts. TAPIN auto-generates CSC-compliant DTRs from RFID scan data, eliminating manual encoding and reducing falsification risk.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-scale-balanced"></i></div>
-            <div class="info-card-title">Employee Accountability</div>
-            <div class="info-card-body">Government employees are accountable to the public they serve. Accurate attendance records support the Ease of Doing Business Act and promote transparency. TAPIN creates an audit trail of all RFID events, ensuring accountability for every time-in and time-out record.</div>
-          </div>
-        </div>
-      </section>
-      
-      <section class="page-section" id="iot-attendance">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title" style="margin-top:6px;">IoT-Based RFID Attendance</h1>
-            <p class="section-subtitle">How RFID technology powers the TAPIN automated attendance monitoring system.</p>
-          </div>
-        </div>
-
-        <div class="info-hero" style="background:linear-gradient(135deg,#0F172A,#1E40AF);">
-          <h2 class="info-hero-title"><i class="fa-solid fa-tower-broadcast"></i> RFID Technology Overview</h2>
-          <p class="info-hero-sub">Radio Frequency Identification (RFID) uses electromagnetic fields to automatically identify and track tags attached to objects or carried by individuals. In TAPIN, each employee carries a unique RFID card that is scanned at entry/exit points to record attendance automatically in real-time.</p>
-        </div>
-
-        <div class="info-cards-grid">
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-signal"></i></div>
-            <div class="info-card-title">How RFID Works</div>
-            <div class="info-card-body">Each RFID card contains a microchip and antenna. When brought near an RFID reader (within 1–10 cm), the reader emits radio waves that power the chip, which transmits its unique ID back to the reader. TAPIN's server receives this ID, matches it to an employee record, and logs the attendance event instantly.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-robot"></i></div>
-            <div class="info-card-title">Attendance Automation</div>
-            <div class="info-card-body">TAPIN eliminates manual time logging. When an employee taps their RFID card, the system automatically determines whether it is a Time In or Time Out event, records the timestamp, computes working hours, flags tardiness based on configurable schedules, and updates the dashboard in real time.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--warning-light);color:var(--warning);"><i class="fa-solid fa-bullseye"></i></div>
-            <div class="info-card-title">Accuracy</div>
-            <div class="info-card-body">RFID scanning achieves near-perfect accuracy compared to manual timekeeping. Timestamps are logged to the second, with tamper-resistant records stored in the database. Biometric validation can be layered on for added security. TAPIN's error rate is less than 0.01% across all recorded transactions.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-ban"></i></div>
-            <div class="info-card-title">Reduced Manual Errors</div>
-            <div class="info-card-body">Human errors such as incorrect time entries, illegible handwriting, buddy punching, and lost timesheets are eliminated. TAPIN creates immutable digital records that cannot be altered without administrative privileges, ensuring integrity of all attendance data.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-gauge-max"></i></div>
-            <div class="info-card-title">Real-Time Monitoring</div>
-            <div class="info-card-body">Administrators can view live attendance data from any device with browser access. The TAPIN realtime dashboard shows who is currently inside, who has checked out, and who is absent or late — updated the moment an RFID scan occurs. System status indicators show reader and server health.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-cloud"></i></div>
-            <div class="info-card-title">Cloud Data Synchronization</div>
-            <div class="info-card-body">All attendance records are synchronized to a centralized PostgreSQL database hosted on secure cloud infrastructure. Data is backed up daily and accessible to authorized HR personnel anytime. Reports can be generated on demand without physical access to the RFID reader hardware.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-bolt"></i></div>
-            <div class="info-card-title">Fast Employee Identification</div>
-            <div class="info-card-body">RFID identification takes under 100 milliseconds. Employees simply tap their card as they enter or leave — no PIN entry, no fingerprint placement time, no queue. For 248 employees at ISPSC Tagudin Campus, this means zero attendance bottlenecks even during peak entry times.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-shield-halved"></i></div>
-            <div class="info-card-title">Security</div>
-            <div class="info-card-body">RFID cards use 128-bit encrypted UIDs that cannot be easily duplicated. TAPIN's server uses HTTPS for all data transfers. Administrative access requires authentication, and all login events are logged. Lost or stolen cards can be immediately deactivated from the admin dashboard.</div>
-          </div>
-          <div class="info-card">
-            <div class="info-card-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-line"></i></div>
-            <div class="info-card-title">Future Scalability</div>
-            <div class="info-card-body">TAPIN is designed to scale. Additional RFID readers can be added to new campus locations, departments, or buildings with minimal configuration. The system supports multi-campus deployment and can accommodate an unlimited number of employees, readers, and concurrent scan events.</div>
-          </div>
-        </div>
-      </section>
       
       <!-- Settings Section - Updated -->
       <section class="page-section" id="settings">
@@ -1149,10 +985,10 @@
       <div class="footer-content">
         <div>
           <div class="footer-brand"><span>TAPIN</span> — RFID-Based Automated Attendance Management System</div>
-          <div style="font-size:11px;color:#475569;margin-top:2px;">ISPSC Tagudin Campus · Bachelor of Science in Information Technology</div>
+          <div class="footer-sub" style="font-size:11px;margin-top:2px;">ISPSC Tagudin Campus · Bachelor of Science in Information Technology</div>
         </div>
         <div class="footer-info">
-          <p>Version 1.0 · &copy; 2026 ISPSC Tagudin Campus</p>
+          <p>Version <span id="versionNumber">1.0</span> · &copy; 2026 ISPSC Tagudin Campus</p>
           <p style="margin-top:2px;font-size:10px;">Developed for Government HR Automation · All rights reserved</p>
         </div>
       </div>

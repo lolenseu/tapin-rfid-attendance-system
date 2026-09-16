@@ -119,6 +119,190 @@ function updateStatProgressBars(stats) {
     }
 }
 
+// Report actions: preview, print, pdf, excel, generate
+document.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest && ev.target.closest('.btn-report');
+    if (!btn) return;
+    const card = btn.closest('.report-card');
+    const reportId = card ? card.dataset.report : null;
+
+    // Determine action by class or icon text
+    if (btn.classList.contains('btn-report-pdf')) {
+        const url = (dashboardApiBaseUrl || '') + `/api/reports/${reportId}/pdf`;
+        window.open(url, '_blank');
+        return;
+    }
+    if (btn.classList.contains('btn-report-excel')) {
+        const url = (dashboardApiBaseUrl || '') + `/api/reports/${reportId}/xlsx`;
+        window.open(url, '_blank');
+        return;
+    }
+    if (btn.classList.contains('btn-report-gen')) {
+        // trigger server-side generation
+        try {
+            const res = await fetch((dashboardApiBaseUrl || '') + `/api/reports/${reportId}/generate`, { method: 'POST', headers: getAuthHeaders() });
+            if (res.ok) alert('Report generation started.'); else alert('Failed to start generation.');
+        } catch (e) { console.error(e); alert('Error generating report.'); }
+        return;
+    }
+    // Print button
+    if (btn.querySelector && btn.querySelector('.fa-print')) {
+        // open printable preview and call print
+        await openPreviewAndPrint(reportId);
+        return;
+    }
+    // Preview
+    if (btn.querySelector && btn.querySelector('.fa-eye')) {
+        openReportPreview(reportId);
+        return;
+    }
+});
+
+async function fetchReportPreview(reportId) {
+    const url = (dashboardApiBaseUrl || '') + `/api/reports/${reportId}/preview`;
+    try {
+        const res = await fetch(url, { headers: getAuthHeaders() });
+        if (!res.ok) return `<div style="padding:12px;color:var(--text-muted);">Preview not available (status ${res.status}).</div>`;
+        const text = await res.text();
+        return text;
+    } catch (err) {
+        console.error('Preview fetch error', err);
+        return `<div style="padding:12px;color:var(--text-muted);">Error loading preview.</div>`;
+    }
+}
+
+async function openReportPreview(reportId) {
+    const modal = document.getElementById('reportPreviewModal');
+    const content = document.getElementById('reportPreviewContent');
+    const title = document.getElementById('reportPreviewTitle');
+    if (!modal || !content) return;
+    title.textContent = `${reportId || 'Report'} — Preview`;
+    content.innerHTML = 'Loading preview...';
+    modal.classList.remove('hidden');
+    const html = await fetchReportPreview(reportId);
+    content.innerHTML = html;
+}
+
+document.getElementById && document.getElementById('reportPreviewClose')?.addEventListener('click', () => {
+    document.getElementById('reportPreviewModal').classList.add('hidden');
+});
+
+document.getElementById && document.getElementById('reportPreviewPrint')?.addEventListener('click', async () => {
+    const content = document.getElementById('reportPreviewContent');
+    if (!content) return;
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>Print</title></head><body>${content.innerHTML}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { w.print(); }, 300);
+});
+
+document.getElementById && document.getElementById('reportPreviewPdf')?.addEventListener('click', () => {
+    const title = document.getElementById('reportPreviewTitle')?.textContent || 'report';
+    // Attempt to derive reportId from title
+    const reportId = (title || '').split(' ')[0].toLowerCase();
+    const url = (dashboardApiBaseUrl || '') + `/api/reports/${reportId}/pdf`;
+    window.open(url, '_blank');
+});
+
+document.getElementById && document.getElementById('reportPreviewExcel')?.addEventListener('click', () => {
+    const title = document.getElementById('reportPreviewTitle')?.textContent || 'report';
+    const reportId = (title || '').split(' ')[0].toLowerCase();
+    const url = (dashboardApiBaseUrl || '') + `/api/reports/${reportId}/xlsx`;
+    window.open(url, '_blank');
+});
+
+async function openPreviewAndPrint(reportId) {
+    const html = await fetchReportPreview(reportId);
+    const w = window.open('', '_blank');
+    w.document.write(`<html><head><title>Print</title></head><body>${html}</body></html>`);
+    w.document.close();
+    w.focus();
+    setTimeout(() => { w.print(); }, 300);
+}
+
+// Format a date value (e.g. "2026-09-01", "2026-09-01T00:00:00Z", or a Date)
+// into the DTR "D - Mon" style (e.g. "1 - Sep"). Works for any month/year —
+// nothing here is hard-coded to a specific month.
+const DTR_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function formatDTRDate(value) {
+    if (!value && value !== 0) return '';
+
+    // ISO-style "YYYY-MM-DD" (optionally with a time/zone suffix) — parse the
+    // digits directly so we never lose a day to a timezone shift.
+    const isoMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+        const day = parseInt(isoMatch[3], 10);
+        const monthIndex = parseInt(isoMatch[2], 10) - 1;
+        const monthAbbr = DTR_MONTH_ABBR[monthIndex] || '';
+        return monthAbbr ? `${day} - ${monthAbbr}` : String(value);
+    }
+
+    // A real Date object.
+    if (value instanceof Date && !isNaN(value.getTime())) {
+        return `${value.getDate()} - ${DTR_MONTH_ABBR[value.getMonth()]}`;
+    }
+
+    // Already formatted (e.g. "1 - Sep") or some other string — leave as-is.
+    return String(value);
+}
+
+// Format a date value into short "M/D/YY" style used in the DTR header
+// (e.g. "9/1/26"), no leading zeros — same style as the reference form.
+function formatDTRHeaderDate(value) {
+    if (!value && value !== 0) return '';
+
+    // ISO "YYYY-MM-DD" (optionally with a time/zone suffix).
+    let isoMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+        const year = isoMatch[1].slice(-2);
+        const month = parseInt(isoMatch[2], 10);
+        const day = parseInt(isoMatch[3], 10);
+        return `${month}/${day}/${year}`;
+    }
+
+    // Already "M/D/YY" or "MM/DD/YY" — normalize away any leading zeros.
+    let shortMatch = String(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (shortMatch) {
+        const month = parseInt(shortMatch[1], 10);
+        const day = parseInt(shortMatch[2], 10);
+        const year = shortMatch[3].length > 2 ? shortMatch[3].slice(-2) : shortMatch[3];
+        return `${month}/${day}/${year}`;
+    }
+
+    if (value instanceof Date && !isNaN(value.getTime())) {
+        return `${value.getMonth() + 1}/${value.getDate()}/${String(value.getFullYear()).slice(-2)}`;
+    }
+
+    return String(value);
+}
+
+// Work out the "From : To :" range for the DTR header. Prefers the record's
+// own from_date/to_date (whatever month was selected), falls back to the
+// first/last day actually present in the dtr rows, and only falls back to
+// today's calendar month if neither is available — so it always reflects
+// the month being viewed, for any month, not just the current one.
+function resolveDTRDateRange(record, dtr) {
+    let from = record && record.from_date;
+    let to = record && record.to_date;
+
+    if (!from && dtr && dtr.length) from = dtr[0].date;
+    if (!to && dtr && dtr.length) to = dtr[dtr.length - 1].date;
+
+    if (!from || !to) {
+        const now = new Date();
+        const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+        const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        from = from || firstDay;
+        to = to || lastDay;
+    }
+
+    return {
+        from: formatDTRHeaderDate(from),
+        to: formatDTRHeaderDate(to)
+    };
+}
+
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (character) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -1015,7 +1199,7 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>RFID</label>
-                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required readonly />
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required />
                             </div>
                             <div class="form-group">
                                 <label>First Name</label>
@@ -1571,7 +1755,7 @@ function updateActivityTimeline(activities) {
                     color = 'var(--danger)';
                     bgColor = 'var(--danger-light)';
                 } else {
-                    icon = 'fa-solid fa-umbrella-beach';
+                    icon = 'fa-solid fa-house';
                     color = 'var(--leave)';
                     bgColor = 'var(--leave-light)';
                 }
@@ -1771,6 +1955,100 @@ async function loadDTRMonths() {
     }
 }
 
+// Resolve a complete, reliable employee info object for the DTR by combining
+// whatever the /api/dtr/record endpoint returned (apiEmployee) with the info
+// already known from the employee dropdown (populated by loadDTREmployees).
+// This is what stops the printed/PDF name from ever showing "Unknown" —
+// the dropdown always has fullname/position/department even if the record
+// endpoint's employee object is incomplete.
+function resolveDTREmployeeInfo(select, apiEmployee, apiRecord) {
+    apiEmployee = apiEmployee || {};
+    const option = select && select.options ? select.options[select.selectedIndex] : null;
+    const fromOption = option ? {
+        fullname: option.dataset.fullname || '',
+        employeeid: option.dataset.employeeid || '',
+        position: option.dataset.position || '',
+        department: option.dataset.department || '',
+        role: option.dataset.role || ''
+    } : {};
+
+    const apiFullname = apiEmployee.fullname
+        || `${apiEmployee.firstname || ''} ${apiEmployee.lastname || ''}`.trim();
+
+    return {
+        fullname: apiFullname || fromOption.fullname || 'Unknown',
+        employeeid: apiEmployee.employeeid || fromOption.employeeid || (apiRecord && apiRecord.employee_id) || '',
+        position: apiEmployee.position || fromOption.position || '',
+        department: apiEmployee.department || fromOption.department || '',
+        role: apiEmployee.role || fromOption.role || 'employee',
+        regularTime: apiEmployee.regular_time || apiEmployee.regularTime || 'DEFAULT'
+    };
+}
+
+// Render the on-screen DTR employee info panel — Name / Position / Department /
+// Regular Time, each on its own line with aligned labels, same fields shown
+// on the printed form. Creates the panel above the DTR table the first time
+// it's needed, then just updates its content on every subsequent load.
+function renderDTREmployeeInfoPanel(info) {
+    let panel = document.getElementById('dtrEmployeeInfoPanel');
+
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = 'dtrEmployeeInfoPanel';
+        panel.className = 'dtr-employee-info-panel';
+
+        const tbody = document.getElementById('dtrTableBody');
+        const table = tbody ? tbody.closest('table') : null;
+        if (table && table.parentNode) {
+            table.parentNode.insertBefore(panel, table);
+        } else {
+            const nameEl = document.getElementById('dtrEmployeeName');
+            const anchor = nameEl ? nameEl.closest('div') : null;
+            if (anchor && anchor.parentNode) {
+                anchor.parentNode.insertBefore(panel, anchor.nextSibling);
+            }
+        }
+    }
+
+    panel.innerHTML = `
+        <div class="dtr-info-row"><span class="dtr-info-label">Name:</span><span class="dtr-info-value">${escapeHtml(info.fullname || '--')}</span></div>
+        <div class="dtr-info-row"><span class="dtr-info-label">Position:</span><span class="dtr-info-value">${escapeHtml(info.position || '--')}</span></div>
+        <div class="dtr-info-row"><span class="dtr-info-label">Department:</span><span class="dtr-info-value">${escapeHtml(info.department || '--')}</span></div>
+        <div class="dtr-info-row"><span class="dtr-info-label">Regular Time:</span><span class="dtr-info-value">${escapeHtml(info.regularTime || 'DEFAULT')}</span></div>
+    `;
+
+    if (!document.getElementById('dtrEmployeeInfoPanelStyles')) {
+        const style = document.createElement('style');
+        style.id = 'dtrEmployeeInfoPanelStyles';
+        style.textContent = `
+            .dtr-employee-info-panel {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                font-size: 13px;
+                margin: 10px 0 16px 0;
+                padding: 10px 14px;
+                border: 1px solid var(--border, #e5e7eb);
+                border-radius: 8px;
+                background: var(--card-bg, #ffffff);
+            }
+            .dtr-employee-info-panel .dtr-info-row {
+                display: flex;
+                align-items: baseline;
+            }
+            .dtr-employee-info-panel .dtr-info-label {
+                font-weight: 700;
+                width: 120px;
+                flex-shrink: 0;
+            }
+            .dtr-employee-info-panel .dtr-info-value {
+                font-weight: 500;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
 // Load DTR record for selected employee
 async function loadDTRRecord() {
     const select = document.getElementById('dtrEmployeeSelect');
@@ -1792,6 +2070,8 @@ async function loadDTRRecord() {
     const option = select.options[select.selectedIndex];
     const fullname = option.dataset.fullname || '';
     const employeeid = option.dataset.employeeid || '';
+    const position = option.dataset.position || '';
+    const department = option.dataset.department || '';
     const role = option.dataset.role || 'employee';
     
     // Update employee info display - simplified (only name, ID, role, month)
@@ -1799,6 +2079,15 @@ async function loadDTRRecord() {
     document.getElementById('dtrEmployeeId').textContent = employeeid || '--';
     document.getElementById('dtrRole').textContent = role ? role.toUpperCase() : '--';
     document.getElementById('dtrSigEmployee').textContent = fullname || 'Employee Signature';
+
+    // Show the full Name / Position / Department / Regular Time block,
+    // aligned the same way it appears on the printed DTR.
+    renderDTREmployeeInfoPanel({
+        fullname: fullname || 'Unknown',
+        position,
+        department,
+        regularTime: 'DEFAULT'
+    });
     
     try {
         // Show loading state
@@ -1868,8 +2157,8 @@ async function loadDTRRecord() {
                 }
                 
                 return `<tr style="${rowStyle}">
+                    <td>${escapeHtml(formatDTRDate(day.date))}</td>
                     <td>${escapeHtml(day.day || '')}</td>
-                    <td>${escapeHtml(day.date || '')}</td>
                     <td>${escapeHtml(day.am_in || '')}</td>
                     <td>${escapeHtml(day.am_out || '')}</td>
                     <td>${escapeHtml(day.pm_in || '')}</td>
@@ -1922,93 +2211,139 @@ function showDTRMessage(message, type = 'info') {
     }
 }
 
-// Build DTR HTML matching the exact format from the image
+// Build DTR HTML matching the exact two-copy layout from the reference image
 function buildDTRHTML(record, dtr, employee) {
     const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
     const position = employee.position || '';
     const department = employee.department || '';
     const employeeId = employee.employeeid || record.employee_id || '';
-    const monthDisplay = record.month_display || '';
-    const totalHours = record.total_hours || '0.00';
-    const totalOt = record.total_ot || '0.00';
     const totalUt = record.total_ut || '0.00';
-    
-    // Get the month range
-    const fromDate = record.from_date || '';
-    const toDate = record.to_date || '';
-    
+
+    // Get the month range — formatted "M/D/YY" and derived from whatever
+    // month this record actually covers (works for any month, not just now).
+    const { from: fromDate, to: toDate } = resolveDTRDateRange(record, dtr);
+
     // Calculate total working days (A)
     const workingDays = dtr.filter(day => day.status !== 'on_leave' && day.day !== 'Sat' && day.day !== 'Sun').length;
-    
-    // Build the table rows - 2 columns per row (left and right)
-    let tableRows = '';
-    const halfLength = Math.ceil(dtr.length / 2);
-    
-    for (let i = 0; i < halfLength; i++) {
-        const left = dtr[i];
-        const right = dtr[i + halfLength];
-        
-        const leftDate = left ? `${left.day || ''} - ${left.date || ''}` : '';
-        const leftAmIn = left ? (left.am_in || '') : '';
-        const leftAmOut = left ? (left.am_out || '') : '';
-        const leftPmIn = left ? (left.pm_in || '') : '';
-        const leftPmOut = left ? (left.pm_out || '') : '';
-        const leftHours = left ? (left.hours || '0.00') : '';
-        const leftUt = left ? (left.ut || '0.00') : '';
-        const leftOt = left ? (left.ot || '0.00') : '';
-        const leftStatus = left ? (left.status || '') : '';
-        const leftIsWeekend = left ? (left.day === 'Sat' || left.day === 'Sun') : false;
-        const leftIsLeave = left ? (left.status === 'on_leave') : false;
-        
-        const rightDate = right ? `${right.day || ''} - ${right.date || ''}` : '';
-        const rightAmIn = right ? (right.am_in || '') : '';
-        const rightAmOut = right ? (right.am_out || '') : '';
-        const rightPmIn = right ? (right.pm_in || '') : '';
-        const rightPmOut = right ? (right.pm_out || '') : '';
-        const rightHours = right ? (right.hours || '0.00') : '';
-        const rightUt = right ? (right.ut || '0.00') : '';
-        const rightOt = right ? (right.ot || '0.00') : '';
-        const rightStatus = right ? (right.status || '') : '';
-        const rightIsWeekend = right ? (right.day === 'Sat' || right.day === 'Sun') : false;
-        const rightIsLeave = right ? (right.status === 'on_leave') : false;
-        
-        const leftStyle = leftIsWeekend ? 'background-color:#f3f4f6;' : (leftIsLeave ? 'background-color:#fef3c7;' : '');
-        const rightStyle = rightIsWeekend ? 'background-color:#f3f4f6;' : (rightIsLeave ? 'background-color:#fef3c7;' : '');
-        
-        const leftStatusDisplay = leftIsLeave ? 'Leave' : (leftIsWeekend ? '--' : '');
-        const rightStatusDisplay = rightIsLeave ? 'Leave' : (rightIsWeekend ? '--' : '');
-        
-        tableRows += `
-            <tr>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftDate}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftAmIn}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftAmOut}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftPmIn}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftPmOut}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftHours}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftUt}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftOt}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftStatusDisplay}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightDate}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightAmIn}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightAmOut}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightPmIn}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightPmOut}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightHours}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightUt}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightOt}</td>
-                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightStatusDisplay}</td>
-            </tr>
-        `;
-    }
-    
-    // Calculate totals for the bottom section
-    const totalWorkingDays = workingDays;
-    const totalRegHours = totalHours;
-    const totalOverTime = totalOt;
+    const totalWorkingDays = Number(workingDays) || 0;
     const totalUndertime = totalUt;
-    
-    // Build the complete DTR HTML
+
+    // Build the table body rows once — each copy prints the FULL date range (1..end),
+    // exactly like the two side-by-side originals on the reference form.
+    const tableRows = dtr.map(day => {
+        const isWeekend = day.day === 'Sat' || day.day === 'Sun';
+        const isLeave = day.status === 'on_leave';
+        const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
+        const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
+        const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
+
+        return `
+            <tr style="${rowStyle}">
+                <td class="c-date">${formatDTRDate(day.date)}</td>
+                <td class="c-day">${day.day || ''}</td>
+                <td class="c-time">${day.am_in || ''}</td>
+                <td class="c-time">${day.am_out || ''}</td>
+                <td class="c-time">${day.pm_in || ''}</td>
+                <td class="c-time">${day.pm_out || ''}</td>
+                <td class="c-small">${ut}</td>
+                <td class="c-small">${ot}</td>
+            </tr>`;
+    }).join('');
+
+    // One full copy (either Employee's or Personnel's) — identical table/content,
+    // only the bottom copy label (and Personnel-only "Recorded By" block) differ.
+    function buildCopy(copyLabel, isPersonnelCopy) {
+        return `
+        <div class="dtr-copy">
+            <div class="dtr-title">DAILY TIME RECORD</div>
+            <div class="dtr-subtitle">DAILY TIME RECORD</div>
+            <div class="dtr-daterange">From: ${fromDate} To: ${toDate}</div>
+
+            <div class="dtr-info">
+                <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${fullname}</span></div>
+                <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${position}</span></div>
+                <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${department}</span></div>
+                <div class="info-row two-col">
+                    <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${employee.regularTime || 'DEFAULT'}</span></span>
+                    <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-blank"></span></span>
+                </div>
+            </div>
+
+            <table class="dtr-table">
+                <colgroup>
+                    <col class="col-date"><col class="col-day">
+                    <col class="col-time"><col class="col-time">
+                    <col class="col-time"><col class="col-time">
+                    <col class="col-small"><col class="col-small">
+                </colgroup>
+                <thead>
+                    <tr class="grp-row">
+                        <th colspan="2">WORKING</th>
+                        <th colspan="2">A M</th>
+                        <th colspan="2">P M</th>
+                        <th colspan="2">HOURS</th>
+                    </tr>
+                    <tr class="sub-row">
+                        <th>Date</th>
+                        <th>Days</th>
+                        <th>In 1</th>
+                        <th>Out 1</th>
+                        <th>In 2</th>
+                        <th>Out 2</th>
+                        <th>UT</th>
+                        <th>OT</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+            </table>
+
+            <div class="dtr-summary">
+                <div class="summary-line">
+                    <span class="summary-item"><label>A =</label><span class="fill">${totalWorkingDays.toFixed(2)}</span></span>
+                    <span class="summary-item"><label>ROT =</label><span class="fill">0.00</span></span>
+                    <span class="summary-item"><label>LOT =</label><span class="fill">&nbsp;</span></span>
+                </div>
+                <div class="summary-line">
+                    <span class="summary-item"><label>U =</label><span class="fill">${totalUndertime}</span></span>
+                    <span class="summary-item"><label>SOT =</label><span class="fill">&nbsp;</span></span>
+                </div>
+            </div>
+
+            <div class="dtr-cert">
+                I Certify on my honor that the above is a true and correct report of the hours work perfomed, record of which was daily at the time of arrival and departure from office.
+            </div>
+
+            <div class="dtr-sig">
+                <div class="sig-line"></div>
+                <div class="sig-caption">Signature</div>
+            </div>
+
+            <div class="dtr-divider">&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;</div>
+
+            <div class="dtr-verified-label">VERIFIED as to the prescribed office hours</div>
+
+            <div class="dtr-sig">
+                <div class="sig-line"></div>
+                <div class="sig-caption">In Charge</div>
+            </div>
+
+            <div class="dtr-copy-tag">&gt;&gt;&gt;&gt;&gt;${copyLabel}</div>
+
+            ${isPersonnelCopy ? `
+            <div class="dtr-recorded">
+                <div class="recorded-row">RECORDED BY :<span class="recorded-line"></span></div>
+                <div class="recorded-row">DATE<span class="recorded-colon">:</span><span class="recorded-line"></span></div>
+            </div>` : ''}
+        </div>`;
+    }
+
+    const employeeCopyHTML = buildCopy("EMPLOYEE'S COPY", false);
+    const personnelCopyHTML = buildCopy("PERSONNEL'S COPY", true);
+
+    // Build the complete DTR HTML — two full copies side by side on one page,
+    // matching the exact structure of the reference form image.
     return `
         <!DOCTYPE html>
         <html>
@@ -2017,308 +2352,219 @@ function buildDTRHTML(record, dtr, employee) {
             <title>Daily Time Record - ${fullname}</title>
             <style>
                 @page {
-                    size: letter;
-                    margin: 10mm 15mm 10mm 15mm;
+                    size: letter portrait;
+                    margin: 8mm 8mm;
                 }
                 * {
                     margin: 0;
                     padding: 0;
                     box-sizing: border-box;
                 }
-                body {
-                    font-family: 'Times New Roman', Times, serif;
-                    font-size: 11px;
-                    padding: 5px;
+                html, body {
+                    width: 100%;
+                    height: 100%;
                 }
-                .dtr-container {
-                    max-width: 100%;
-                    margin: 0 auto;
+                body {
+                    font-family: Arial, Helvetica, sans-serif;
+                    font-size: 9px;
+                    color: #000;
+                }
+                .dtr-page {
+                    display: flex;
+                    align-items: stretch;
+                    width: 100%;
+                }
+                .dtr-copy {
+                    flex: 1 1 50%;
+                    width: 50%;
+                    padding: 2px 6px;
+                }
+                .dtr-vertical-divider {
+                    width: 0;
+                    border-left: 1px solid #000;
+                    margin: 4px 4px 4px 0;
                 }
                 .dtr-title {
                     text-align: center;
-                    font-size: 18px;
+                    font-size: 15px;
                     font-weight: bold;
                     text-transform: uppercase;
-                    letter-spacing: 2px;
-                    margin-bottom: 6px;
-                    border-bottom: 2px solid #000;
-                    padding-bottom: 4px;
+                    margin-bottom: 1px;
                 }
-                .dtr-header {
+                .dtr-subtitle {
+                    text-align: center;
+                    font-size: 9px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                .dtr-daterange {
+                    text-align: center;
+                    font-size: 9px;
+                    font-weight: bold;
+                    margin-bottom: 4px;
+                }
+                .dtr-info {
+                    font-size: 9px;
+                    margin-bottom: 5px;
+                }
+                .info-row {
                     display: flex;
+                    gap: 4px;
+                    padding: 1px 0;
+                }
+                .info-row.two-col {
                     justify-content: space-between;
-                    font-size: 11px;
-                    margin: 4px 0 6px 0;
-                    padding: 0 4px;
                 }
-                .dtr-header-left {
-                    text-align: left;
-                }
-                .dtr-header-right {
-                    text-align: right;
-                }
-                .dtr-header label {
-                    font-weight: bold;
-                }
-                .dtr-info-grid {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr 1fr 1fr;
-                    gap: 2px;
-                    font-size: 11px;
-                    margin-bottom: 6px;
-                    padding: 4px 0;
-                    border-bottom: 1px solid #000;
-                }
-                .dtr-info-item {
+                .info-half {
                     display: flex;
-                    align-items: center;
-                    gap: 2px;
+                    gap: 4px;
                 }
-                .dtr-info-item label {
+                .info-label {
                     font-weight: bold;
+                    white-space: nowrap;
+                    display: inline-block;
+                    width: 90px;
+                    flex-shrink: 0;
+                }
+                .info-label.label-auto {
+                    width: auto;
+                }
+                .info-value {
+                    border-bottom: 1px solid transparent;
+                }
+                .info-value.name {
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                .info-blank {
+                    display: inline-block;
+                    min-width: 55px;
+                    border-bottom: 1px solid #000;
+                    height: 10px;
+                    margin-left: 2px;
                 }
                 .dtr-table {
                     width: 100%;
                     border-collapse: collapse;
-                    font-size: 9px;
+                    table-layout: fixed;
+                    font-size: 8px;
                     margin-bottom: 4px;
                 }
-                .dtr-table th {
-                    border: 1px solid #000;
-                    padding: 2px 1px;
-                    text-align: center;
-                    font-weight: bold;
-                    font-size: 8px;
-                    background-color: #f0f0f0;
-                }
+                .dtr-table col.col-date { width: 15%; }
+                .dtr-table col.col-day { width: 11%; }
+                .dtr-table col.col-time { width: 13%; }
+                .dtr-table col.col-small { width: 9%; }
+                .dtr-table th,
                 .dtr-table td {
                     border: 1px solid #000;
-                    padding: 3px 1px;
                     text-align: center;
-                    font-size: 9px;
+                    padding: 1px 2px;
+                    overflow: hidden;
+                    white-space: nowrap;
                 }
-                .dtr-table .header-row th {
+                .dtr-table thead th {
+                    font-weight: bold;
                     font-size: 8px;
-                    padding: 2px 1px;
+                    background-color: #fff;
                 }
-                .dtr-table .sub-header th {
-                    font-size: 7px;
-                    padding: 1px 1px;
-                    background-color: #fafafa;
+                .dtr-table tbody td {
+                    font-size: 8px;
+                    height: 13px;
                 }
                 .dtr-summary {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
-                    gap: 2px;
-                    font-size: 10px;
-                    padding: 4px 0;
-                    border-top: 1px solid #000;
-                    margin-top: 2px;
+                    font-size: 9px;
+                    margin: 3px 0;
                 }
-                .dtr-summary-item {
+                .summary-line {
                     display: flex;
-                    align-items: center;
-                    gap: 2px;
+                    gap: 14px;
+                    padding: 1px 0;
                 }
-                .dtr-summary-item label {
+                .summary-item {
+                    display: flex;
+                    align-items: flex-end;
+                    gap: 3px;
+                }
+                .summary-item label {
                     font-weight: bold;
+                    white-space: nowrap;
                 }
-                .dtr-certification {
+                .summary-item .fill {
+                    border-bottom: 1px solid #000;
+                    min-width: 34px;
+                    display: inline-block;
+                    text-align: center;
+                }
+                .dtr-cert {
+                    font-size: 7.5px;
+                    text-align: center;
+                    line-height: 1.25;
+                    margin: 4px 0 2px 0;
+                }
+                .dtr-sig {
+                    text-align: center;
+                    margin-top: 16px;
+                }
+                .dtr-sig .sig-line {
+                    border-top: 1px solid #000;
+                    width: 85%;
+                    margin: 0 auto;
+                }
+                .dtr-sig .sig-caption {
+                    font-size: 8px;
+                    font-weight: bold;
+                    margin-top: 1px;
+                }
+                .dtr-divider {
+                    font-size: 7px;
+                    line-height: 1;
+                    letter-spacing: -0.5px;
+                    margin: 6px 0 2px 0;
+                    overflow: hidden;
+                    white-space: nowrap;
+                }
+                .dtr-verified-label {
+                    text-align: center;
+                    font-size: 8px;
+                    font-weight: bold;
+                    margin-bottom: 2px;
+                }
+                .dtr-copy-tag {
+                    font-weight: bold;
+                    font-size: 8.5px;
                     margin-top: 6px;
-                    font-size: 10px;
-                    padding: 4px 0;
-                    font-style: italic;
                 }
-                .dtr-signature {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr 1fr 1fr;
-                    gap: 10px;
-                    margin-top: 8px;
-                    padding-top: 8px;
-                    border-top: 1px solid #000;
-                    font-size: 10px;
-                }
-                .dtr-signature-item {
-                    text-align: center;
-                }
-                .dtr-signature-item .sig-line {
-                    margin-top: 20px;
-                    border-top: 1px solid #000;
-                    width: 100%;
-                    padding-top: 2px;
-                }
-                .dtr-signature-item .sig-label {
-                    font-weight: bold;
-                    font-size: 9px;
-                }
-                .dtr-copy {
-                    text-align: center;
-                    font-weight: bold;
-                    font-size: 10px;
+                .dtr-recorded {
                     margin-top: 4px;
-                    padding: 2px;
-                    border: 1px solid #000;
-                    background-color: #f9f9f9;
-                }
-                .dtr-employee-name {
-                    font-size: 13px;
+                    font-size: 8px;
                     font-weight: bold;
-                    text-transform: uppercase;
                 }
-                .dtr-verified {
-                    display: grid;
-                    grid-template-columns: 1fr 1fr;
-                    gap: 20px;
-                    margin-top: 6px;
-                    padding-top: 6px;
-                    border-top: 1px solid #000;
+                .recorded-row {
+                    display: flex;
+                    align-items: flex-end;
+                    gap: 4px;
+                    margin-top: 4px;
                 }
-                .dtr-verified-item {
-                    text-align: center;
+                .recorded-colon {
+                    margin-left: -2px;
                 }
-                .dtr-verified-item .sig-line {
-                    margin-top: 20px;
-                    border-top: 1px solid #000;
-                    width: 80%;
-                    margin-left: auto;
-                    margin-right: auto;
-                    padding-top: 2px;
+                .recorded-line {
+                    flex: 1;
+                    border-bottom: 1px solid #000;
+                    height: 10px;
                 }
-                .dtr-verified-item .sig-label {
-                    font-weight: bold;
-                    font-size: 9px;
+                @media print {
+                    .dtr-page {
+                        page-break-inside: avoid;
+                    }
                 }
-                .text-center {
-                    text-align: center;
-                }
-                .text-uppercase {
-                    text-transform: uppercase;
-                }
-                .mt-1 { margin-top: 4px; }
-                .mb-1 { margin-bottom: 4px; }
             </style>
         </head>
         <body>
-            <div class="dtr-container">
-                <!-- Title -->
-                <div class="dtr-title">DAILY TIME RECORD</div>
-                
-                <!-- Header with From/To -->
-                <div class="dtr-header">
-                    <div class="dtr-header-left">
-                        <label>From :</label> ${fromDate} <label>To :</label> ${toDate}
-                    </div>
-                    <div class="dtr-header-right">
-                        <label>Payroll No. :</label> ${employeeId}
-                    </div>
-                </div>
-                
-                <!-- Employee Info Grid -->
-                <div class="dtr-info-grid">
-                    <div class="dtr-info-item">
-                        <label>Name :</label>
-                        <span class="dtr-employee-name">${fullname}</span>
-                    </div>
-                    <div class="dtr-info-item">
-                        <label>Position :</label>
-                        <span>${position}</span>
-                    </div>
-                    <div class="dtr-info-item">
-                        <label>Department :</label>
-                        <span>${department}</span>
-                    </div>
-                    <div class="dtr-info-item">
-                        <label>Regular Time :</label>
-                        <span>DEFAULT</span>
-                    </div>
-                </div>
-                
-                <!-- Main Table -->
-                <table class="dtr-table">
-                    <thead>
-                        <tr class="header-row">
-                            <th colspan="9">WORKING</th>
-                            <th colspan="9">WORKING</th>
-                        </tr>
-                        <tr class="sub-header">
-                            <th>Date</th>
-                            <th>Days</th>
-                            <th>In 1</th>
-                            <th>Out 1</th>
-                            <th>In 2</th>
-                            <th>Out 2</th>
-                            <th>HOURS</th>
-                            <th>UT</th>
-                            <th>OT</th>
-                            <th>Date</th>
-                            <th>Days</th>
-                            <th>In 1</th>
-                            <th>Out 1</th>
-                            <th>In 2</th>
-                            <th>Out 2</th>
-                            <th>HOURS</th>
-                            <th>UT</th>
-                            <th>OT</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${tableRows}
-                    </tbody>
-                </table>
-                
-                <!-- Summary Totals -->
-                <div class="dtr-summary">
-                    <div class="dtr-summary-item">
-                        <label>A =</label>
-                        <span>${totalWorkingDays.toFixed(2)}</span>
-                    </div>
-                    <div class="dtr-summary-item">
-                        <label>ROT =</label>
-                        <span>0.00</span>
-                    </div>
-                    <div class="dtr-summary-item">
-                        <label>LOT =</label>
-                        <span></span>
-                    </div>
-                    <div class="dtr-summary-item">
-                        <label>U =</label>
-                        <span>${totalUndertime}</span>
-                    </div>
-                    <div class="dtr-summary-item">
-                        <label>SOT =</label>
-                        <span></span>
-                    </div>
-                </div>
-                
-                <!-- Certification -->
-                <div class="dtr-certification">
-                    I Certify on my honor that the above is a true and correct report of the hours work performed, record of which was daily at the time of arrival and departure from office.
-                </div>
-                
-                <!-- Signature -->
-                <div class="dtr-signature">
-                    <div class="dtr-signature-item">
-                        <div class="sig-line"></div>
-                        <div class="sig-label">Signature</div>
-                    </div>
-                    <div class="dtr-signature-item">
-                        <div class="sig-line"></div>
-                        <div class="sig-label">In Charge</div>
-                    </div>
-                    <div class="dtr-signature-item">
-                        <div class="sig-line"></div>
-                        <div class="sig-label">Signature</div>
-                    </div>
-                    <div class="dtr-signature-item">
-                        <div class="sig-line"></div>
-                        <div class="sig-label">In Charge</div>
-                    </div>
-                </div>
-                
-                <!-- Employee Copy -->
-                <div class="dtr-copy">
-                    >>>> EMPLOYEE'S COPY
-                </div>
+            <div class="dtr-page">
+                ${employeeCopyHTML}
+                <div class="dtr-vertical-divider"></div>
+                ${personnelCopyHTML}
             </div>
         </body>
         </html>
@@ -2371,7 +2617,7 @@ async function generateDTRPDF() {
         
         const record = result.data.record;
         const dtr = record.dtr || [];
-        const employee = record.employee || {};
+        const employee = resolveDTREmployeeInfo(select, record.employee, record);
         
         // Build the DTR HTML with the exact format from the image
         const dtrHTML = buildDTRHTML(record, dtr, employee);
@@ -2444,7 +2690,7 @@ function printDTR() {
         
         const record = result.data.record;
         const dtr = record.dtr || [];
-        const employee = record.employee || {};
+        const employee = resolveDTREmployeeInfo(select, record.employee, record);
         
         // Build the DTR HTML
         const dtrHTML = buildDTRHTML(record, dtr, employee);

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TapIn - Employee Dashboard</title>
   <link rel="icon" type="image/png" href="../assets/tapin_icon.png">
-  <link rel="stylesheet" href="../css/employee-dashboard.css" />
+  <link rel="stylesheet" href="../css/dashboard.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -47,15 +47,15 @@
         <span class="nav-icon"><i class="fa-solid fa-envelope-open-text"></i></span>
         Leave Requests
       </a>
-      <a href="#my-profile" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-circle-user"></i></span>
-        My Profile
-      </a>
     </nav>
 
     <div class="sidebar-divider"></div>
     <div class="sidebar-footer">
       <nav class="sidebar-nav">
+        <a href="#my-profile" class="nav-item">
+          <span class="nav-icon"><i class="fa-solid fa-circle-user"></i></span>
+          My Profile
+        </a>
         <a href="#" id="tapinLogout" class="nav-item" style="color:#EF4444;">
           <span class="nav-icon" style="color:#EF4444;"><i class="fa-solid fa-right-from-bracket"></i></span>
           Logout
@@ -108,35 +108,27 @@
         <!-- Stats Cards (Monthly) -->
         <div class="stats-grid">
           <div class="stat-card stat-blue">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-calendar-check"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-user"></i></div>
             <div class="stat-label">Total Present (Month)</div>
             <div class="stat-value" id="statTotalPresent">0</div>
-            <div class="stat-trend trend-up"><i class="fa-solid fa-arrow-up"></i> This month</div>
-            <div class="stat-progress"><div class="stat-progress-bar" id="statPresentBar" style="width:0%"></div></div>
           </div>
 
           <div class="stat-card stat-red">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-user-xmark"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-user-slash"></i></div>
             <div class="stat-label">Total Absent (Month)</div>
             <div class="stat-value" id="statTotalAbsent">0</div>
-            <div class="stat-trend trend-down"><i class="fa-solid fa-arrow-down"></i> This month</div>
-            <div class="stat-progress"><div class="stat-progress-bar" id="statAbsentBar" style="width:0%"></div></div>
           </div>
 
           <div class="stat-card stat-cyan">
             <div class="stat-icon-wrap"><i class="fa-solid fa-clock"></i></div>
             <div class="stat-label">Total Hours (Month)</div>
             <div class="stat-value" id="statTotalHours">0.00</div>
-            <div class="stat-trend trend-neutral"><i class="fa-solid fa-minus"></i> Accumulated</div>
-            <div class="stat-progress"><div class="stat-progress-bar" id="statHoursBar" style="width:0%"></div></div>
           </div>
 
           <div class="stat-card stat-purple">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-umbrella-beach"></i></div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-house"></i></div>
             <div class="stat-label">Leave Requests</div>
             <div class="stat-value" id="statLeaveCount">0</div>
-            <div class="stat-trend trend-neutral"><i class="fa-solid fa-minus"></i> Pending / Approved</div>
-            <div class="stat-progress"><div class="stat-progress-bar" id="statLeaveBar" style="width:0%"></div></div>
           </div>
         </div>
 
@@ -252,8 +244,8 @@
                 <table class="dtr-table" id="myDtrTable">
                   <thead>
                     <tr>
-                      <th rowspan="2">Day</th>
                       <th rowspan="2">Date</th>
+                      <th rowspan="2">Day</th>
                       <th colspan="2">Morning</th>
                       <th colspan="2">Afternoon</th>
                       <th rowspan="2">Hours</th>
@@ -434,10 +426,10 @@
       <div class="footer-content">
         <div>
           <div class="footer-brand"><span>TAPIN</span> — RFID-Based Automated Attendance Management System</div>
-          <div style="font-size:11px;color:#475569;margin-top:2px;">ISPSC Tagudin Campus · Employee Portal</div>
+          <div class="footer-sub" style="font-size:11px;margin-top:2px;">ISPSC Tagudin Campus · Employee Portal</div>
         </div>
         <div class="footer-info">
-          <p>Version 1.0 · &copy; 2026 ISPSC Tagudin Campus</p>
+          <p>Version <span id="versionNumber">1.0</span> · &copy; 2026 ISPSC Tagudin Campus</p>
         </div>
       </div>
     </footer>
@@ -527,7 +519,7 @@
 <div class="modal-overlay" id="leaveModal" style="display:none;" onclick="if(event.target===this) closeLeaveModal()">
   <div class="modal-content edit-modal">
     <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
-      <div class="modal-avatar"><i class="fa-solid fa-umbrella-beach" style="font-size:22px;"></i></div>
+      <div class="modal-avatar"><i class="fa-solid fa-house" style="font-size:22px;"></i></div>
       <div class="modal-user-info">
         <h2>Request Leave</h2>
         <span style="font-size:13px;opacity:0.85;">Submit a leave request for approval</span>

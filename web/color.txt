@@ -1,1 +1,7 @@
-Primary Blue / Purple-Blue: #4D6BFE (RGB: 77, 107, 254)Secondary/Variant Blue: #6377DCWhite (for background or accents): #FEFFFFDark / Neutral (for text and dark themes): #090d33 (Black Pearl) or #212327
+Primary Burgundy: #800020 (RGB: 128, 0, 32)
+
+Secondary/Variant Maroon: #A32638 (or #9B1B30 for a slightly deeper tone)
+
+White (for background or accents): #FEFFFF
+
+Dark / Neutral (for text): #4A0E1C (Deep Burgundy) or #2C0A12 (Dark Wine)

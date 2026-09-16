@@ -31,7 +31,7 @@ body {
     padding: 0;
     margin: 0;
     background: url('../assets/background_1.jpg') center/cover no-repeat;
-    background-color: #E8ECFF;
+    background-color: #F5E6EA;
     position: relative;
 }
 
@@ -41,7 +41,8 @@ body {
     position: absolute;
     inset: 0;
     background: rgba(119, 119, 119, 0.6);
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     z-index: 0;
 }
 
@@ -67,7 +68,8 @@ body {
     max-width: 640px;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 28px;
-    box-shadow: 0 24px 80px rgba(37, 99, 235, 0.18);
+    /* Slightly deeper shadow for profile container and popup cards */
+    box-shadow: 0 28px 90px rgba(2, 6, 23, 0.12);
     overflow: hidden;
     max-height: 95vh;
     display: flex;
@@ -78,7 +80,7 @@ body {
 }
 
 .header {
-    background: #2563EB;
+    background: #800020;
     padding: 14px 32px;
     display: flex;
     align-items: center;
@@ -215,15 +217,15 @@ body {
     width: 300px;
     height: 300px;
     border-radius: 20px;
-    background: #dbeafe;
+    background: #F5E6EA;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 120px;
-    color: #2563EB;
+    color: #800020;
     font-weight: 700;
     overflow: hidden;
-    border: 4px solid #dbeafe;
+    border: 4px solid #F5E6EA;
     margin-bottom: 6px;
     flex-shrink: 0;
     transition: all 0.3s ease;
@@ -232,7 +234,7 @@ body {
 
 .profile-avatar:hover {
     transform: scale(1.02);
-    border-color: #2563EB;
+    border-color: #800020;
 }
 
 .profile-avatar img {
@@ -262,7 +264,7 @@ body {
 }
 
 .profile-avatar.unknown-avatar:hover {
-    border-color: #2563EB;
+    border-color: #800020;
 }
 
 .profile-info .fullname {
@@ -278,8 +280,8 @@ body {
 
 .profile-info .role-badge {
     display: inline-block;
-    background: #dbeafe;
-    color: #1d4ed8;
+    background: #F5E6EA;
+    color: #5C0017;
     font-size: 12px;
     font-weight: 600;
     padding: 2px 16px;
@@ -379,7 +381,7 @@ body {
 
 .no-data .empty-avatar:hover {
     transform: scale(1.02);
-    border-color: #2563EB;
+    border-color: #800020;
 }
 
 .no-data .empty-avatar img {

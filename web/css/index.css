@@ -1,19 +1,19 @@
 :root {
-  --primary: #4D6BFE;
-  --primary-dark: #3A55D4;
-  --primary-light: #E8ECFF;
-  --secondary: #6377DC;
+  --primary: #800020;
+  --primary-dark: #5C0017;
+  --primary-light: #F5E6EA;
+  --secondary: #A32638;
   --white: #FEFFFF;
-  --ink: #090D33;
-  --dark: #212327;
+  --ink: #4A0E1C;
+  --dark: #2C0A12;
   --muted: #5C6A8A;
-  --paper: #F6F7FE;
-  --teal: #4D6BFE;
-  --teal-dark: #3A55D4;
-  --mint: #E8ECFF;
+  --paper: #FBF5F7;
+  --teal: #800020;
+  --teal-dark: #5C0017;
+  --mint: #F5E6EA;
   --gold: #FFD166;
   --line: #DFE4F0;
-  --shadow: 0 24px 70px rgba(77, 107, 254, 0.14);
+  --shadow: 0 24px 70px rgba(128, 0, 32, 0.14);
   --display: 'Poppins', sans-serif;
   --body: 'Poppins', sans-serif;
 }
@@ -52,7 +52,7 @@ button { font: inherit; }
 .nav-profile:hover {
   background: var(--primary);
   color: var(--white);
-  box-shadow: 0 4px 16px rgba(77, 107, 254, 0.3);
+  box-shadow: 0 4px 16px rgba(128, 0, 32, 0.3);
 }
 
 .nav-login { 
@@ -66,12 +66,12 @@ button { font: inherit; }
 .nav-login:hover { 
   background: var(--primary); 
   color: var(--white); 
-  box-shadow: 0 4px 16px rgba(77, 107, 254, 0.3);
+  box-shadow: 0 4px 16px rgba(128, 0, 32, 0.3);
 }
 
 .hero { position: relative; min-height: 720px; overflow: hidden; padding: 156px 5vw 105px; background: var(--white); }
 .hero::before { content: ''; position: absolute; top: 0; right: 0; width: 46%; height: 100%; background: var(--primary-light); clip-path: polygon(25% 0, 100% 0, 100% 100%, 0 100%); }
-.hero::after { content: ''; position: absolute; right: 8%; bottom: 58px; width: 180px; height: 180px; border: 1px solid rgba(77,107,254,.12); border-radius: 50%; }
+.hero::after { content: ''; position: absolute; right: 8%; bottom: 58px; width: 180px; height: 180px; border: 1px solid rgba(128,0,32,.12); border-radius: 50%; }
 .hero-grid { position: relative; z-index: 1; max-width: 1220px; margin: auto; display: grid; grid-template-columns: .9fr 1.1fr; gap: 70px; align-items: center; }
 .hero-copy { max-width: 550px; }
 .kicker { display: inline-flex; align-items: center; gap: 8px; margin-bottom: 20px; color: var(--primary); font-size: 11px; font-weight: 700; letter-spacing: 1.8px; text-transform: uppercase; }
@@ -82,7 +82,7 @@ h1 { max-width: 600px; margin: 0; font: 700 72px/.99 var(--display); letter-spac
 .actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
 .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 24px; border-radius: 8px; font-size: 13px; font-weight: 700; transition: transform .2s, box-shadow .2s, background .2s; }
 .btn:hover { transform: translateY(-2px); }
-.btn-primary { background: var(--primary); color: white; box-shadow: 0 10px 22px rgba(77,107,254,.25); }
+.btn-primary { background: var(--primary); color: white; box-shadow: 0 10px 22px rgba(128,0,32,.25); }
 .btn-primary:hover { background: var(--primary-dark); }
 .btn-ghost { color: var(--ink); }
 .btn-ghost:hover { color: var(--primary); }

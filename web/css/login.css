@@ -6,7 +6,7 @@ html, body {
   height: 100%;
   font-family: 'Poppins', sans-serif;
   background: #FEFFFF;
-  color: #090D33;
+  color: #4A0E1C;
 }
 
 /* Background image applied to login-wrap */
@@ -17,11 +17,11 @@ html, body {
   justify-content: center;
   padding: 32px 20px;
   background: url('../assets/background_1.jpg') center/cover no-repeat;
-  background-color: #E8ECFF;
+  background-color: #F5E6EA;
   position: relative;
 }
 
-/* optional overlay to improve card contrast */
+/* Overlay to improve card contrast */
 .login-wrap::before {
   content: '';
   position: absolute;
@@ -52,9 +52,9 @@ html, body {
   width: 100%;
   max-width: 420px;
   background: rgba(255, 255, 255, 0.95);
-  border: 1px solid rgba(77, 107, 254, 0.12);
+  border: 1px solid rgba(128, 0, 32, 0.12);
   border-radius: 18px;
-  box-shadow: 0 24px 60px rgba(77, 107, 254, 0.12);
+  box-shadow: 0 24px 60px rgba(128, 0, 32, 0.12);
   padding: 42px 40px 34px;
   position: relative; /* stack above overlay */
   z-index: 1;
@@ -71,12 +71,12 @@ html, body {
   margin: 0 auto 16px;
   border-radius: 16px;
   overflow: hidden;
-  background: rgba(77, 107, 254, 0.08);
+  background: rgba(128, 0, 32, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 24px rgba(77, 107, 254, 0.15);
-  border: 2px solid rgba(77, 107, 254, 0.10);
+  box-shadow: 0 8px 24px rgba(128, 0, 32, 0.15);
+  border: 2px solid rgba(128, 0, 32, 0.10);
   transition: border-color 0.3s ease;
 }
 
@@ -90,17 +90,17 @@ html, body {
 .logo-icon .logo-placeholder {
   font-weight: 800;
   font-size: 20px;
-  color: #4D6BFE;
+  color: #800020;
   letter-spacing: 1px;
 }
 
 .logo-icon:hover {
-  border-color: #4D6BFE;
+  border-color: #800020;
 }
 
 .eyebrow {
   margin: 0 0 6px;
-  color: #4D6BFE;
+  color: #800020;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 1.4px;
@@ -112,7 +112,7 @@ html, body {
   line-height: 1.15;
   font-weight: 750;
   margin: 0 0 8px;
-  color: #090D33;
+  color: #4A0E1C;
 }
 
 .subtitle {
@@ -130,7 +130,7 @@ html, body {
   display: block;
   font-size: 13px;
   font-weight: 600;
-  color: #090D33;
+  color: #4A0E1C;
   margin-bottom: 6px;
 }
 
@@ -138,12 +138,12 @@ input[type="text"],
 input[type="password"],
 select {
   width: 100%;
-  background: #F6F7FE;
+  background: #FBF5F7;
   border: 1px solid #DFE4F0;
   border-radius: 8px;
   padding: 11px 14px;
   font-size: 14px;
-  color: #090D33;
+  color: #4A0E1C;
   font-family: inherit;
   transition: border-color 0.3s, box-shadow 0.3s;
 }
@@ -155,8 +155,8 @@ select {
 input:focus,
 select:focus {
   outline: none;
-  border-color: #4D6BFE;
-  box-shadow: 0 0 0 3px rgba(77, 107, 254, 0.12);
+  border-color: #800020;
+  box-shadow: 0 0 0 3px rgba(128, 0, 32, 0.12);
   background: #FFFFFF;
 }
 
@@ -186,10 +186,10 @@ select:focus {
   transition: color 0.3s;
 }
 
-.password-toggle:hover { color: #4D6BFE; }
+.password-toggle:hover { color: #800020; }
 
 .password-toggle:focus-visible {
-  outline: 2px solid #4D6BFE;
+  outline: 2px solid #800020;
   outline-offset: 2px;
   border-radius: 5px;
 }
@@ -211,26 +211,26 @@ select:focus {
 }
 
 .checkbox input {
-  accent-color: #4D6BFE;
+  accent-color: #800020;
   width: 14px;
   height: 14px;
 }
 
 .link-muted {
   font-size: 13px;
-  color: #4D6BFE;
+  color: #800020;
   text-decoration: none;
   font-weight: 500;
 }
 
 .link-muted:hover {
   text-decoration: underline;
-  color: #3A55D4;
+  color: #5C0017;
 }
 
 .btn-primary {
   width: 100%;
-  background: linear-gradient(135deg, #4D6BFE, #6377DC);
+  background: linear-gradient(135deg, #800020, #A32638);
   color: #FFFFFF;
   border: none;
   border-radius: 8px;
@@ -240,13 +240,13 @@ select:focus {
   font-family: inherit;
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.3s, background 0.3s;
-  box-shadow: 0 8px 20px rgba(77, 107, 254, 0.25);
+  box-shadow: 0 8px 20px rgba(128, 0, 32, 0.25);
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, #3A55D4, #4D6BFE);
+  background: linear-gradient(135deg, #5C0017, #800020);
   transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(77, 107, 254, 0.35);
+  box-shadow: 0 12px 28px rgba(128, 0, 32, 0.35);
 }
 
 .btn-primary:active {
@@ -261,7 +261,7 @@ select:focus {
 input:focus-visible,
 select:focus-visible,
 .link-muted:focus-visible {
-  outline: 2px solid #4D6BFE;
+  outline: 2px solid #800020;
   outline-offset: 2px;
 }
 
@@ -273,7 +273,7 @@ select:focus-visible,
 }
 
 .form-message.error { color: #EF4444; }
-.form-message.pending { color: #4D6BFE; }
+.form-message.pending { color: #800020; }
 .form-message.success { color: #22C55E; }
 
 .footnote {
@@ -287,7 +287,10 @@ select:focus-visible,
 .forgot-password-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.55);
+  /* Darker semi-transparent backdrop with subtle blur */
+  background: rgba(2, 6, 23, 0.66);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: none;
   align-items: center;
   justify-content: center;
@@ -305,7 +308,8 @@ select:focus-visible,
   background: #FFFFFF;
   border-radius: 18px;
   padding: 28px 24px 22px;
-  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.22);
+  /* Deeper shadow for modal dialog */
+  box-shadow: 0 30px 100px rgba(2, 6, 23, 0.6);
   text-align: center;
 }
 
@@ -317,8 +321,8 @@ select:focus-visible,
   height: 32px;
   border: none;
   border-radius: 50%;
-  background: #EEF2FF;
-  color: #4D6BFE;
+  background: #F5E6EA;
+  color: #800020;
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
@@ -331,15 +335,15 @@ select:focus-visible,
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, #E0E7FF, #DBEAFE);
-  color: #4D6BFE;
+  background: linear-gradient(135deg, #F5E6EA, #E8D5DB);
+  color: #800020;
   font-size: 26px;
 }
 
 .forgot-password-modal h2 {
   margin: 0 0 10px;
   font-size: 28px;
-  color: #090D33;
+  color: #4A0E1C;
 }
 
 .forgot-password-modal p {

@@ -299,6 +299,8 @@ latest_scan = {
 # Track last scan time for each RFID to enforce cooldown
 # Structure: {rfid: {"last_scan_time": datetime, "last_scan_type": "in"|"out"}}
 last_scan_tracking = {}
+# Cooldown between scans for the same RFID (in seconds). Default 10 minutes.
+SCAN_COOLDOWN_SECONDS = 10 * 60
 
 ## Functions ------------------------------------
 # Image compression function
@@ -899,11 +901,12 @@ def determine_scan_type(day_data, scan_time, employee):
                 last_scan_type = last_scan_data.get("last_scan_type")
                 
                 if last_scan_type == "in":
-                    time_diff = (scan_time - last_scan_time).total_seconds() / 3600
-                    if time_diff >= 1.0:
+                    time_diff_seconds = (scan_time - last_scan_time).total_seconds()
+                    if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
                         return ("am", "out")
                     else:
-                        print(f"AM cooldown not met for {rfid} - {time_diff:.2f} hours")
+                        mins = time_diff_seconds / 60.0
+                        print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
                         return None
         
         if am_complete:
@@ -922,12 +925,13 @@ def determine_scan_type(day_data, scan_time, employee):
                     last_scan_time = last_scan_data.get("last_scan_time")
                     last_scan_type = last_scan_data.get("last_scan_type")
                     if last_scan_type == "in":
-                        time_diff = (scan_time - last_scan_time).total_seconds() / 3600
-                        if time_diff >= 1.0:
+                        time_diff_seconds = (scan_time - last_scan_time).total_seconds()
+                        if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
                             print(f"Late AM time out for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                             return ("am", "out")
                         else:
-                            print(f"AM cooldown not met for {rfid} - {time_diff:.2f} hours")
+                            mins = time_diff_seconds / 60.0
+                            print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
                             return None
                 return ("am", "out")
         
@@ -941,11 +945,12 @@ def determine_scan_type(day_data, scan_time, employee):
                 last_scan_type = last_scan_data.get("last_scan_type")
                 
                 if last_scan_type == "in":
-                    time_diff = (scan_time - last_scan_time).total_seconds() / 3600
-                    if time_diff >= 1.0:
+                    time_diff_seconds = (scan_time - last_scan_time).total_seconds()
+                    if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
                         return ("pm", "out")
                     else:
-                        print(f"PM cooldown not met for {rfid} - {time_diff:.2f} hours")
+                        mins = time_diff_seconds / 60.0
+                        print(f"PM cooldown not met for {rfid} - {mins:.2f} minutes")
                         return None
         
         if pm_complete:
@@ -1143,9 +1148,18 @@ def load_employee_database():
         if category in data and isinstance(data[category], list):
             for emp in data[category]:
                 rfid = emp.get("rfid", "").strip().upper()
+                emp["role"] = "employee" if category == "employees" else category
                 if rfid:
-                    emp["role"] = "employee" if category == "employees" else category
+                    # Normal case: index by RFID
                     db[rfid] = emp
+                else:
+                    # Fallback: index by UID so the employee still appears in the system
+                    uid = str(emp.get("uid", "")).strip()
+                    if uid:
+                        # Use a synthetic key that won't collide with real RFIDs
+                        fallback_key = f"__UID__{uid}"
+                        db[fallback_key] = emp
+                        print(f"  Loaded employee without RFID (UID {uid}): {emp.get('lastname', '')}")
     print("Loaded", len(db), "employees from storage/database/users.json")
     return db
 
@@ -1177,16 +1191,24 @@ def get_online_devices():
 def get_dashboard_statistics():
     today = datetime.now().date()
     today_events = [event for event in scan_events if event.get("scanned_on") == today.isoformat()]
+    
+    # All employees (regardless of RFID)
+    all_employees = [
+        emp for emp in employee_database.values()
+        if emp.get("role") == "employee"
+    ]
+    total_employees = len(all_employees)
+    
+    # Only those with real RFIDs can be matched to scans
     employee_rfids = {
         emp.get("rfid", "").strip().upper()
-        for emp in employee_database.values()
-        if emp.get("role") == "employee"
+        for emp in all_employees
+        if emp.get("rfid", "").strip()
     }
     present_rfids = {
         event["rfid"] for event in today_events
         if event.get("rfid") in employee_rfids
     }
-    total_employees = len(employee_rfids)
     present_today = len(present_rfids)
     absent_today = max(total_employees - present_today, 0)
     attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0
@@ -1292,6 +1314,13 @@ def get_employee_attendance(rfid):
     rfid = rfid.strip().upper()
     employee = employee_database.get(rfid)
     
+    # Fallback: try to find by UID if not found by RFID
+    if not employee:
+        for emp in employee_database.values():
+            if str(emp.get("uid", "")).strip() == rfid:
+                employee = emp
+                break
+    
     if not employee:
         return jsonify({
             "status": "error",
@@ -1367,13 +1396,13 @@ def get_dtr_employees():
             }), 401
     
     employees = []
-    for rfid, emp in employee_database.items():
+    for key, emp in employee_database.items():
         role = emp.get("role", "").lower()
         if role not in ["admin", "hr"]:
             employees.append({
                 "uid": emp.get("uid"),
                 "employeeid": emp.get("employeeid"),
-                "rfid": emp.get("rfid"),
+                "rfid": emp.get("rfid", ""),
                 "fullname": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
                 "firstname": emp.get("firstname"),
                 "lastname": emp.get("lastname"),
@@ -1406,8 +1435,15 @@ def get_dtr_record(rfid):
                 "message": "Session expired or user is not logged in"
             }), 401
     
-    rfid = rfid.strip().upper()
-    employee = employee_database.get(rfid)
+    identifier = rfid.strip().upper()
+    employee = employee_database.get(identifier)
+    
+    # Fallback: try to find by UID if not found by RFID
+    if not employee:
+        for emp in employee_database.values():
+            if str(emp.get("uid", "")).strip() == identifier:
+                employee = emp
+                break
     
     if not employee:
         return jsonify({
@@ -1461,7 +1497,7 @@ def get_dtr_record(rfid):
             "employee": {
                 "uid": employee.get("uid"),
                 "employeeid": employee.get("employeeid"),
-                "rfid": employee.get("rfid"),
+                "rfid": employee.get("rfid", ""),
                 "fullname": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
                 "firstname": employee.get("firstname"),
                 "lastname": employee.get("lastname"),
@@ -1504,8 +1540,15 @@ def generate_dtr_pdf(rfid):
                 "message": "Session expired or user is not logged in"
             }), 401
     
-    rfid = rfid.strip().upper()
-    employee = employee_database.get(rfid)
+    identifier = rfid.strip().upper()
+    employee = employee_database.get(identifier)
+    
+    # Fallback: try to find by UID if not found by RFID
+    if not employee:
+        for emp in employee_database.values():
+            if str(emp.get("uid", "")).strip() == identifier:
+                employee = emp
+                break
     
     if not employee:
         return jsonify({
@@ -1761,6 +1804,13 @@ def request_leave():
         rfid = data["rfid"].strip().upper()
         employee = employee_database.get(rfid)
         
+        # Fallback: try to find by UID if not found by RFID
+        if not employee:
+            for emp in employee_database.values():
+                if str(emp.get("uid", "")).strip() == rfid:
+                    employee = emp
+                    break
+        
         if not employee:
             return jsonify({"status": "error", "message": "Employee not found"}), 404
         
@@ -1837,19 +1887,32 @@ def get_leave_requests():
 # Get leave requests for a specific employee
 @app.route("/api/leave-requests/<rfid>", methods=["GET"])
 def get_employee_leave_requests(rfid):
-    rfid = rfid.strip().upper()
+    identifier = rfid.strip().upper()
     
-    if rfid not in employee_database:
+    # Try RFID lookup first
+    employee = employee_database.get(identifier)
+    
+    # Fallback: try to find by UID
+    if not employee:
+        for emp in employee_database.values():
+            if str(emp.get("uid", "")).strip() == identifier:
+                employee = emp
+                break
+    
+    if not employee:
         return jsonify({"status": "error", "message": "Employee not found"}), 404
     
+    # Use the employee's UID for filtering so it works with both RFID and UID lookups
+    uid = employee.get("uid")
+    
     employee_requests = [
-        req for req in leave_data["requests"] if req.get("rfid") == rfid
+        req for req in leave_data["requests"] if req.get("uid") == uid
     ]
     employee_approved = [
-        req for req in leave_data["approved"] if req.get("rfid") == rfid
+        req for req in leave_data["approved"] if req.get("uid") == uid
     ]
     employee_rejected = [
-        req for req in leave_data["rejected"] if req.get("rfid") == rfid
+        req for req in leave_data["rejected"] if req.get("uid") == uid
     ]
     
     return jsonify({
@@ -2526,6 +2589,20 @@ def update_employee(rfid):
                 if found:
                     break
         
+        # Fallback: try to find by UID if not found by RFID
+        if not found:
+            for category in ["admin", "hr", "employees"]:
+                if category in database:
+                    for idx, emp in enumerate(database[category]):
+                        if str(emp.get("uid", "")).strip() == rfid:
+                            found = True
+                            category_found = category
+                            index_found = idx
+                            updated_employee = emp
+                            break
+                    if found:
+                        break
+        
         if not found:
             return jsonify({
                 "status": "error",
@@ -2595,7 +2672,40 @@ def update_employee(rfid):
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
                 updated_employee["image"] = image_path
                 print(f"New image saved (fallback): {image_path}")
-        
+
+        # Allow changing RFID via form data (client sends new value in 'rfid')
+        new_rfid_value = None
+        if "rfid" in data and data.get("rfid"):
+            candidate = str(data.get("rfid", "")).strip().upper()
+            if candidate and candidate != rfid:
+                # ensure uniqueness across database
+                collision = False
+                for cat in ["admin", "hr", "employees"]:
+                    if cat in database:
+                        for emp in database[cat]:
+                            if emp.get("rfid", "").strip().upper() == candidate:
+                                collision = True
+                                break
+                    if collision:
+                        break
+                if collision:
+                    return jsonify({
+                        "status": "error",
+                        "message": "RFID already assigned to another employee"
+                    }), 400
+
+                # update the employee object and attendance records
+                updated_employee["rfid"] = candidate
+                new_rfid_value = candidate
+                try:
+                    for rec in attendance_records:
+                        if rec.get("uid") == updated_employee.get("uid"):
+                            rec["rfid"] = candidate
+                    # persist attendance changes
+                    save_attendance_data()
+                except Exception as e:
+                    print(f"Warning: failed to update attendance records for RFID change: {e}")
+
         updated_employee["timestamp_modified"] = now
         
         # Update database
@@ -2610,8 +2720,20 @@ def update_employee(rfid):
             json.dump(database, f, indent=4)
             f.write("\n")
         
-        # Update in-memory database
-        employee_database[rfid] = updated_employee
+        # Update in-memory database (handle RFID rename if requested)
+        try:
+            if new_rfid_value:
+                # remove old key if present
+                if rfid in employee_database:
+                    try:
+                        del employee_database[rfid]
+                    except Exception:
+                        pass
+                employee_database[new_rfid_value] = updated_employee
+            else:
+                employee_database[rfid] = updated_employee
+        except Exception as e:
+            print(f"Warning: failed to update in-memory employee_database mapping: {e}")
         
         # Log activity
         add_activity(

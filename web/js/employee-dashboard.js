@@ -1,4 +1,4 @@
-    const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
+const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 let currentUser = null;
 let allEmployees = [];
@@ -30,6 +30,89 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
   }[c]));
+}
+
+// Format a date value (e.g. "2026-09-01", with or without a time suffix, or
+// a Date) into the DTR "D - Mon" style (e.g. "1 - Sep"). Works for any
+// month/year — nothing here is hard-coded to a specific month.
+const DTR_MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function formatDTRDate(value) {
+  if (!value && value !== 0) return '';
+  const isoMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const day = parseInt(isoMatch[3], 10);
+    const monthIndex = parseInt(isoMatch[2], 10) - 1;
+    const monthAbbr = DTR_MONTH_ABBR[monthIndex] || '';
+    return monthAbbr ? `${day} - ${monthAbbr}` : String(value);
+  }
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return `${value.getDate()} - ${DTR_MONTH_ABBR[value.getMonth()]}`;
+  }
+  return String(value);
+}
+
+// Format a date value into short "M/D/YY" style used in the DTR header
+// (e.g. "9/1/26"), no leading zeros.
+function formatDTRHeaderDate(value) {
+  if (!value && value !== 0) return '';
+  let isoMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const year = isoMatch[1].slice(-2);
+    const month = parseInt(isoMatch[2], 10);
+    const day = parseInt(isoMatch[3], 10);
+    return `${month}/${day}/${year}`;
+  }
+  let shortMatch = String(value).match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (shortMatch) {
+    const month = parseInt(shortMatch[1], 10);
+    const day = parseInt(shortMatch[2], 10);
+    const year = shortMatch[3].length > 2 ? shortMatch[3].slice(-2) : shortMatch[3];
+    return `${month}/${day}/${year}`;
+  }
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    return `${value.getMonth() + 1}/${value.getDate()}/${String(value.getFullYear()).slice(-2)}`;
+  }
+  return String(value);
+}
+
+// Work out the "From : To :" range for the DTR header — prefers the
+// record's own from_date/to_date, falls back to the first/last day actually
+// present in the dtr rows, and only falls back to today's calendar month if
+// neither is available. Works for any month, not just the current one.
+function resolveDTRDateRange(record, dtr) {
+  let from = record && record.from_date;
+  let to = record && record.to_date;
+  if (!from && dtr && dtr.length) from = dtr[0].date;
+  if (!to && dtr && dtr.length) to = dtr[dtr.length - 1].date;
+  if (!from || !to) {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    from = from || firstDay;
+    to = to || lastDay;
+  }
+  return { from: formatDTRHeaderDate(from), to: formatDTRHeaderDate(to) };
+}
+
+// Resolve a complete employee info object for the DTR by combining whatever
+// /api/dtr/record returned with the logged-in user's own profile — so the
+// printed name/position/department never falls back to "Unknown".
+function resolveMyEmployeeInfo(currentUser, apiEmployee) {
+  apiEmployee = apiEmployee || {};
+  currentUser = currentUser || {};
+  const apiFullname = apiEmployee.fullname
+    || `${apiEmployee.firstname || ''} ${apiEmployee.lastname || ''}`.trim();
+  const userFullname = currentUser.fullname
+    || `${currentUser.firstname || ''} ${currentUser.lastname || ''}`.trim();
+
+  return {
+    fullname: apiFullname || userFullname || 'Unknown',
+    employeeid: apiEmployee.employeeid || currentUser.employeeid || currentUser.uid || '',
+    position: apiEmployee.position || currentUser.position || '',
+    department: apiEmployee.department || currentUser.department || '',
+    role: apiEmployee.role || currentUser.role || 'employee',
+    regularTime: apiEmployee.regular_time || apiEmployee.regularTime || 'DEFAULT'
+  };
 }
 
 function updateUserDisplay(user) {
@@ -434,8 +517,8 @@ async function loadMyDTR() {
       else if (isWeekend) { rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;'; statusText = 'Weekend'; }
 
       return `<tr style="${rowStyle}">
+        <td>${escapeHtml(formatDTRDate(day.date))}</td>
         <td>${escapeHtml(day.day || '')}</td>
-        <td>${escapeHtml(day.date || '')}</td>
         <td>${escapeHtml(day.am_in || '')}</td>
         <td>${escapeHtml(day.am_out || '')}</td>
         <td>${escapeHtml(day.pm_in || '')}</td>
@@ -816,91 +899,175 @@ async function changePassword() {
 /* ---------------- DTR PRINT / PDF ---------------- */
 
 function buildMyDtrHTML(record, dtr, employee) {
-  const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || '--';
+  const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
   const position = employee.position || '';
   const department = employee.department || '';
-  const employeeId = employee.employeeid || '';
-  const fromDate = record.from_date || '';
-  const toDate = record.to_date || '';
-  const totalHours = record.total_hours || '0.00';
-  const totalOt = record.total_ot || '0.00';
   const totalUt = record.total_ut || '0.00';
-  const workingDays = dtr.filter(d => d.status !== 'on_leave' && d.day !== 'Sat' && d.day !== 'Sun').length;
 
-  // Two-column table
-  let rows = '';
-  const half = Math.ceil(dtr.length / 2);
-  for (let i = 0; i < half; i++) {
-    const left = dtr[i] || {};
-    const right = dtr[i + half] || {};
-    const cell = (v) => `<td style="border:1px solid #000;padding:3px 2px;font-size:9px;text-align:center;">${v || ''}</td>`;
-    rows += `<tr>
-      ${cell(left.day ? `${left.day} - ${left.date || ''}` : '')}
-      ${cell(left.am_in)} ${cell(left.am_out)}
-      ${cell(left.pm_in)} ${cell(left.pm_out)}
-      ${cell(left.hours)} ${cell(left.ut)} ${cell(left.ot)}
-      ${cell(right.day ? `${right.day} - ${right.date || ''}` : '')}
-      ${cell(right.am_in)} ${cell(right.am_out)}
-      ${cell(right.pm_in)} ${cell(right.pm_out)}
-      ${cell(right.hours)} ${cell(right.ut)} ${cell(right.ot)}
-    </tr>`;
+  const { from: fromDate, to: toDate } = resolveDTRDateRange(record, dtr);
+
+  const workingDays = dtr.filter(d => d.status !== 'on_leave' && d.day !== 'Sat' && d.day !== 'Sun').length;
+  const totalWorkingDays = Number(workingDays) || 0;
+  const totalUndertime = totalUt;
+
+  // Full month, once — reused identically for both copies below.
+  const tableRows = dtr.map(day => {
+    const isWeekend = day.day === 'Sat' || day.day === 'Sun';
+    const isLeave = day.status === 'on_leave';
+    const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
+    const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
+    const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
+    return `
+      <tr style="${rowStyle}">
+        <td class="c-date">${formatDTRDate(day.date)}</td>
+        <td class="c-day">${day.day || ''}</td>
+        <td class="c-time">${day.am_in || ''}</td>
+        <td class="c-time">${day.am_out || ''}</td>
+        <td class="c-time">${day.pm_in || ''}</td>
+        <td class="c-time">${day.pm_out || ''}</td>
+        <td class="c-small">${ut}</td>
+        <td class="c-small">${ot}</td>
+      </tr>`;
+  }).join('');
+
+  function buildCopy(copyLabel, isPersonnelCopy) {
+    return `
+      <div class="dtr-copy">
+        <div class="dtr-title">DAILY TIME RECORD</div>
+        <div class="dtr-subtitle">DAILY TIME RECORD</div>
+        <div class="dtr-daterange">From: ${fromDate} To: ${toDate}</div>
+
+        <div class="dtr-info">
+          <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${escapeHtml(fullname)}</span></div>
+          <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${escapeHtml(position)}</span></div>
+          <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${escapeHtml(department)}</span></div>
+          <div class="info-row two-col">
+            <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${escapeHtml(employee.regularTime || 'DEFAULT')}</span></span>
+            <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-blank"></span></span>
+          </div>
+        </div>
+
+        <table class="dtr-table">
+          <colgroup>
+            <col class="col-date"><col class="col-day">
+            <col class="col-time"><col class="col-time">
+            <col class="col-time"><col class="col-time">
+            <col class="col-small"><col class="col-small">
+          </colgroup>
+          <thead>
+            <tr class="grp-row">
+              <th colspan="2">WORKING</th>
+              <th colspan="2">A M</th>
+              <th colspan="2">P M</th>
+              <th colspan="2">HOURS</th>
+            </tr>
+            <tr class="sub-row">
+              <th>Date</th><th>Days</th>
+              <th>In 1</th><th>Out 1</th>
+              <th>In 2</th><th>Out 2</th>
+              <th>UT</th><th>OT</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+
+        <div class="dtr-summary">
+          <div class="summary-line">
+            <span class="summary-item"><label>A =</label><span class="fill">${totalWorkingDays.toFixed(2)}</span></span>
+            <span class="summary-item"><label>ROT =</label><span class="fill">0.00</span></span>
+            <span class="summary-item"><label>LOT =</label><span class="fill">&nbsp;</span></span>
+          </div>
+          <div class="summary-line">
+            <span class="summary-item"><label>U =</label><span class="fill">${totalUndertime}</span></span>
+            <span class="summary-item"><label>SOT =</label><span class="fill">&nbsp;</span></span>
+          </div>
+        </div>
+
+        <div class="dtr-cert">
+          I Certify on my honor that the above is a true and correct report of the hours work perfomed, record of which was daily at the time of arrival and departure from office.
+        </div>
+
+        <div class="dtr-sig">
+          <div class="sig-line"></div>
+          <div class="sig-caption">Signature</div>
+        </div>
+
+        <div class="dtr-divider">&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;</div>
+
+        <div class="dtr-verified-label">VERIFIED as to the prescribed office hours</div>
+
+        <div class="dtr-sig">
+          <div class="sig-line"></div>
+          <div class="sig-caption">In Charge</div>
+        </div>
+
+        <div class="dtr-copy-tag">&gt;&gt;&gt;&gt;&gt;${copyLabel}</div>
+
+        ${isPersonnelCopy ? `
+        <div class="dtr-recorded">
+          <div class="recorded-row">RECORDED BY :<span class="recorded-line"></span></div>
+          <div class="recorded-row">DATE<span class="recorded-colon">:</span><span class="recorded-line"></span></div>
+        </div>` : ''}
+      </div>`;
   }
+
+  const employeeCopyHTML = buildCopy("EMPLOYEE'S COPY", false);
+  const personnelCopyHTML = buildCopy("PERSONNEL'S COPY", true);
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8">
   <title>DTR - ${escapeHtml(fullname)}</title>
   <style>
-    @page { size: legal; margin: 8mm 10mm; }
-    body { font-family: 'Times New Roman', serif; font-size: 11px; }
-    .title { text-align:center; font-size:16px; font-weight:bold; letter-spacing:2px; border-bottom:2px solid #000; padding-bottom:4px; margin-bottom:6px;}
-    .header { display:flex; justify-content:space-between; font-size:11px; margin-bottom:6px; }
-    .info { display:grid; grid-template-columns:1.5fr 1fr 1fr 1fr; gap:2px; font-size:11px; padding:4px 0; border-bottom:1px solid #000; margin-bottom:6px;}
-    table { width:100%; border-collapse:collapse; font-size:9px; }
-    th { border:1px solid #000; padding:2px; background:#eee; font-size:8px; }
-    .summary { display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:2px; font-size:10px; padding:4px 0; border-top:1px solid #000; margin-top:2px;}
-    .cert { font-style:italic; font-size:10px; padding:4px 0; border-top:1px solid #000; margin-top:4px;}
-    .sig { display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; margin-top:8px; padding-top:8px; border-top:1px solid #000; font-size:10px; text-align:center;}
-    .sig-line { margin-top:20px; border-top:1px solid #000; padding-top:2px;}
-    .copy { text-align:center; font-weight:bold; font-size:10px; margin-top:4px; padding:2px; border:1px solid #000; background:#f9f9f9;}
-  </style></head><body>
-    <div class="title">DAILY TIME RECORD</div>
-    <div class="header">
-      <div><b>From :</b> ${fromDate} &nbsp; <b>To :</b> ${toDate}</div>
-      <div><b>Payroll No. :</b> ${employeeId}</div>
+    @page { size: letter portrait; margin: 8mm 8mm; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size:9px; color:#000; }
+    .dtr-page { display:flex; align-items:stretch; width:100%; }
+    .dtr-copy { flex:1 1 50%; width:50%; padding:2px 6px; }
+    .dtr-vertical-divider { width:0; border-left:1px solid #000; margin:4px 4px 4px 0; }
+    .dtr-title { text-align:center; font-size:15px; font-weight:bold; text-transform:uppercase; margin-bottom:1px; }
+    .dtr-subtitle { text-align:center; font-size:9px; font-weight:bold; text-transform:uppercase; }
+    .dtr-daterange { text-align:center; font-size:9px; font-weight:bold; margin-bottom:4px; }
+    .dtr-info { font-size:9px; margin-bottom:5px; }
+    .info-row { display:flex; gap:4px; padding:1px 0; }
+    .info-row.two-col { justify-content:space-between; }
+    .info-half { display:flex; gap:4px; }
+    .info-label { font-weight:bold; white-space:nowrap; display:inline-block; width:90px; flex-shrink:0; }
+    .info-label.label-auto { width:auto; }
+    .info-value { border-bottom:1px solid transparent; }
+    .info-value.name { font-weight:bold; text-transform:uppercase; }
+    .info-blank { display:inline-block; min-width:55px; border-bottom:1px solid #000; height:10px; margin-left:2px; }
+    .dtr-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8px; margin-bottom:4px; }
+    .dtr-table col.col-date { width:15%; }
+    .dtr-table col.col-day { width:11%; }
+    .dtr-table col.col-time { width:13%; }
+    .dtr-table col.col-small { width:9%; }
+    .dtr-table th, .dtr-table td { border:1px solid #000; text-align:center; padding:1px 2px; overflow:hidden; white-space:nowrap; }
+    .dtr-table thead th { font-weight:bold; font-size:8px; background-color:#fff; }
+    .dtr-table tbody td { font-size:8px; height:13px; }
+    .dtr-summary { font-size:9px; margin:3px 0; }
+    .summary-line { display:flex; gap:14px; padding:1px 0; }
+    .summary-item { display:flex; align-items:flex-end; gap:3px; }
+    .summary-item label { font-weight:bold; white-space:nowrap; }
+    .summary-item .fill { border-bottom:1px solid #000; min-width:34px; display:inline-block; text-align:center; }
+    .dtr-cert { font-size:7.5px; text-align:center; line-height:1.25; margin:4px 0 2px 0; }
+    .dtr-sig { text-align:center; margin-top:16px; }
+    .dtr-sig .sig-line { border-top:1px solid #000; width:85%; margin:0 auto; }
+    .dtr-sig .sig-caption { font-size:8px; font-weight:bold; margin-top:1px; }
+    .dtr-divider { font-size:7px; line-height:1; letter-spacing:-0.5px; margin:6px 0 2px 0; overflow:hidden; white-space:nowrap; }
+    .dtr-verified-label { text-align:center; font-size:8px; font-weight:bold; margin-bottom:2px; }
+    .dtr-copy-tag { font-weight:bold; font-size:8.5px; margin-top:6px; }
+    .dtr-recorded { margin-top:4px; font-size:8px; font-weight:bold; }
+    .recorded-row { display:flex; align-items:flex-end; gap:4px; margin-top:4px; }
+    .recorded-colon { margin-left:-2px; }
+    .recorded-line { flex:1; border-bottom:1px solid #000; height:10px; }
+    @media print { .dtr-page { page-break-inside: avoid; } }
+  </style></head>
+  <body>
+    <div class="dtr-page">
+      ${employeeCopyHTML}
+      <div class="dtr-vertical-divider"></div>
+      ${personnelCopyHTML}
     </div>
-    <div class="info">
-      <div><b>Name :</b> ${escapeHtml(fullname)}</div>
-      <div><b>Position :</b> ${escapeHtml(position)}</div>
-      <div><b>Department :</b> ${escapeHtml(department)}</div>
-      <div><b>Regular Time :</b> DEFAULT</div>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th colspan="9">WORKING</th>
-          <th colspan="9">WORKING</th>
-        </tr>
-        <tr>
-          <th>Date</th><th>In 1</th><th>Out 1</th><th>In 2</th><th>Out 2</th><th>HOURS</th><th>UT</th><th>OT</th>
-          <th>Date</th><th>In 1</th><th>Out 1</th><th>In 2</th><th>Out 2</th><th>HOURS</th><th>UT</th><th>OT</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div class="summary">
-      <div><b>A =</b> ${workingDays.toFixed(2)}</div>
-      <div><b>ROT =</b> 0.00</div>
-      <div><b>LOT =</b> </div>
-      <div><b>U =</b> ${totalUt}</div>
-      <div><b>SOT =</b> </div>
-    </div>
-    <div class="cert">I Certify on my honor that the above is a true and correct report of the hours work performed, record of which was daily at the time of arrival and departure from office.</div>
-    <div class="sig">
-      <div><div class="sig-line"></div>Signature</div>
-      <div><div class="sig-line"></div>In Charge</div>
-      <div><div class="sig-line"></div>Signature</div>
-      <div><div class="sig-line"></div>In Charge</div>
-    </div>
-    <div class="copy">>>>> EMPLOYEE'S COPY</div>
   </body></html>`;
 }
 
@@ -924,7 +1091,7 @@ async function printMyDTR() {
   if (!data) return;
   const record = data.record;
   const dtr = record.dtr || [];
-  const employee = { ...currentUser, ...(record.employee || {}) };
+  const employee = resolveMyEmployeeInfo(currentUser, record.employee);
   const html = buildMyDtrHTML(record, dtr, employee);
   const w = window.open('', '_blank', 'width=1100,height=800');
   if (!w) { showMyDtrMessage('Allow popups to print.', 'warning'); return; }
@@ -938,7 +1105,7 @@ async function generateMyDTRPDF() {
   if (!data) return;
   const record = data.record;
   const dtr = record.dtr || [];
-  const employee = { ...currentUser, ...(record.employee || {}) };
+  const employee = resolveMyEmployeeInfo(currentUser, record.employee);
   const html = buildMyDtrHTML(record, dtr, employee);
   const w = window.open('', '_blank', 'width=1100,height=800');
   if (!w) { showMyDtrMessage('Allow popups to export PDF.', 'warning'); return; }
