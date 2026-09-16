@@ -14,6 +14,16 @@
 <body>
 
   <main class="login-wrap">
+    <div class="forgot-password-modal-overlay" id="forgotPasswordModal" aria-hidden="true">
+      <div class="forgot-password-modal" role="dialog" aria-modal="true" aria-labelledby="forgotPasswordTitle">
+        <button type="button" class="forgot-password-close" id="closeForgotPasswordModal" aria-label="Close forgot password dialog">×</button>
+        <div class="forgot-password-icon"><i class="fa-solid fa-headset"></i></div>
+        <h2 id="forgotPasswordTitle">Password Reset</h2>
+        <p>Please contact the system administrator to reset your password.</p>
+        <button type="button" class="btn-primary forgot-password-btn" id="forgotPasswordOk">OK</button>
+      </div>
+    </div>
+
     <!-- Logos outside the login card - positioned at top left of the page -->
     <div class="top-logos-container">
       <img src="./assets/ispsc_logo.png" alt="ISPSC Logo" class="top-logo">
@@ -48,7 +58,7 @@
             <input type="checkbox" name="remember">
             <span>Remember me</span>
           </label>
-          <a href="#" class="link-muted">Forgot password?</a>
+          <a href="#" class="link-muted" id="forgotPasswordLink">Forgot password?</a>
         </div>
 
         <button type="submit" class="btn-primary"><span class="button-label">Sign In</span><span class="button-loading" aria-hidden="true">Signing in...</span></button>

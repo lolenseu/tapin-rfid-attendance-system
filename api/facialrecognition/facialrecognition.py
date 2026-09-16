@@ -46,6 +46,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 DATABASE_DIR = os.path.join(STORAGE_DIR, "database")
 SAMPLES_DIR = os.path.join(STORAGE_DIR, "samples")
+PROFILE_DIR = os.path.join(STORAGE_DIR, "profiles")
 LOG_DIR = os.path.join(STORAGE_DIR, "logs")
 FACE_DATA_FILE = os.path.join(DATABASE_DIR, "face_embeddings.json")
 SCAN_LOG_FILE = os.path.join(LOG_DIR, "face_scans.json")
@@ -80,44 +81,77 @@ def _load_face_data():
         return {"version": 1, "employees": {}}
 
 
-def _load_tfs_file(rfid):
-    """Load face descriptors from .tfs file."""
-    filename = f"{rfid}.tfs"
-    filepath = os.path.join(SAMPLES_DIR, filename)
-    
-    if not os.path.exists(filepath):
+def _find_profile_image_for_rfid(rfid):
+    """Return the employee's profile image file by RFID, supporting jpg/jpeg/png/gif/webp/bmp."""
+    if not rfid:
         return None
-    
+
+    os.makedirs(PROFILE_DIR, exist_ok=True)
+    rfid_clean = str(rfid).strip().upper()
+    allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+
+    for ext in allowed_exts:
+        candidate = os.path.join(PROFILE_DIR, f"{rfid_clean}{ext}")
+        if os.path.exists(candidate):
+            return candidate
+
+    # fallback: any file that starts with the RFID name
     try:
-        with open(filepath, "rb") as f:
-            data = pickle.load(f)
-        return data
-    except Exception as e:
-        print(f"⚠️ Error loading .tfs file {filename}: {e}")
-        return None
+        for filename in os.listdir(PROFILE_DIR):
+            name, ext = os.path.splitext(filename)
+            if name.upper() == rfid_clean and ext.lower() in allowed_exts:
+                return os.path.join(PROFILE_DIR, filename)
+    except FileNotFoundError:
+        pass
+
+    return None
 
 
-def _list_tfs_files():
-    """List all .tfs files in storage/samples/"""
-    _ensure_directories()
-    tfs_files = []
-    for filename in os.listdir(SAMPLES_DIR):
-        if filename.endswith(".tfs"):
-            tfs_files.append(filename)
-    return tfs_files
+def _list_profile_images():
+    """List all employee profile images in storage/profiles/."""
+    os.makedirs(PROFILE_DIR, exist_ok=True)
+    image_files = []
+    allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+    for filename in sorted(os.listdir(PROFILE_DIR)):
+        if os.path.splitext(filename)[1].lower() in allowed_exts:
+            image_files.append(filename)
+    return image_files
 
 
-def _load_all_tfs_data():
-    """Load all .tfs files and return combined data."""
-    _ensure_directories()
-    all_data = {}
-    for filename in os.listdir(SAMPLES_DIR):
-        if filename.endswith(".tfs"):
-            rfid = filename.replace(".tfs", "")
-            data = _load_tfs_file(rfid)
-            if data:
-                all_data[rfid] = data
-    return all_data
+def _get_employee_profile_image_url(employee):
+    """Build the public profile image URL for an employee using their RFID name."""
+    if not employee:
+        return ""
+
+    rfid = str(employee.get("rfid", "") or "").strip().upper()
+    if not rfid:
+        return ""
+
+    image_path = _find_profile_image_for_rfid(rfid)
+    if not image_path:
+        return ""
+
+    return f"/storage/profiles/{os.path.basename(image_path)}"
+
+
+def _load_employee_templates():
+    """Return employee templates from storage/profiles using the existing employee database."""
+    employees = _get_all_employees()
+    templates = []
+    for employee in employees:
+        rfid = str(employee.get("rfid", "") or "").strip().upper()
+        if not rfid:
+            continue
+        image_path = _find_profile_image_for_rfid(rfid)
+        if not image_path:
+            continue
+        templates.append({
+            "employee": _employee_public(employee),
+            "rfid": rfid,
+            "image_url": f"/storage/profiles/{os.path.basename(image_path)}",
+            "image_file": os.path.basename(image_path),
+        })
+    return templates
 
 
 def _log_face_scan(rfid, employee, confidence, status, scan_type="face_detection"):
@@ -243,12 +277,12 @@ def facescanner_css():
 @facescanner_bp.get("/api/status")
 def scanner_status():
     """Get the status of the face scanner service."""
-    tfs_files = _list_tfs_files()
+    profile_images = _list_profile_images()
     return jsonify({
         "status": "success",
         "service": "face-scanner",
-        "tfs_files_found": len(tfs_files),
-        "tfs_files": tfs_files,
+        "profile_images_found": len(profile_images),
+        "profile_images": profile_images,
         "min_confidence": MIN_CONFIDENCE,
         "attendance_cooldown": ATTENDANCE_COOLDOWN,
     })
@@ -256,40 +290,14 @@ def scanner_status():
 
 @facescanner_bp.get("/api/employees")
 def scanner_employees():
-    """
-    Return all employees with their face data from .tfs files.
-    """
-    tfs_data = _load_all_tfs_data()
-    all_employees = _get_all_employees()
-    
-    result = []
-    for rfid, data in tfs_data.items():
-        employee = _get_employee_by_rfid(rfid)
-        if not employee:
-            # Try to create employee from .tfs data
-            employee = {
-                "rfid": rfid,
-                "uid": data.get("uid", ""),
-                "employeeid": data.get("employeeid", ""),
-                "firstname": data.get("firstname", ""),
-                "lastname": data.get("lastname", ""),
-                "role": "employee",
-            }
-        
-        result.append({
-            "employee": _employee_public(employee),
-            "rfid": rfid,
-            "descriptors": data.get("descriptors", []),
-            "samples": data.get("samples", 0),
-            "created_at": data.get("created_at", ""),
-            "updated_at": data.get("updated_at", ""),
-        })
+    """Return all employees whose profile image can be used as a recognition template."""
+    templates = _load_employee_templates()
 
     return jsonify({
         "status": "success",
-        "count": len(result),
-        "employees": result,
-        "tfs_files": _list_tfs_files(),
+        "count": len(templates),
+        "employees": templates,
+        "profile_images": _list_profile_images(),
     })
 
 
@@ -318,20 +326,21 @@ def verify_rfid():
             "rfid": rfid,
         }), 404
 
-    # Check if .tfs file exists
-    tfs_data = _load_tfs_file(rfid)
-    has_face = tfs_data is not None
+    # Check if a profile image exists for this RFID to use as face template.
+    profile_image = _find_profile_image_for_rfid(rfid)
+    has_face = profile_image is not None
 
     # Log the RFID verification
     _log_face_scan(rfid, employee, 100, "rfid_verified", "rfid_verification")
 
     return jsonify({
         "status": "success",
-        "message": "RFID verified" + (" - face registered" if has_face else " - no face registered"),
+        "message": "RFID verified" + (" - profile image found" if has_face else " - no profile image found"),
         "rfid": rfid,
         "employee": _employee_public(employee),
         "has_face": has_face,
-        "samples": tfs_data.get("samples", 0) if has_face else 0,
+        "image_url": f"/storage/profiles/{os.path.basename(profile_image)}" if profile_image else "",
+        "samples": 1 if has_face else 0,
     }), 200
 
 
@@ -400,16 +409,46 @@ def verify_and_record():
             "rfid": rfid,
         }), 404
 
-    # Check .tfs file exists
+    # Check profile image exists for this employee RFID so the browser can use it as a template.
     employee_rfid = str(employee.get("rfid", "")).strip().upper()
-    tfs_data = _load_tfs_file(employee_rfid)
-    if not tfs_data:
+    profile_image = _find_profile_image_for_rfid(employee_rfid)
+    if not profile_image:
         return jsonify({
             "status": "rejected",
-            "message": "Employee has no .tfs face file registered",
+            "message": "Employee has no profile image for face recognition",
             "uid": uid,
             "rfid": employee_rfid,
         }), 404
+
+    # Require a recent RFID scan from the device before recording attendance.
+    try:
+        from app import latest_scan
+        recent_rfid = str(latest_scan.get("rfid", "") or "").strip().upper()
+        recent_scanned_at = latest_scan.get("scanned_at")
+        if recent_rfid and recent_rfid != employee_rfid:
+            return jsonify({
+                "status": "rejected",
+                "message": "RFID device scan does not match the recognized employee.",
+                "uid": uid,
+                "rfid": employee_rfid,
+                "recent_rfid": recent_rfid,
+            }), 403
+
+        if recent_scanned_at:
+            try:
+                recent_dt = datetime.strptime(str(recent_scanned_at), "%Y-%m-%d %H:%M:%S")
+                age_seconds = (datetime.now() - recent_dt).total_seconds()
+                if age_seconds > 45:
+                    return jsonify({
+                        "status": "rejected",
+                        "message": "RFID scan is too old. Tap the card again before face recognition.",
+                        "uid": uid,
+                        "rfid": employee_rfid,
+                    }), 403
+            except ValueError:
+                pass
+    except Exception:
+        pass
 
     # Normalize timestamp
     if not scanned_at:
@@ -475,8 +514,8 @@ def verify_and_record():
             "is_present": is_present,
             "rfid_used": employee_rfid,
             "attendance_status": result,
-            "tfs_file": f"{employee_rfid}.tfs",
-            "samples": tfs_data.get("samples", 0),
+            "profile_image": f"/storage/profiles/{os.path.basename(profile_image)}",
+            "samples": 1,
         }), 200
 
     except Exception as exc:

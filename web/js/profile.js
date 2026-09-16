@@ -17,6 +17,7 @@ const profileIconPlaceholder = $('#profileIconPlaceholder');
 let currentData = null;
 let isFirstLoad = true;
 let currentRfid = null;
+let lastAttendanceSignature = '';
 let versionData = null;
 
 function loadLogo() {
@@ -243,9 +244,12 @@ function render(data) {
 
     const rfidChanged = (data.rfid !== currentRfid);
     const stateChanged = (isFound && hasEmployee) !== employeeCard.classList.contains('visible');
+    const attendanceSignature = JSON.stringify(data.attendance || null);
+    const attendanceChanged = attendanceSignature !== lastAttendanceSignature;
 
-    if (rfidChanged || stateChanged || isFirstLoad) {
+    if (rfidChanged || stateChanged || attendanceChanged || isFirstLoad) {
         currentRfid = data.rfid;
+        lastAttendanceSignature = attendanceSignature;
 
         if (isFound && hasEmployee) {
             renderEmployee(data.employee, data.attendance);

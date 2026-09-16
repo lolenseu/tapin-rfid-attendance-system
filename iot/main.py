@@ -16,6 +16,10 @@ from configs.config import *
 from configs import parameters as param
 from driver import BUZZER, PCF8574, PN532
 
+# API endpoint used by the device
+API_URL = "https://lolenseu.pythonanywhere.com/"
+API_ADDR = "lolenseu.pythonanywhere.com"
+
 ## Global hardware objects
 buzzer = None
 lcd = None

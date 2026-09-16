@@ -63,8 +63,7 @@ def is_production():
 def get_base_url():
     """Get the base URL for the application."""
     if is_production():
-        # Production URL - update with your actual domain
-        return os.environ.get("BASE_URL", "https://tapin-api.up.railway.app")
+        return os.environ.get("BASE_URL", "https://lolenseu.pythonanywhere.com")
     else:
         return "http://localhost:5000"
 
@@ -3005,26 +3004,6 @@ def page_not_found(e):
 @app.route("/api/settings/check-version", methods=["OPTIONS"])
 @app.route("/api/settings/reset", methods=["OPTIONS"])
 def handle_options():
-    response = jsonify({"status": "ok"})
-    origin = request.headers.get("Origin")
-    if origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization, X-Requested-With"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
-    return response, 200
-
-# ============================================================================
-# FACIAL RECOGNITION OPTIONS HANDLERS - FACE REGISTRATION
-# ============================================================================
-# Add OPTIONS handlers for facial recognition routes
-@app.route("/facialrecognition/api/status", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/employees", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/register", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/register/<uid>", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/verify", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/clear-registrations", methods=["OPTIONS"])
-def handle_facial_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
     if origin:

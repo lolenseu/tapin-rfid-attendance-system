@@ -5,7 +5,7 @@
    - Attendance recorded via RFID verification
    - Logs all face detections */
 
-const BASE = "/facialrecognition";
+const BASE = (window.TAPIN_API_URL || "https://lolenseu.pythonanywhere.com").replace(/\/+$/, "") + "/facialrecognition";
 const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights";
 const MATCH_THRESHOLD = 0.50; // Lower = stricter
 const ATTENDANCE_COOLDOWN = 10000; // 10 seconds between scans
@@ -55,16 +55,49 @@ async function loadTemplates() {
   try {
     const res = await fetch(`${BASE}/api/employees`);
     const data = await res.json();
-    faceTemplates = data.employees || [];
-    console.log(`✅ Loaded ${faceTemplates.length} face templates from .tfs files`);
-    
-    // Update status with TFS count
-    if (data.tfs_files) {
-      statusEl.textContent = `📁 ${data.tfs_files.length} TFS files`;
+    const employees = data.employees || [];
+
+    faceTemplates = [];
+
+    for (const item of employees) {
+      const employee = item.employee || {};
+      const imageUrl = item.image_url || employee.image || "";
+      if (!imageUrl) continue;
+
+      try {
+        const img = await faceapi.fetchImage(imageUrl);
+        const detection = await faceapi.detectSingleFace(img)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        if (!detection) {
+          console.warn(`No face detected in profile image for ${employee.name || item.rfid}`);
+          continue;
+        }
+
+        faceTemplates.push({
+          ...employee,
+          rfid: item.rfid || employee.rfid,
+          uid: employee.uid,
+          name: employee.name || `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || "Unknown",
+          imageUrl,
+          descriptor: Array.from(detection.descriptor)
+        });
+      } catch (imgErr) {
+        console.warn(`Could not load face template for ${employee.name || item.rfid}:`, imgErr);
+      }
     }
+
+    console.log(`✅ Loaded ${faceTemplates.length} face templates from profile images`);
+    faceCountEl.textContent = `Faces: ${faceTemplates.length}`;
+    statusEl.textContent = faceTemplates.length ? "Profile templates ready" : "No profile images found";
+    statusEl.className = faceTemplates.length ? "pill status-ready" : "pill status-error";
   } catch (e) {
     console.error("Error loading templates:", e);
     faceTemplates = [];
+    faceCountEl.textContent = "Faces: 0";
+    statusEl.textContent = "Template load failed";
+    statusEl.className = "pill status-error";
   }
 }
 
@@ -87,7 +120,7 @@ async function loadStats() {
     const data = await res.json();
     if (data.status === "success") {
       const stats = data.stats;
-      document.getElementById("statTFS").textContent = stats.tfs_files || 0;
+      document.getElementById("statTFS").textContent = stats.profile_images || 0;
       document.getElementById("statPresent").textContent = stats.present_today || 0;
       document.getElementById("statTotal").textContent = stats.total_employees || 0;
       document.getElementById("statRate").textContent = stats.attendance_rate || "0%";
@@ -162,20 +195,20 @@ function identify(descriptor) {
   let best = null;
 
   for (const record of faceTemplates) {
-    for (const saved of record.descriptors || []) {
-      if (!Array.isArray(saved) || saved.length !== descriptor.length) continue;
-      const d = distance(descriptor, saved);
-      if (!best || d < best.distance) {
-        const employee = record.employee || {};
-        best = { 
-          employee, 
-          rfid: record.rfid || employee.rfid || "",
-          uid: employee.uid || "",
-          distance: d,
-          name: `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || employee.name || "Unknown",
-          samples: record.samples || 0
-        };
-      }
+    const savedDescriptor = record.descriptor || [];
+    if (!Array.isArray(savedDescriptor) || savedDescriptor.length !== descriptor.length) continue;
+
+    const d = distance(descriptor, savedDescriptor);
+    if (!best || d < best.distance) {
+      const employee = record.employee || {};
+      best = {
+        employee,
+        rfid: record.rfid || employee.rfid || "",
+        uid: employee.uid || "",
+        distance: d,
+        name: `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || employee.name || "Unknown",
+        samples: 1
+      };
     }
   }
 

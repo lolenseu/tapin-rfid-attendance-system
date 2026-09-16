@@ -217,27 +217,57 @@ function updateMonthlyStats(data) {
     return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
   });
 
-  // Unique working days present (distinct dates)
-  const datesPresent = new Set();
+  // Determine the employee's actual working days in the current month.
+  // Exclude weekends and approved leave dates.
+  const leaveDates = new Set();
+  myLeaveRequests.filter(r => r.status === 'approved').forEach(r => {
+    const start = new Date(r.start_date);
+    const end = new Date(r.end_date);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const currentDate = new Date(cursor);
+      if (currentDate.getMonth() === currentMonth && currentDate.getFullYear() === currentYear) {
+        leaveDates.add(currentDate.toDateString());
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  });
+
+  const employeeAttendanceDates = new Set();
   monthScans.forEach(s => {
     const d = new Date(s.scanned_at);
-    datesPresent.add(d.toDateString());
+    employeeAttendanceDates.add(d.toDateString());
   });
-  const totalPresent = datesPresent.size;
 
-  // Total working days in this month (exclude Sat/Sun)
   const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
   let workingDays = 0;
+  const employeePresentDates = new Set();
+
   for (let i = 1; i <= daysInMonth; i++) {
     const d = new Date(currentYear, currentMonth, i);
     const day = d.getDay();
-    if (day !== 0 && day !== 6) workingDays++;
+    if (day === 0 || day === 6) continue;
+
+    const dateKey = d.toDateString();
+    if (leaveDates.has(dateKey)) continue;
+
+    workingDays++;
+    if (employeeAttendanceDates.has(dateKey)) {
+      employeePresentDates.add(dateKey);
+    }
   }
+
+  const totalPresent = employeePresentDates.size;
   const totalAbsent = Math.max(workingDays - totalPresent, 0);
 
-  // Total hours (from DTR aggregate if present)
+  // Total hours for the current month only
   let totalHours = 0;
-  myScans.forEach(s => { totalHours += parseFloat(s.hours || 0); });
+  monthScans.forEach(s => {
+    const hoursValue = Number.parseFloat(s.hours ?? s.total_hours ?? 0);
+    if (!Number.isNaN(hoursValue)) totalHours += hoursValue;
+  });
 
   // Leave counts
   const approvedLeaves = myLeaveRequests.filter(r => r.status === 'approved').length;
@@ -249,7 +279,7 @@ function updateMonthlyStats(data) {
   setText('statTotalHours', totalHours.toFixed(2));
   setText('statLeaveCount', approvedLeaves + pendingLeaves);
 
-  // Progress bars (relative to workingDays max)
+  // Progress bars (relative to employee working days)
   const pct = (v) => workingDays > 0 ? Math.min((v / workingDays) * 100, 100) : 0;
   setWidth('statPresentBar', pct(totalPresent));
   setWidth('statAbsentBar', pct(totalAbsent));

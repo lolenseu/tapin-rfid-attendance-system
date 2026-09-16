@@ -284,6 +284,77 @@ select:focus-visible,
   text-align: center;
 }
 
+.forgot-password-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.forgot-password-modal-overlay.show {
+  display: flex;
+}
+
+.forgot-password-modal {
+  position: relative;
+  width: min(520px, 100%);
+  background: #FFFFFF;
+  border-radius: 18px;
+  padding: 28px 24px 22px;
+  box-shadow: 0 22px 60px rgba(15, 23, 42, 0.22);
+  text-align: center;
+}
+
+.forgot-password-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #EEF2FF;
+  color: #4D6BFE;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.forgot-password-icon {
+  width: 62px;
+  height: 62px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #E0E7FF, #DBEAFE);
+  color: #4D6BFE;
+  font-size: 26px;
+}
+
+.forgot-password-modal h2 {
+  margin: 0 0 10px;
+  font-size: 28px;
+  color: #090D33;
+}
+
+.forgot-password-modal p {
+  margin: 0 0 18px;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.forgot-password-btn {
+  width: 100%;
+  max-width: 120px;
+  margin: 0 auto;
+}
+
 @media (max-width: 420px) {
   .login-card {
     padding: 34px 22px 28px;

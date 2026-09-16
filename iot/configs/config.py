@@ -10,6 +10,3 @@ DRIVER_URL = "https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-s
 BOOT_URL = "https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/iot/boot.py"
 MAIN_URL = "https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/iot/main.py"
 
-## api url
-API_URL = "https://tapin-api.up.railway.app/"
-API_ADDR = "tapin-api.up.railway.app"

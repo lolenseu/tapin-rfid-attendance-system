@@ -6,6 +6,10 @@ const rememberInput = form ? form.querySelector('input[name="remember"]') : null
 const passwordInput = form ? form.querySelector('input[name="password"]') : null;
 const passwordToggle = form ? document.getElementById('passwordToggle') : null;
 const passwordToggleIcon = passwordToggle ? passwordToggle.querySelector('i') : null;
+const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+const closeForgotPasswordModal = document.getElementById('closeForgotPasswordModal');
+const forgotPasswordOk = document.getElementById('forgotPasswordOk');
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
 let versionData = null;
@@ -147,6 +151,37 @@ async function checkAlreadyLoggedIn() {
     } catch (error) {
         // Not logged in, show login page
     }
+}
+
+if (forgotPasswordLink && forgotPasswordModal) {
+    forgotPasswordLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        forgotPasswordModal.classList.add('show');
+        forgotPasswordModal.setAttribute('aria-hidden', 'false');
+    });
+}
+
+if (closeForgotPasswordModal && forgotPasswordModal) {
+    closeForgotPasswordModal.addEventListener('click', () => {
+        forgotPasswordModal.classList.remove('show');
+        forgotPasswordModal.setAttribute('aria-hidden', 'true');
+    });
+}
+
+if (forgotPasswordOk && forgotPasswordModal) {
+    forgotPasswordOk.addEventListener('click', () => {
+        forgotPasswordModal.classList.remove('show');
+        forgotPasswordModal.setAttribute('aria-hidden', 'true');
+    });
+}
+
+if (forgotPasswordModal) {
+    forgotPasswordModal.addEventListener('click', (event) => {
+        if (event.target === forgotPasswordModal) {
+            forgotPasswordModal.classList.remove('show');
+            forgotPasswordModal.setAttribute('aria-hidden', 'true');
+        }
+    });
 }
 
 if (form) {
