@@ -7,6 +7,7 @@ import jwt
 import secrets
 import io
 import re
+import socket
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, request, session, send_from_directory, send_file, make_response
@@ -49,30 +50,122 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "tapin-development-secret-key")
 app.permanent_session_lifetime = timedelta(minutes=30)
 
-# Enable CORS for Railway
-CORS(app, origins=[
+# ============================================================================
+# ENVIRONMENT DETECTION
+# ============================================================================
+
+def is_production():
+    """Detect if running in production environment."""
+    return os.environ.get("ENVIRONMENT", "").lower() in ["production", "prod"] or \
+           os.environ.get("RAILWAY_ENVIRONMENT", "").lower() == "production" or \
+           os.environ.get("RENDER", "").lower() == "true"
+
+def get_base_url():
+    """Get the base URL for the application."""
+    if is_production():
+        # Production URL - update with your actual domain
+        return os.environ.get("BASE_URL", "https://tapin-api.up.railway.app")
+    else:
+        return "http://localhost:5000"
+
+# ============================================================================
+# PORT UTILITY - Find a free port if the default is in use
+# ============================================================================
+
+def find_free_port(start_port=5000, max_attempts=20):
+    """
+    Find a free port starting from start_port.
+    Tries up to max_attempts consecutive ports.
+    Returns the first free port found, or None if none are available.
+    """
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("0.0.0.0", port))
+                return port
+        except OSError:
+            continue
+    return None
+
+def is_port_in_use(port):
+    """Check if a specific port is currently in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("0.0.0.0", port))
+            return False
+        except OSError:
+            return True
+
+# ============================================================================
+# CORS Configuration - Works for Both Local and Production
+# ============================================================================
+
+# Allowed origins for both local and production
+ALLOWED_ORIGINS = [
+    # Production
     "https://tapin-2s5w.onrender.com",
     "https://tapin-api.up.railway.app",
+    # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
     "http://localhost:5500",
-    "http://127.0.0.1:5500"
-], supports_credentials=True, allow_headers=["Content-Type", "Authorization", "Cookie", "Set-Cookie"])
+    "http://127.0.0.1:5500",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    # Allow any localhost port for development
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+]
 
-# JWT Configuration
-JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
-JWT_EXPIRATION = timedelta(hours=3)
+# For development, allow all origins
+if not is_production():
+    ALLOWED_ORIGINS.append("*")
 
-# Update session cookie settings for better compatibility
+CORS(app, 
+     origins=ALLOWED_ORIGINS,
+     supports_credentials=True, 
+     allow_headers=["Content-Type", "Authorization", "Cookie", "Set-Cookie", "X-Requested-With"],
+     expose_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
+
+# ============================================================================
+# Session Configuration - Adapts to Environment
+# ============================================================================
+
 app.config.update(
-    SESSION_COOKIE_SAMESITE='None',
-    SESSION_COOKIE_SECURE=False,  # Set to True in production with HTTPS
+    SESSION_COOKIE_SAMESITE='Lax' if not is_production() else 'None',
+    SESSION_COOKIE_SECURE=is_production(),  # True in production (HTTPS), False in dev (HTTP)
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_PATH='/',
     SESSION_COOKIE_DOMAIN=None,
     SESSION_COOKIE_NAME='tapin_session',
     SESSION_TYPE='filesystem'
 )
+
+# ============================================================================
+# WEB FACIAL RECOGNITION INTEGRATION - FACE SCANNER
+# ============================================================================
+# Use the face scanner as the unified facial recognition feature.
+# The module serves the recognition page at /facialrecognition/
+
+try:
+    from facescanner import register as register_facescanner
+    register_facescanner(app)
+    print("✅ Face recognition module at /facialrecognition")
+    print("   📷 Detects faces using .tfs files")
+    print("   🔒 Records attendance via RFID verification")
+    print("   🎯 Minimum confidence: 70%")
+    print("   📁 Samples directory: storage/samples/")
+except ImportError as e:
+    print(f"⚠️ Face recognition module not available: {e}")
+    print("   To enable face recognition, create the 'facescanner' folder")
+except Exception as e:
+    print(f"⚠️ Error registering face recognition module: {e}")
+
+# JWT Configuration
+JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
+JWT_EXPIRATION = timedelta(hours=3)
 
 # FIXED: Get the base directory more reliably
 # Try multiple ways to find the storage folder
@@ -134,6 +227,8 @@ print(f"SETTINGS_FILE: {SETTINGS_FILE}")
 print(f"REPORTLAB_AVAILABLE: {REPORTLAB_AVAILABLE}")
 print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
 print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
+print(f"Environment: {'Production' if is_production() else 'Development'}")
+print(f"Base URL: {get_base_url()}")
 
 # Default settings
 DEFAULT_SETTINGS = {
@@ -2091,9 +2186,9 @@ def add_cors_headers(response):
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
-    if request.path.startswith("/api/"):
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    if request.path.startswith("/api/") or request.path.startswith("/facialrecognition/"):
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -2121,6 +2216,12 @@ def serve_js(filename):
 @app.route('/storage/profiles/<filename>')
 def serve_profile_image(filename):
     return send_from_directory(PROFILE_STORAGE, filename)
+
+# Serve assets (logo, etc.)
+@app.route('/storage/assets/<path:filename>')
+def serve_asset(filename):
+    assets_dir = os.path.join(BASE_DIR, "storage", "assets")
+    return send_from_directory(assets_dir, filename)
 
 ## Authentication Routes ------------------------------------
 # FIXED: Authenticate all roles and create a three-hour session.
@@ -2909,13 +3010,88 @@ def handle_options():
     if origin:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    return response, 200
+
+# ============================================================================
+# FACIAL RECOGNITION OPTIONS HANDLERS - FACE REGISTRATION
+# ============================================================================
+# Add OPTIONS handlers for facial recognition routes
+@app.route("/facialrecognition/api/status", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/employees", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/register", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/register/<uid>", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/verify", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/clear-registrations", methods=["OPTIONS"])
+def handle_facial_options():
+    response = jsonify({"status": "ok"})
+    origin = request.headers.get("Origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
+    return response, 200
+
+# ============================================================================
+# FACE RECOGNITION OPTIONS HANDLERS
+# ============================================================================
+# Add OPTIONS handlers for facial recognition routes
+@app.route("/facialrecognition/api/status", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/employees", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/verify-and-record", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/check-face", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/recent-attendance", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/dashboard-stats", methods=["OPTIONS"])
+@app.route("/facialrecognition/api/scan-log", methods=["OPTIONS"])
+def handle_scanner_options():
+    response = jsonify({"status": "ok"})
+    origin = request.headers.get("Origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Cookie, Set-Cookie, Authorization, X-Requested-With"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
     return response, 200
 
 ## Main ------------------------------------
 if __name__ == "__main__":
     initialize_attendance_records()
+    
     # Get port from environment variable (Railway sets PORT)
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)  # Set debug=False for production
+    # If PORT env var is set (e.g., on Railway), use it directly.
+    # Otherwise, find a free port starting from 5000 for local development.
+    env_port = os.environ.get("PORT")
+    
+    if env_port:
+        # Production / Railway: use the provided port
+        port = int(env_port)
+    else:
+        # Local development: check if 5000 is free, otherwise find the next available port
+        if is_port_in_use(5000):
+            print(f"⚠️  Port 5000 is already in use. Searching for a free port...")
+            port = find_free_port(start_port=5001, max_attempts=20)
+            if port is None:
+                print("❌ ERROR: Could not find any free port between 5001 and 5020.")
+                print("   Please stop the process using port 5000, or set the PORT environment variable.")
+                raise SystemExit(1)
+            print(f"✅ Found free port: {port}")
+        else:
+            port = 5000
+    
+    # Print environment info
+    print(f"\n{'='*60}")
+    print(f"🚀 Starting TapIn API Server")
+    print(f"📍 Environment: {'Production' if is_production() else 'Development'}")
+    print(f"🔗 Base URL: {get_base_url()}")
+    print(f"📁 Storage: {BASE_DIR}/storage")
+    print(f"🌐 Port: {port}")
+    print(f"{'='*60}\n")
+    
+    # For production, use HTTPS secure settings
+    if is_production():
+        app.run(host='0.0.0.0', port=port, debug=False)
+    else:
+        # For development, run with debug enabled
+        app.run(host='0.0.0.0', port=port, debug=True)

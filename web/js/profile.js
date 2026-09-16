@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://tapin-api.up.railway.app';
+const API_BASE_URL = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 const API_URL = `${API_BASE_URL}/api/get-latest-rfid`;
 const POLL_INTERVAL = 2000;
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';

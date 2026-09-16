@@ -1,7 +1,6 @@
 const form = document.getElementById('loginForm');
 const message = document.getElementById('formMessage');
-// Use Railway API by default, can be overridden with window.TAPIN_API_URL
-const apiBaseUrl = window.TAPIN_API_URL || 'https://tapin-api.up.railway.app';
+const apiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 const submitButton = form ? form.querySelector('button[type="submit"]') : null;
 const rememberInput = form ? form.querySelector('input[name="remember"]') : null;
 const passwordInput = form ? form.querySelector('input[name="password"]') : null;

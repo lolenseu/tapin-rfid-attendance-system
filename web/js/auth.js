@@ -1,5 +1,4 @@
-// Use Railway API by default
-const authApiBaseUrl = window.TAPIN_API_URL || 'https://tapin-api.up.railway.app';
+const authApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');

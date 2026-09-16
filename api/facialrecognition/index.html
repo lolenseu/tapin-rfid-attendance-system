@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TapIn Face Scanner</title>
+  <link rel="stylesheet" href="/facialrecognition/styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script defer src="/facialrecognition/app.js"></script>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <img id="headerLogo" src="/assets/tapin_logo.jpg" alt="TapIn Logo" style="height:40px;width:auto;border-radius:8px;" onerror="this.style.display='none'">
+    <div>
+      <h1>TapIn Face Scanner</h1>
+      <p>Face recognition & attendance</p>
+    </div>
+  </div>
+  <div style="display:flex;gap:12px;align-items:center;">
+    <span id="status" class="pill">Loading AI…</span>
+    <span id="faceCount" class="pill">Faces: 0</span>
+  </div>
+</header>
+
+<main>
+  <section class="camera card">
+    <div class="toolbar">
+      <div>
+        <h2>Scan Face</h2>
+        <small id="message">Load the models, then start the scanner.</small>
+      </div>
+      <div>
+        <button id="start" class="primary">▶ Start Scanner</button>
+        <button id="stop" class="danger" disabled>⏹ Stop</button>
+      </div>
+    </div>
+
+    <div class="camera-box">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="canvas"></canvas>
+      <div id="cameraHint">📷 Camera is off</div>
+    </div>
+
+    <div id="result" class="result">
+      <strong>No face detected</strong>
+      <span>Look at the camera to scan your face.</span>
+    </div>
+
+    <!-- Recognition log -->
+    <div id="recognitionLog" class="log-container">
+      <h3 style="margin:0 0 8px;font-size:14px;">📋 Recognition Log</h3>
+      <div id="logEntries" class="log-entries">
+        <span class="log-empty">Waiting for face detection…</span>
+      </div>
+    </div>
+  </section>
+
+  <aside>
+    <section class="card">
+      <h2>👤 Today's Attendance</h2>
+      <div id="todayAttendance" class="attendance-list">
+        <span class="help">Loading today's attendance…</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>📊 Statistics</h2>
+      <div id="stats" class="stats-grid">
+        <div class="stat-item"><span class="stat-label">TFS Files</span><span id="statTFS" class="stat-value">0</span></div>
+        <div class="stat-item"><span class="stat-label">Present Today</span><span id="statPresent" class="stat-value">0</span></div>
+        <div class="stat-item"><span class="stat-label">Total Employees</span><span id="statTotal" class="stat-value">0</span></div>
+        <div class="stat-item"><span class="stat-label">Attendance Rate</span><span id="statRate" class="stat-value">0%</span></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>⚙️ Settings</h2>
+      <div class="setting-item">
+        <label>Confidence Threshold</label>
+        <span id="thresholdDisplay">70%</span>
+      </div>
+      <div class="setting-item">
+        <label>Cooldown</label>
+        <span id="cooldownDisplay">10s</span>
+      </div>
+      <button id="refreshBtn" class="secondary" style="width:100%;margin-top:8px;">⟳ Refresh Data</button>
+    </section>
+  </aside>
+</main>
+
+<footer>
+  Face detection and recognition run in your browser.
+  .tfs files loaded from storage/samples/
+  No live camera frames are sent to the server.
+</footer>
+</body>
+</html>

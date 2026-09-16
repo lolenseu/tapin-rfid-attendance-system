@@ -1,5 +1,4 @@
-// Use Railway API by default
-const dashboardApiBaseUrl = window.TAPIN_API_URL || 'https://tapin-api.up.railway.app';
+const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');
@@ -729,14 +728,14 @@ function renderEmployeeCards(employees) {
                 countDisplay.textContent = `Showing ${startIndex + 1} - ${endIndex} of ${employees.length} employees`;
             }
             
-            // Generate pagination buttons
+            // Generate pagination buttons - Updated with Prev/Next text
             if (paginationContainer) {
                 let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
                 
-                // Previous button
+                // Previous button with text
                 paginationHTML += `
                     <button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                        <i class="fa-solid fa-chevron-left"></i>
+                        Prev
                     </button>
                 `;
                 
@@ -772,10 +771,10 @@ function renderEmployeeCards(employees) {
                     paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
                 }
                 
-                // Next button
+                // Next button with text
                 paginationHTML += `
                     <button class="btn btn-outline btn-sm pagination-btn" onclick="goToPage(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                        <i class="fa-solid fa-chevron-right"></i>
+                        Next
                     </button>
                 `;
                 
@@ -1388,15 +1387,15 @@ function renderAttendanceTable() {
         }
     }
     
-    // Generate pagination controls
+    // Generate pagination controls - Updated with Prev/Next text
     if (paginationContainer) {
         if (totalPages > 1) {
             let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
             
-            // Previous button
+            // Previous button with text
             paginationHTML += `
                 <button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${attendanceCurrentPage - 1})" ${attendanceCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                    <i class="fa-solid fa-chevron-left"></i> Prev
+                    Prev
                 </button>
             `;
             
@@ -1432,10 +1431,10 @@ function renderAttendanceTable() {
                 paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${totalPages})">${totalPages}</button>`;
             }
             
-            // Next button
+            // Next button with text
             paginationHTML += `
                 <button class="btn btn-outline btn-sm pagination-btn" onclick="goToAttendancePage(${attendanceCurrentPage + 1})" ${attendanceCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                    Next <i class="fa-solid fa-chevron-right"></i>
+                    Next
                 </button>
             `;
             
@@ -1923,7 +1922,410 @@ function showDTRMessage(message, type = 'info') {
     }
 }
 
-// Generate DTR PDF - Downloads the PDF using the API
+// Build DTR HTML matching the exact format from the image
+function buildDTRHTML(record, dtr, employee) {
+    const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
+    const position = employee.position || '';
+    const department = employee.department || '';
+    const employeeId = employee.employeeid || record.employee_id || '';
+    const monthDisplay = record.month_display || '';
+    const totalHours = record.total_hours || '0.00';
+    const totalOt = record.total_ot || '0.00';
+    const totalUt = record.total_ut || '0.00';
+    
+    // Get the month range
+    const fromDate = record.from_date || '';
+    const toDate = record.to_date || '';
+    
+    // Calculate total working days (A)
+    const workingDays = dtr.filter(day => day.status !== 'on_leave' && day.day !== 'Sat' && day.day !== 'Sun').length;
+    
+    // Build the table rows - 2 columns per row (left and right)
+    let tableRows = '';
+    const halfLength = Math.ceil(dtr.length / 2);
+    
+    for (let i = 0; i < halfLength; i++) {
+        const left = dtr[i];
+        const right = dtr[i + halfLength];
+        
+        const leftDate = left ? `${left.day || ''} - ${left.date || ''}` : '';
+        const leftAmIn = left ? (left.am_in || '') : '';
+        const leftAmOut = left ? (left.am_out || '') : '';
+        const leftPmIn = left ? (left.pm_in || '') : '';
+        const leftPmOut = left ? (left.pm_out || '') : '';
+        const leftHours = left ? (left.hours || '0.00') : '';
+        const leftUt = left ? (left.ut || '0.00') : '';
+        const leftOt = left ? (left.ot || '0.00') : '';
+        const leftStatus = left ? (left.status || '') : '';
+        const leftIsWeekend = left ? (left.day === 'Sat' || left.day === 'Sun') : false;
+        const leftIsLeave = left ? (left.status === 'on_leave') : false;
+        
+        const rightDate = right ? `${right.day || ''} - ${right.date || ''}` : '';
+        const rightAmIn = right ? (right.am_in || '') : '';
+        const rightAmOut = right ? (right.am_out || '') : '';
+        const rightPmIn = right ? (right.pm_in || '') : '';
+        const rightPmOut = right ? (right.pm_out || '') : '';
+        const rightHours = right ? (right.hours || '0.00') : '';
+        const rightUt = right ? (right.ut || '0.00') : '';
+        const rightOt = right ? (right.ot || '0.00') : '';
+        const rightStatus = right ? (right.status || '') : '';
+        const rightIsWeekend = right ? (right.day === 'Sat' || right.day === 'Sun') : false;
+        const rightIsLeave = right ? (right.status === 'on_leave') : false;
+        
+        const leftStyle = leftIsWeekend ? 'background-color:#f3f4f6;' : (leftIsLeave ? 'background-color:#fef3c7;' : '');
+        const rightStyle = rightIsWeekend ? 'background-color:#f3f4f6;' : (rightIsLeave ? 'background-color:#fef3c7;' : '');
+        
+        const leftStatusDisplay = leftIsLeave ? 'Leave' : (leftIsWeekend ? '--' : '');
+        const rightStatusDisplay = rightIsLeave ? 'Leave' : (rightIsWeekend ? '--' : '');
+        
+        tableRows += `
+            <tr>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftDate}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftAmIn}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftAmOut}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftPmIn}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftPmOut}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftHours}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftUt}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftOt}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${leftStyle}">${leftStatusDisplay}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightDate}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightAmIn}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightAmOut}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightPmIn}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightPmOut}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightHours}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightUt}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightOt}</td>
+                <td style="padding:4px 2px;border:1px solid #000;font-size:10px;text-align:center;${rightStyle}">${rightStatusDisplay}</td>
+            </tr>
+        `;
+    }
+    
+    // Calculate totals for the bottom section
+    const totalWorkingDays = workingDays;
+    const totalRegHours = totalHours;
+    const totalOverTime = totalOt;
+    const totalUndertime = totalUt;
+    
+    // Build the complete DTR HTML
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Daily Time Record - ${fullname}</title>
+            <style>
+                @page {
+                    size: letter;
+                    margin: 10mm 15mm 10mm 15mm;
+                }
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: 'Times New Roman', Times, serif;
+                    font-size: 11px;
+                    padding: 5px;
+                }
+                .dtr-container {
+                    max-width: 100%;
+                    margin: 0 auto;
+                }
+                .dtr-title {
+                    text-align: center;
+                    font-size: 18px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                    letter-spacing: 2px;
+                    margin-bottom: 6px;
+                    border-bottom: 2px solid #000;
+                    padding-bottom: 4px;
+                }
+                .dtr-header {
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 11px;
+                    margin: 4px 0 6px 0;
+                    padding: 0 4px;
+                }
+                .dtr-header-left {
+                    text-align: left;
+                }
+                .dtr-header-right {
+                    text-align: right;
+                }
+                .dtr-header label {
+                    font-weight: bold;
+                }
+                .dtr-info-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr 1fr;
+                    gap: 2px;
+                    font-size: 11px;
+                    margin-bottom: 6px;
+                    padding: 4px 0;
+                    border-bottom: 1px solid #000;
+                }
+                .dtr-info-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 2px;
+                }
+                .dtr-info-item label {
+                    font-weight: bold;
+                }
+                .dtr-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    font-size: 9px;
+                    margin-bottom: 4px;
+                }
+                .dtr-table th {
+                    border: 1px solid #000;
+                    padding: 2px 1px;
+                    text-align: center;
+                    font-weight: bold;
+                    font-size: 8px;
+                    background-color: #f0f0f0;
+                }
+                .dtr-table td {
+                    border: 1px solid #000;
+                    padding: 3px 1px;
+                    text-align: center;
+                    font-size: 9px;
+                }
+                .dtr-table .header-row th {
+                    font-size: 8px;
+                    padding: 2px 1px;
+                }
+                .dtr-table .sub-header th {
+                    font-size: 7px;
+                    padding: 1px 1px;
+                    background-color: #fafafa;
+                }
+                .dtr-summary {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
+                    gap: 2px;
+                    font-size: 10px;
+                    padding: 4px 0;
+                    border-top: 1px solid #000;
+                    margin-top: 2px;
+                }
+                .dtr-summary-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 2px;
+                }
+                .dtr-summary-item label {
+                    font-weight: bold;
+                }
+                .dtr-certification {
+                    margin-top: 6px;
+                    font-size: 10px;
+                    padding: 4px 0;
+                    font-style: italic;
+                }
+                .dtr-signature {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr 1fr;
+                    gap: 10px;
+                    margin-top: 8px;
+                    padding-top: 8px;
+                    border-top: 1px solid #000;
+                    font-size: 10px;
+                }
+                .dtr-signature-item {
+                    text-align: center;
+                }
+                .dtr-signature-item .sig-line {
+                    margin-top: 20px;
+                    border-top: 1px solid #000;
+                    width: 100%;
+                    padding-top: 2px;
+                }
+                .dtr-signature-item .sig-label {
+                    font-weight: bold;
+                    font-size: 9px;
+                }
+                .dtr-copy {
+                    text-align: center;
+                    font-weight: bold;
+                    font-size: 10px;
+                    margin-top: 4px;
+                    padding: 2px;
+                    border: 1px solid #000;
+                    background-color: #f9f9f9;
+                }
+                .dtr-employee-name {
+                    font-size: 13px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                .dtr-verified {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 20px;
+                    margin-top: 6px;
+                    padding-top: 6px;
+                    border-top: 1px solid #000;
+                }
+                .dtr-verified-item {
+                    text-align: center;
+                }
+                .dtr-verified-item .sig-line {
+                    margin-top: 20px;
+                    border-top: 1px solid #000;
+                    width: 80%;
+                    margin-left: auto;
+                    margin-right: auto;
+                    padding-top: 2px;
+                }
+                .dtr-verified-item .sig-label {
+                    font-weight: bold;
+                    font-size: 9px;
+                }
+                .text-center {
+                    text-align: center;
+                }
+                .text-uppercase {
+                    text-transform: uppercase;
+                }
+                .mt-1 { margin-top: 4px; }
+                .mb-1 { margin-bottom: 4px; }
+            </style>
+        </head>
+        <body>
+            <div class="dtr-container">
+                <!-- Title -->
+                <div class="dtr-title">DAILY TIME RECORD</div>
+                
+                <!-- Header with From/To -->
+                <div class="dtr-header">
+                    <div class="dtr-header-left">
+                        <label>From :</label> ${fromDate} <label>To :</label> ${toDate}
+                    </div>
+                    <div class="dtr-header-right">
+                        <label>Payroll No. :</label> ${employeeId}
+                    </div>
+                </div>
+                
+                <!-- Employee Info Grid -->
+                <div class="dtr-info-grid">
+                    <div class="dtr-info-item">
+                        <label>Name :</label>
+                        <span class="dtr-employee-name">${fullname}</span>
+                    </div>
+                    <div class="dtr-info-item">
+                        <label>Position :</label>
+                        <span>${position}</span>
+                    </div>
+                    <div class="dtr-info-item">
+                        <label>Department :</label>
+                        <span>${department}</span>
+                    </div>
+                    <div class="dtr-info-item">
+                        <label>Regular Time :</label>
+                        <span>DEFAULT</span>
+                    </div>
+                </div>
+                
+                <!-- Main Table -->
+                <table class="dtr-table">
+                    <thead>
+                        <tr class="header-row">
+                            <th colspan="9">WORKING</th>
+                            <th colspan="9">WORKING</th>
+                        </tr>
+                        <tr class="sub-header">
+                            <th>Date</th>
+                            <th>Days</th>
+                            <th>In 1</th>
+                            <th>Out 1</th>
+                            <th>In 2</th>
+                            <th>Out 2</th>
+                            <th>HOURS</th>
+                            <th>UT</th>
+                            <th>OT</th>
+                            <th>Date</th>
+                            <th>Days</th>
+                            <th>In 1</th>
+                            <th>Out 1</th>
+                            <th>In 2</th>
+                            <th>Out 2</th>
+                            <th>HOURS</th>
+                            <th>UT</th>
+                            <th>OT</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${tableRows}
+                    </tbody>
+                </table>
+                
+                <!-- Summary Totals -->
+                <div class="dtr-summary">
+                    <div class="dtr-summary-item">
+                        <label>A =</label>
+                        <span>${totalWorkingDays.toFixed(2)}</span>
+                    </div>
+                    <div class="dtr-summary-item">
+                        <label>ROT =</label>
+                        <span>0.00</span>
+                    </div>
+                    <div class="dtr-summary-item">
+                        <label>LOT =</label>
+                        <span></span>
+                    </div>
+                    <div class="dtr-summary-item">
+                        <label>U =</label>
+                        <span>${totalUndertime}</span>
+                    </div>
+                    <div class="dtr-summary-item">
+                        <label>SOT =</label>
+                        <span></span>
+                    </div>
+                </div>
+                
+                <!-- Certification -->
+                <div class="dtr-certification">
+                    I Certify on my honor that the above is a true and correct report of the hours work performed, record of which was daily at the time of arrival and departure from office.
+                </div>
+                
+                <!-- Signature -->
+                <div class="dtr-signature">
+                    <div class="dtr-signature-item">
+                        <div class="sig-line"></div>
+                        <div class="sig-label">Signature</div>
+                    </div>
+                    <div class="dtr-signature-item">
+                        <div class="sig-line"></div>
+                        <div class="sig-label">In Charge</div>
+                    </div>
+                    <div class="dtr-signature-item">
+                        <div class="sig-line"></div>
+                        <div class="sig-label">Signature</div>
+                    </div>
+                    <div class="dtr-signature-item">
+                        <div class="sig-line"></div>
+                        <div class="sig-label">In Charge</div>
+                    </div>
+                </div>
+                
+                <!-- Employee Copy -->
+                <div class="dtr-copy">
+                    >>>> EMPLOYEE'S COPY
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+}
+
+// Generate DTR PDF - Builds HTML and opens print dialog for PDF
 async function generateDTRPDF() {
     const select = document.getElementById('dtrEmployeeSelect');
     const monthSelect = document.getElementById('dtrMonthSelect');
@@ -1943,14 +2345,12 @@ async function generateDTRPDF() {
     try {
         showDTRMessage('Generating PDF...', 'info');
         
-        // The API endpoint that generates the PDF
-        const url = `${dashboardApiBaseUrl}/api/dtr/generate-pdf/${rfid}?month=${month}`;
-        
-        // Fetch with authorization
-        const response = await fetch(url, {
+        // First, get the DTR data to build the HTML
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
             method: 'GET',
             headers: getAuthHeaders(),
-            credentials: 'include'
+            credentials: 'include',
+            cache: 'no-store'
         });
         
         if (response.status === 401) {
@@ -1959,47 +2359,116 @@ async function generateDTRPDF() {
         }
         
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            showDTRMessage(errorData.message || 'Failed to generate PDF.', 'error');
+            showDTRMessage('Failed to load DTR data.', 'error');
             return;
         }
         
-        // Get the blob from response
-        const blob = await response.blob();
-        
-        // Create download link
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        
-        // Get filename from Content-Disposition header or generate one
-        const contentDisposition = response.headers.get('Content-Disposition');
-        let filename = 'DTR.pdf';
-        if (contentDisposition) {
-            const match = contentDisposition.match(/filename="([^"]+)"/);
-            if (match) {
-                filename = match[1];
-            }
+        const result = await response.json();
+        if (result.status !== 'success' || !result.data) {
+            showDTRMessage('No DTR data available.', 'error');
+            return;
         }
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
         
-        // Revoke the URL after a delay
-        setTimeout(() => {
-            URL.revokeObjectURL(link.href);
-        }, 1000);
+        const record = result.data.record;
+        const dtr = record.dtr || [];
+        const employee = record.employee || {};
         
-        showDTRMessage('PDF downloaded successfully!', 'success');
+        // Build the DTR HTML with the exact format from the image
+        const dtrHTML = buildDTRHTML(record, dtr, employee);
+        
+        // Generate PDF from HTML using print
+        const printWindow = window.open('', '_blank', 'width=1100,height=800');
+        if (!printWindow) {
+            showDTRMessage('Please allow popups for this site to generate PDF.', 'warning');
+            return;
+        }
+        
+        printWindow.document.write(dtrHTML);
+        printWindow.document.close();
+        
+        printWindow.onload = function() {
+            setTimeout(() => {
+                printWindow.print();
+                // Don't close the window immediately so user can save as PDF
+                // The user can close it manually after printing
+            }, 500);
+        };
+        
+        showDTRMessage('PDF generated successfully!', 'success');
     } catch (error) {
         console.error('Error generating PDF:', error);
         showDTRMessage('Error generating PDF.', 'error');
     }
 }
 
-// Print DTR - Uses browser print functionality
+// Print DTR - Uses browser print functionality with formatted HTML
 function printDTR() {
-    window.print();
+    const select = document.getElementById('dtrEmployeeSelect');
+    const monthSelect = document.getElementById('dtrMonthSelect');
+    const rfid = select.value;
+    const month = monthSelect.value;
+    
+    if (!rfid || rfid === '') {
+        showDTRMessage('Please select an employee first.', 'warning');
+        return;
+    }
+    
+    if (!month || month === '') {
+        showDTRMessage('Please select a month.', 'warning');
+        return;
+    }
+    
+    // Fetch the DTR data and print
+    fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+        method: 'GET',
+        headers: getAuthHeaders(),
+        credentials: 'include',
+        cache: 'no-store'
+    })
+    .then(response => {
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        if (!response.ok) {
+            showDTRMessage('Failed to load DTR data.', 'error');
+            return;
+        }
+        return response.json();
+    })
+    .then(result => {
+        if (!result || result.status !== 'success' || !result.data) {
+            showDTRMessage('No DTR data available.', 'error');
+            return;
+        }
+        
+        const record = result.data.record;
+        const dtr = record.dtr || [];
+        const employee = record.employee || {};
+        
+        // Build the DTR HTML
+        const dtrHTML = buildDTRHTML(record, dtr, employee);
+        
+        // Print the DTR
+        const printWindow = window.open('', '_blank', 'width=1100,height=800');
+        if (!printWindow) {
+            showDTRMessage('Please allow popups for this site to print.', 'warning');
+            return;
+        }
+        
+        printWindow.document.write(dtrHTML);
+        printWindow.document.close();
+        
+        printWindow.onload = function() {
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+        };
+    })
+    .catch(error => {
+        console.error('Error printing DTR:', error);
+        showDTRMessage('Error printing DTR.', 'error');
+    });
 }
 
 // ============ END DTR FUNCTIONS ============

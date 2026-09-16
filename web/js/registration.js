@@ -1,6 +1,6 @@
 const registrationForm = document.getElementById('employeeRegistrationForm');
 const registrationMessage = document.getElementById('registrationMessage');
-const registrationApiBaseUrl = window.TAPIN_API_URL || 'https://tapin-api.up.railway.app';
+const registrationApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 if (registrationForm) {
     registrationForm.addEventListener('submit', async (event) => {
