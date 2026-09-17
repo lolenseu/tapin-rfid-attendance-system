@@ -302,6 +302,26 @@ last_scan_tracking = {}
 # Cooldown between scans for the same RFID (in seconds). Default 10 minutes.
 SCAN_COOLDOWN_SECONDS = 10 * 60
 
+# Track the last date we performed a midnight rollover so each user's
+# daily state (latest scan + scan cooldown) is cleared at 12:00 AM.
+_last_rollover_date = None
+
+def perform_midnight_rollover():
+    """Clear each user's daily scan state at 12:00 AM (midnight).
+
+    This resets the latest scan and the per-RFID scan cooldown so a new
+    day starts with a clean slate. Safe to call on every request.
+    """
+    global _last_rollover_date, latest_scan, last_scan_tracking
+    today = datetime.now().date()
+    if _last_rollover_date == today:
+        return
+    _last_rollover_date = today
+    last_scan_tracking.clear()
+    latest_scan["rfid"] = None
+    latest_scan["scanned_at"] = None
+    print(f"[Midnight] Cleared latest scan and cooldown for all users (date={today.isoformat()})")
+
 ## Functions ------------------------------------
 # Image compression function
 def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_dimensions=(300, 300)):
@@ -450,6 +470,29 @@ def save_settings(settings_data):
 
 # Load settings on startup
 settings = load_settings()
+
+# Compute the required daily work hours from the current settings.
+# This is what UT / OT are measured against — it replaces the old
+# hardcoded "8 hours" so the Settings page actually affects the DTR.
+def get_required_hours():
+    """Compute required daily hours from settings (work_end − work_start − lunch).
+
+    Reads settings["attendance"] for work_start, work_end, lunch_start, and
+    lunch_end. Returns the required hours as a float. Falls back to 8.0 if
+    anything is missing or malformed so attendance recording never breaks.
+    """
+    try:
+        att = settings.get("attendance", {})
+        ws = datetime.strptime(att.get("work_start", "08:00"), "%H:%M")
+        we = datetime.strptime(att.get("work_end", "17:00"), "%H:%M")
+        ls = datetime.strptime(att.get("lunch_start", "12:00"), "%H:%M")
+        le = datetime.strptime(att.get("lunch_end", "13:00"), "%H:%M")
+        work_span = (we - ws).total_seconds() / 3600
+        lunch_span = (le - ls).total_seconds() / 3600
+        required = work_span - lunch_span
+        return max(0, required)
+    except Exception:
+        return 8.0
 
 # Get current version from GitHub
 def fetch_version_from_github():
@@ -694,50 +737,84 @@ def save_scan_feed(scan_data):
 
 # Add scan to feed
 def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="unknown"):
-    """Add a single scan to the feed with proper formatting"""
+    """Add a single scan to the feed with proper formatting.
+
+    Deduplicates on (rfid, scanned_at). If the same physical tap is written
+    twice — once by receive_rfid with scan_type="unknown" and again by
+    record_attendance_scan with scan_type="am_in"/"pm_in"/etc. — the second
+    call updates the existing entry in place instead of appending a new one.
+    This also handles the case where receive_rfid passes employee=None first
+    and record_attendance_scan passes the real employee a moment later.
+    """
     scan_feed_data = load_scan_feed()
-    
+
     scan_date = datetime.now().date().isoformat()
-    
+
     last_cleanup = datetime.fromisoformat(scan_feed_data.get("last_cleanup", datetime.now().isoformat()))
     days_since_cleanup = (datetime.now() - last_cleanup).days
-    
+
     if days_since_cleanup >= 7:
         scan_feed_data["scans"] = []
         scan_feed_data["last_cleanup"] = datetime.now().isoformat()
         scan_feed_data["total_scans"] = 0
         print("Weekly scan feed cleanup performed")
-    
-    scan_entry = {
+
+    # Build the fresh payload for this tap.
+    employee_snapshot = None
+    if employee:
+        employee_snapshot = {
+            "uid": employee.get("uid"),
+            "employeeid": employee.get("employeeid"),
+            "firstname": employee.get("firstname"),
+            "lastname": employee.get("lastname"),
+            "role": employee.get("role"),
+            "department": employee.get("department")
+        }
+
+    new_entry = {
         "rfid": rfid,
         "scanned_at": scanned_at,
         "scanned_on": scan_date,
         "found": found,
         "scan_type": scan_type,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "employee": employee_snapshot
     }
-    
-    if employee:
-        scan_entry["employee"] = {
-            "uid": employee.get("uid"),
-            "employeeid": employee.get("employeeid"),
-            "firstname": employee.get("firstname"),
-            "lastname": employee.get("lastname"),
-            "role": employee.get("role")
-        }
+
+    # Deduplicate: look for an existing entry with the same rfid + scanned_at.
+    # If we find one, MERGE instead of inserting a duplicate row.
+    existing = None
+    for idx, entry in enumerate(scan_feed_data.get("scans", [])):
+        if entry.get("rfid") == rfid and entry.get("scanned_at") == scanned_at:
+            existing = idx
+            break
+
+    if existing is not None:
+        prev = scan_feed_data["scans"][existing]
+        # Prefer the more informative scan_type (real event over "unknown").
+        prev_type = str(prev.get("scan_type", "unknown")).lower()
+        new_type = str(scan_type or "unknown").lower()
+        if prev_type in ("unknown", "") and new_type not in ("unknown", ""):
+            prev["scan_type"] = scan_type
+        # Fill in the employee record if it was missing before.
+        if not prev.get("employee") and employee_snapshot:
+            prev["employee"] = employee_snapshot
+            prev["found"] = True
+        # Refresh the timestamp so the row stays newest-first in the list.
+        prev["timestamp"] = new_entry["timestamp"]
+        scan_feed_data["scans"][existing] = prev
+        print(f"scan feed: merged duplicate tap for {rfid} at {scanned_at} (scan_type={prev['scan_type']})")
     else:
-        scan_entry["employee"] = None
-    
-    scan_feed_data["scans"].insert(0, scan_entry)
-    
+        scan_feed_data["scans"].insert(0, new_entry)
+
     if len(scan_feed_data["scans"]) > 1000:
         scan_feed_data["scans"] = scan_feed_data["scans"][:1000]
-    
+
     scan_feed_data["total_scans"] = len(scan_feed_data["scans"])
-    
+
     save_scan_feed(scan_feed_data)
-    
-    return scan_entry
+
+    return scan_feed_data["scans"][existing] if existing is not None else new_entry
 
 # Load attendance data
 attendance_data = load_attendance_data()
@@ -962,6 +1039,16 @@ def determine_scan_type(day_data, scan_time, employee):
     else:
         return None
 
+# Format a datetime as 12-hour time (no AM/PM suffix) for DTR storage.
+def format_dtr_time(scan_time):
+    """
+    Convert a datetime to a 12-hour time string without AM/PM.
+    """
+    hour = scan_time.hour % 12
+    if hour == 0:
+        hour = 12
+    return f"{hour:02d}:{scan_time.minute:02d}:{scan_time.second:02d}"
+
 # Add a device timestamp to the correct AM or PM DTR slot.
 def record_attendance_scan(employee, scanned_at):
     """Record attendance scan - handles creating records for new employees and months"""
@@ -998,7 +1085,7 @@ def record_attendance_scan(employee, scanned_at):
         }
         record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
     
-    time_value = scan_time.strftime("%H:%M:%S")
+    time_value = format_dtr_time(scan_time)
     
     # Determine the scan type (time in or time out)
     scan_result = determine_scan_type(day_data, scan_time, employee)
@@ -1062,13 +1149,31 @@ def record_attendance_scan(employee, scanned_at):
             print(f"{period.upper()} TIME OUT already exists for {rfid}")
             return record, "already_exists"
     
-    # Calculate hours after each update
-    am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""))
-    pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""))
+    # Calculate hours after each update.
+    # Pass the period so 12-hour stored times are interpreted correctly.
+    am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""), period="am")
+    pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""), period="pm")
     total_hours = am_hours + pm_hours
+
+    # Only charge UT / OT when the employee has at least one complete
+    # in/out pair for the day. A lone time-in (no matching time-out) is
+    # treated as "no hours recorded yet" rather than 8 hours of undertime.
+    am_complete = bool(day_data.get("am_in")) and bool(day_data.get("am_out"))
+    pm_complete = bool(day_data.get("pm_in")) and bool(day_data.get("pm_out"))
+    has_complete_pair = am_complete or pm_complete
+
+    # Required daily hours now come from settings.json (work_start,
+    # work_end, lunch_start, lunch_end) instead of a hardcoded 8.
+    required_hours = get_required_hours()
+
     day_data["hours"] = f"{total_hours:.2f}"
-    day_data["ut"] = f"{max(0, 8 - total_hours):.2f}"
-    day_data["ot"] = f"{max(0, total_hours - 8):.2f}"
+
+    if has_complete_pair:
+        day_data["ut"] = f"{max(0, required_hours - total_hours):.2f}"
+        day_data["ot"] = f"{max(0, total_hours - required_hours):.2f}"
+    else:
+        day_data["ut"] = "0.00"
+        day_data["ot"] = "0.00"
     
     # Calculate total hours for the month
     total_hours_month = 0
@@ -1096,12 +1201,30 @@ def parse_scan_time(scanned_at):
         return datetime.now()
 
 # Calculate completed hours between an in and out time.
-def calculate_hours(start_time, end_time):
+# Accepts 12-hour formatted times (e.g. "08:30:00" or "01:45:00").
+# The `period` argument ("am" or "pm") tells us whether an hour < 12
+# should be interpreted as morning or afternoon.
+def calculate_hours(start_time, end_time, period=None):
     if not start_time or not end_time:
         return 0
     try:
         start = datetime.strptime(start_time, "%H:%M:%S")
         end = datetime.strptime(end_time, "%H:%M:%S")
+
+        # If a period was supplied and the parsed hour is less than 12,
+        # add 12 hours so afternoon times are computed correctly.
+        if period == "pm":
+            if start.hour < 12:
+                start = start.replace(hour=start.hour + 12)
+            if end.hour < 12:
+                end = end.replace(hour=end.hour + 12)
+        elif period == "am":
+            # 12:xx in the AM slot should actually be 00:xx (midnight hour)
+            if start.hour == 12:
+                start = start.replace(hour=0)
+            if end.hour == 12:
+                end = end.replace(hour=0)
+
         return max(0, (end - start).total_seconds() / 3600)
     except:
         return 0
@@ -2868,6 +2991,7 @@ def get_attendance():
 @app.route("/api/get-latest-rfid", methods=["GET"])
 def get_latest_rfid():
     """Get the latest RFID scan with full attendance data for the employee"""
+    perform_midnight_rollover()
     rfid = latest_scan.get("rfid")
     scanned_at = latest_scan.get("scanned_at")
     employee = employee_database.get(rfid) if rfid else None
@@ -3026,6 +3150,9 @@ def receive_rfid():
         print(f"RFID receive request received")
         print(f"Content-Type: {request.headers.get('Content-Type')}")
         
+        # Ensure each user's daily scan state is cleared at midnight.
+        perform_midnight_rollover()
+        
         # Get raw data for debugging
         raw_data = request.get_data()
         print(f"Raw data: {raw_data}")
@@ -3053,8 +3180,9 @@ def receive_rfid():
         employee = employee_database.get(rfid)
         found = bool(employee)
         
-        # Add to scan feed (detailed log for display)
-        add_scan_to_feed(rfid, scanned_at, employee, found)
+        # Do NOT call add_scan_to_feed here — record_attendance_scan will do it
+        # with the correct scan_type (am_in / am_out / pm_in / pm_out) once the
+        # in/out state machine runs below.
         
         # Add to scan events (raw data for statistics)
         scan_event = {

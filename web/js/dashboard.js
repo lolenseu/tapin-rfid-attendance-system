@@ -6,6 +6,54 @@ function redirectToLogin() {
     window.location.replace('../login.html');
 }
 
+// Open / close the System Settings modal
+function openSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    // Refresh settings from the server whenever the modal opens so it
+    // always shows the latest stored values.
+    loadSettings();
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Open / close the My Profile modal
+function openProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (!modal) return;
+    // Refresh the profile fields with the latest known data before showing.
+    populateProfileModalFromUser();
+    modal.classList.remove('hidden');
+    document.body.style.overflow = '';
+}
+
+function closeProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (!modal) return;
+    modal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Close either modal with the Escape key
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const settingsModal = document.getElementById('settingsModal');
+    const profileModal = document.getElementById('profileModal');
+    if (settingsModal && !settingsModal.classList.contains('hidden')) {
+        closeSettingsModal();
+    }
+    if (profileModal && !profileModal.classList.contains('hidden')) {
+        closeProfileModal();
+    }
+});
+
 function getAuthHeaders() {
     const token = localStorage.getItem('tapinToken');
     return {
@@ -14,11 +62,98 @@ function getAuthHeaders() {
     };
 }
 
+// Compute up-to-two-letter initials from a full name.
+function computeInitials(fullname) {
+    if (!fullname) return '--';
+    const parts = String(fullname).trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) return '--';
+    const first = parts[0][0] || '';
+    const second = parts.length > 1 ? (parts[parts.length - 1][0] || '') : '';
+    return (first + second).toUpperCase() || '--';
+}
+
 function updateUserDisplay(user) {
-    const name = document.getElementById('dashboardUserName');
-    const role = document.getElementById('dashboardUserRole');
-    if (name) name.textContent = user.fullname || user.username || 'User';
-    if (role) role.textContent = (user.role || 'employee').toUpperCase();
+    if (!user) return;
+
+    const displayName = user.fullname || user.username || 'User';
+    const displayRole = (user.role || 'employee').toUpperCase();
+    const initials = computeInitials(displayName);
+
+    // Topbar chip
+    const nameEl = document.getElementById('dashboardUserName');
+    const roleEl = document.getElementById('dashboardUserRole');
+    const avatarEl = document.getElementById('dashboardUserAvatar');
+    if (nameEl) nameEl.textContent = displayName;
+    if (roleEl) roleEl.textContent = displayRole;
+    if (avatarEl) avatarEl.textContent = initials;
+
+    // Remember the session user so the profile modal can look it up later.
+    window.__tapinSessionUser = user;
+
+    // Refresh the profile modal fields (safe to call before the modal opens).
+    populateProfileModalFromUser();
+}
+
+// Populate the profile modal header + account rows from the session user
+// and from the full employee record in allEmployees (when available).
+function populateProfileModalFromUser() {
+    const sessionUser = window.__tapinSessionUser || null;
+    if (!sessionUser) return;
+
+    const displayName = sessionUser.fullname || sessionUser.username || 'User';
+    const initials = computeInitials(displayName);
+    const fallbackRole = (sessionUser.role || 'employee');
+
+    // Try to find the full record in the employee directory for richer data
+    // (email, phone, department). Fall back to the session payload if not
+    // yet loaded — the modal will still show correct name + role.
+    const full = (typeof allEmployees !== 'undefined' && Array.isArray(allEmployees))
+        ? allEmployees.find(emp => emp && emp.uid === sessionUser.uid) || {}
+        : {};
+
+    const role = String(full.role || fallbackRole).toLowerCase();
+    const roleLabel = role.toUpperCase();
+
+    // Header
+    const titleEl = document.getElementById('profileModalTitle');
+    const subtitleEl = document.getElementById('profileModalSubtitle');
+    const avatarModalEl = document.getElementById('profileModalAvatar');
+    if (titleEl) titleEl.textContent = displayName;
+    if (subtitleEl) {
+        const dept = full.department || '';
+        const position = full.position || '';
+        // Prefer "Position · Department", else just Role · Institution.
+        let subtitle;
+        if (position && dept) subtitle = `${position} · ${dept}`;
+        else if (position) subtitle = position;
+        else if (dept) subtitle = `${roleLabel} · ${dept}`;
+        else subtitle = `${roleLabel} · ISPSC Tagudin Campus`;
+        subtitleEl.textContent = subtitle;
+    }
+    if (avatarModalEl) avatarModalEl.textContent = initials;
+
+    // Account Information rows
+    const email = full.email || sessionUser.email || '';
+    const phone = full.cpnumber || '';
+    const department = full.department || '';
+    const employeeId = full.employeeid || sessionUser.employeeid || '';
+    const rfid = full.rfid || sessionUser.rfid || '';
+
+    const setText = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value || '--';
+    };
+
+    setText('profileEmail', email);
+    setText('profilePhone', phone);
+    setText('profileDepartment', department);
+    setText('profileEmployeeId', employeeId);
+    setText('profileRole', roleLabel);
+
+    // RFID row (only if you added an id for it — optional).
+    // If you want to display RFID too, add an id="profileRfid" span in HTML
+    // and uncomment the next line:
+    // setText('profileRfid', rfid);
 }
 
 function updateDeviceDisplay(devices) {
@@ -1512,6 +1647,29 @@ function applyAttendanceFilters() {
     renderAttendanceTable();
 }
 
+// Helper: format a scan_type like "am_in" / "pm_out" into a readable label.
+// Returns empty string when the scan_type is missing/unknown so callers can
+// filter those entries out instead of displaying "Unknown".
+function formatScanEventLabel(scanType) {
+    const t = String(scanType || '').toLowerCase();
+    if (t.endsWith('_in')) {
+        const period = t.startsWith('am') ? 'AM' : t.startsWith('pm') ? 'PM' : '';
+        return period ? `Time In (${period})` : 'Time In';
+    }
+    if (t.endsWith('_out')) {
+        const period = t.startsWith('am') ? 'AM' : t.startsWith('pm') ? 'PM' : '';
+        return period ? `Time Out (${period})` : 'Time Out';
+    }
+    return '';
+}
+// Helper: pick badge class for a scan_type
+function scanEventBadgeClass(scanType) {
+    const t = String(scanType || '').toLowerCase();
+    if (t.endsWith('_in')) return 'badge-present';
+    if (t.endsWith('_out')) return 'badge-late';
+    return 'badge-draft';
+}
+
 // Render attendance table with pagination
 function renderAttendanceTable() {
     const body = document.getElementById('dashboardAttendanceBody');
@@ -1547,7 +1705,15 @@ function renderAttendanceTable() {
         const rfid = scan.rfid || '--';
         const scannedAt = scan.scanned_at || '--';
         const isPresent = employee ? true : false;
-        
+
+        // Event label from scan_type — skip entries that have no real
+        // time-in / time-out value so "Unknown" rows don't appear.
+        const st = String(scan.scan_type || '').toLowerCase();
+        const isRealEvent = st === 'am_in' || st === 'am_out'
+                         || st === 'pm_in' || st === 'pm_out';
+        const eventLabel = isRealEvent ? formatScanEventLabel(scan.scan_type) : '';
+        const badgeClass = isRealEvent ? scanEventBadgeClass(scan.scan_type) : 'badge-draft';
+
         return `<tr>
             <td><strong>${escapeHtml(employee ? employee.employeeid || employee.uid || '--' : '--')}</strong></td>
             <td>${escapeHtml(name)}</td>
@@ -1555,8 +1721,7 @@ function renderAttendanceTable() {
             <td>${escapeHtml(position)}</td>
             <td><code>${escapeHtml(rfid)}</code></td>
             <td>${escapeHtml(scannedAt)}</td>
-            <td>--</td>
-            <td><span class="badge ${isPresent ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${isPresent ? 'Present' : 'Unknown'}</span></td>
+            <td><span class="badge ${badgeClass}"><span class="badge-dot"></span>${escapeHtml(eventLabel)}</span></td>
             <td>RFID device</td>
             <td>Live scan</td>
         </tr>`;
@@ -1571,7 +1736,7 @@ function renderAttendanceTable() {
         }
     }
     
-    // Generate pagination controls - Updated with Prev/Next text
+    // Generate pagination controls
     if (paginationContainer) {
         if (totalPages > 1) {
             let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
@@ -1681,20 +1846,80 @@ function populateAttendanceDepartmentFilter(scans) {
 
 // ============ END ATTENDANCE TABLE FUNCTIONS ============
 
-// ============ ORIGINAL updateScanTable (kept for backward compatibility) ============
-function updateScanTable(scans) {
+// ============ REALTIME RFID SCANS TABLE (Dashboard card) ============
+//
+// This table reads scan_type ("am_in", "am_out", "pm_in", "pm_out") so it can
+// show "Time In (AM)" / "Time Out (PM)" instead of a generic "Present" label.
+
+// Format "2026-09-17 17:15:07" -> "5:15:07 PM"
+function formatTimeStamp12h(ts) {
+    if (!ts) return '--';
+    try {
+        const timePart = String(ts).split(' ')[1];
+        if (!timePart) return ts;
+        const [hStr, mStr, sStr] = timePart.split(':');
+        let h = parseInt(hStr, 10);
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12;
+        if (h === 0) h = 12;
+        return `${h}:${mStr}:${sStr} ${ampm}`;
+    } catch {
+        return ts;
+    }
+}
+
+async function updateScanTable(scansFromDashboard) {
     const body = document.getElementById('dashboardScanBody');
     if (!body) return;
-    body.innerHTML = scans.slice(0, 10).map((scan) => {
+
+    const scans = Array.isArray(scansFromDashboard) ? scansFromDashboard : [];
+
+    if (scans.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">No RFID scans received today.</td></tr>';
+        return;
+    }
+
+    // Deduplicate defensively on the frontend too, in case the same
+    // (rfid, scanned_at) pair ever slips through from the API.
+    const seen = new Set();
+    const cleaned = [];
+    for (const scan of scans) {
+        const key = `${scan.rfid || ''}|${scan.scanned_at || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cleaned.push(scan);
+    }
+
+    body.innerHTML = cleaned.slice(0, 10).map((scan) => {
         const employee = scan.employee;
-        const name = employee ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim() : 'Unknown card';
+        const name = employee
+            ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim()
+            : 'Unknown card';
+        const dept = (employee && employee.department) ? employee.department : '--';
+        const timeLabel = formatTimeStamp12h(scan.scanned_at);
+        const statusLabel = employee ? formatScanEventLabel(scan.scan_type) : 'Unknown';
+        const badgeClass = employee
+            ? scanEventBadgeClass(scan.scan_type)
+            : 'badge-absent';
+
         return `<tr>
-            <td><div class="emp-cell"><div class="emp-avatar">${escapeHtml(employee ? initials(employee) : '--')}</div><div><div class="emp-name">${escapeHtml(name)}</div><div class="emp-id">${escapeHtml(scan.rfid)}</div></div></div></td>
-            <td>${escapeHtml(employee ? employee.role : 'Unregistered')}</td><td>${escapeHtml(scan.scanned_at)}</td><td>--</td>
-            <td><span class="badge ${employee ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${employee ? 'Recognized' : 'Unknown'}</span></td>
+            <td>
+                <div class="emp-cell">
+                    <div class="emp-avatar">${escapeHtml(employee ? initials(employee) : '--')}</div>
+                    <div>
+                        <div class="emp-name">${escapeHtml(name)}</div>
+                        <div class="emp-id">${escapeHtml(scan.rfid)}</div>
+                    </div>
+                </div>
+            </td>
+            <td>${escapeHtml(dept)}</td>
+            <td>${escapeHtml(timeLabel)}</td>
+            <td><span class="badge ${badgeClass}"><span class="badge-dot"></span>${escapeHtml(statusLabel)}</span></td>
         </tr>`;
-    }).join('') || '<tr><td colspan="5">No RFID scans received today.</td></tr>';
+    }).join('');
 }
+
+// ============ END REALTIME RFID SCANS TABLE ============
 
 // Update the activity timeline with data from the activity feed
 function updateActivityTimeline(activities) {
@@ -1848,7 +2073,33 @@ async function loadActivityFeed() {
 
 // ============ DTR FUNCTIONS ============
 
-// Load DTR employees for the dropdown
+// Cache of DTR employees returned by /api/dtr/employees so the search
+// combobox can filter locally without hitting the network on every keypress.
+let dtrEmployeesCache = [];
+let dtrSelectedEmployee = null;
+let dtrActiveSuggestionIndex = -1;
+let dtrCurrentSuggestions = [];
+
+// Toggle the DTR filter + preview area visibility
+function toggleDTRFilter() {
+    const area = document.getElementById('dtrFilterArea');
+    const btn = document.getElementById('dtrHideFilterBtn');
+    if (!area || !btn) return;
+
+    const isHidden = area.style.display === 'none';
+
+    if (isHidden) {
+        // Currently hidden → show it
+        area.style.display = '';
+        btn.innerHTML = '<i class="fa-solid fa-eye-slash"></i> Hide Filter';
+    } else {
+        // Currently visible → hide it
+        area.style.display = 'none';
+        btn.innerHTML = '<i class="fa-solid fa-eye"></i> Show Filter';
+    }
+}
+
+// Load DTR employees for the searchable combobox
 async function loadDTREmployees() {
     try {
         const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/employees`, {
@@ -1857,44 +2108,26 @@ async function loadDTREmployees() {
             credentials: 'include',
             cache: 'no-store'
         });
-        
+
         if (response.status === 401) {
             redirectToLogin();
             return;
         }
-        
+
         if (!response.ok) {
             console.error('Failed to load DTR employees:', response.status);
             return;
         }
-        
+
         const result = await response.json();
-        if (result.status === 'success' && result.data) {
-            const select = document.getElementById('dtrEmployeeSelect');
-            if (!select) return;
-            
-            // Clear existing options except the first one
-            while (select.options.length > 1) {
-                select.remove(1);
-            }
-            
-            // Add employees to dropdown
-            result.data.forEach(emp => {
-                const option = document.createElement('option');
-                option.value = emp.rfid;
-                option.textContent = `${emp.fullname} (${emp.employeeid || 'N/A'})`;
-                option.dataset.fullname = emp.fullname;
-                option.dataset.employeeid = emp.employeeid || '';
-                option.dataset.position = emp.position || '';
-                option.dataset.department = emp.department || '';
-                option.dataset.role = emp.role || 'employee';
-                select.appendChild(option);
-            });
-            
-            // Auto-load first employee if available
-            if (result.data.length > 0) {
-                select.value = result.data[0].rfid;
-                // Load the DTR automatically
+        if (result.status === 'success' && Array.isArray(result.data)) {
+            dtrEmployeesCache = result.data;
+
+            // Auto-select the first employee and load their DTR, matching
+            // the previous behavior of the old <select> element.
+            if (dtrEmployeesCache.length > 0) {
+                selectDTREmployeeByRfid(dtrEmployeesCache[0].rfid, true);
+                // Also trigger the initial DTR load for the first employee.
                 loadDTRRecord();
             }
         }
@@ -1902,6 +2135,178 @@ async function loadDTREmployees() {
         console.error('Error loading DTR employees:', error);
     }
 }
+
+// Select a DTR employee by RFID — used both by the auto-select on load and
+// by the combobox suggestions when the user picks one.
+function selectDTREmployeeByRfid(rfid, skipLoad) {
+    const emp = dtrEmployeesCache.find(e => e.rfid === rfid);
+    if (!emp) return;
+
+    dtrSelectedEmployee = emp;
+
+    const searchInput = document.getElementById('dtrEmployeeSearch');
+    const hiddenInput = document.getElementById('dtrEmployeeSelect');
+    const clearBtn = document.getElementById('dtrSearchClear');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+
+    if (searchInput) searchInput.value = `${emp.fullname} (${emp.employeeid || 'N/A'})`;
+    if (hiddenInput) hiddenInput.value = emp.rfid;
+    if (clearBtn) clearBtn.style.display = 'flex';
+    if (dropdown) dropdown.style.display = 'none';
+
+    if (!skipLoad) {
+        loadDTRRecord();
+    }
+}
+
+// Clear the DTR employee search input and reset state
+function clearDTRSearch() {
+    const searchInput = document.getElementById('dtrEmployeeSearch');
+    const hiddenInput = document.getElementById('dtrEmployeeSelect');
+    const clearBtn = document.getElementById('dtrSearchClear');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+
+    if (searchInput) searchInput.value = '';
+    if (hiddenInput) hiddenInput.value = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (dropdown) dropdown.style.display = 'none';
+
+    dtrSelectedEmployee = null;
+    dtrActiveSuggestionIndex = -1;
+    dtrCurrentSuggestions = [];
+
+    if (searchInput) searchInput.focus();
+}
+
+// Filter the employee cache based on what the user has typed and render
+// matching suggestions in the dropdown.
+function filterDTREmployees() {
+    const searchInput = document.getElementById('dtrEmployeeSearch');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    if (!searchInput || !dropdown) return;
+
+    const term = searchInput.value.trim().toLowerCase();
+    dtrActiveSuggestionIndex = -1;
+
+    // If the user is just re-focusing the box without having typed anything,
+    // don't blow away a previously chosen employee.
+    if (term === '' && dtrSelectedEmployee) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    // Match against fullname, employeeid, department, position, role.
+    let matches = dtrEmployeesCache;
+    if (term !== '') {
+        matches = dtrEmployeesCache.filter(emp => {
+            const haystack = [
+                emp.fullname || '',
+                emp.employeeid || '',
+                emp.department || '',
+                emp.position || '',
+                emp.role || ''
+            ].join(' ').toLowerCase();
+            return haystack.includes(term);
+        });
+    }
+
+    dtrCurrentSuggestions = matches;
+
+    if (matches.length === 0) {
+        dropdown.innerHTML = `<div class="dtr-suggestion-empty">
+            <i class="fa-solid fa-user-slash" style="margin-right:6px;"></i>
+            No employees match "${escapeHtml(searchInput.value)}"
+        </div>`;
+        dropdown.style.display = 'block';
+        return;
+    }
+
+    dropdown.innerHTML = matches.slice(0, 50).map((emp, idx) => {
+        const fullname = emp.fullname || 'Unknown';
+        const initialsText = fullname.split(/\s+/).map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--';
+        const role = (emp.role || 'employee').toLowerCase();
+        const employeeId = emp.employeeid || 'N/A';
+        const dept = emp.department || '';
+
+        // Highlight the matched substring inside the name for clarity.
+        const nameHtml = term
+            ? fullname.replace(new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<span class="dtr-suggestion-highlight">$1</span>')
+            : escapeHtml(fullname);
+
+        return `
+            <div class="dtr-suggestion" data-index="${idx}" data-rfid="${escapeHtml(emp.rfid)}" onmousedown="event.preventDefault(); selectDTREmployeeByRfid('${escapeHtml(emp.rfid)}')">
+                <div class="dtr-suggestion-avatar">${escapeHtml(initialsText)}</div>
+                <div class="dtr-suggestion-body">
+                    <div class="dtr-suggestion-name">${nameHtml}</div>
+                    <div class="dtr-suggestion-meta">
+                        ${escapeHtml(employeeId)}${dept ? ' · ' + escapeHtml(dept) : ''}
+                    </div>
+                </div>
+                <span class="dtr-suggestion-badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
+            </div>
+        `;
+    }).join('');
+
+    dropdown.style.display = 'block';
+}
+
+// Keyboard navigation: Up/Down to move through suggestions, Enter to pick,
+// Escape to close.
+function handleDTRSearchKeydown(event) {
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    if (!dropdown) return;
+
+    const items = dropdown.querySelectorAll('.dtr-suggestion');
+    const isOpen = dropdown.style.display !== 'none';
+
+    if (event.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    if (!isOpen || items.length === 0) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+        }
+        return;
+    }
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        dtrActiveSuggestionIndex = Math.min(dtrActiveSuggestionIndex + 1, items.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        dtrActiveSuggestionIndex = Math.max(dtrActiveSuggestionIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (dtrActiveSuggestionIndex >= 0 && items[dtrActiveSuggestionIndex]) {
+            const rfid = items[dtrActiveSuggestionIndex].dataset.rfid;
+            selectDTREmployeeByRfid(rfid);
+        } else if (items[0]) {
+            const rfid = items[0].dataset.rfid;
+            selectDTREmployeeByRfid(rfid);
+        }
+        return;
+    } else {
+        return;
+    }
+
+    items.forEach(item => item.classList.remove('active'));
+    if (items[dtrActiveSuggestionIndex]) {
+        items[dtrActiveSuggestionIndex].classList.add('active');
+        items[dtrActiveSuggestionIndex].scrollIntoView({ block: 'nearest' });
+    }
+}
+
+// Close the dropdown when clicking outside the combobox.
+document.addEventListener('click', (event) => {
+    const wrap = document.querySelector('.dtr-search-wrap');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    if (!wrap || !dropdown) return;
+    if (!wrap.contains(event.target) && !dropdown.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
 
 // Load available months for DTR
 async function loadDTRMonths() {
@@ -1957,30 +2362,31 @@ async function loadDTRMonths() {
 
 // Resolve a complete, reliable employee info object for the DTR by combining
 // whatever the /api/dtr/record endpoint returned (apiEmployee) with the info
-// already known from the employee dropdown (populated by loadDTREmployees).
+// already known from the cached employee (populated by loadDTREmployees).
 // This is what stops the printed/PDF name from ever showing "Unknown" —
-// the dropdown always has fullname/position/department even if the record
+// the cache always has fullname/position/department even if the record
 // endpoint's employee object is incomplete.
-function resolveDTREmployeeInfo(select, apiEmployee, apiRecord) {
+function resolveDTREmployeeInfo(_selectIgnored, apiEmployee, apiRecord) {
     apiEmployee = apiEmployee || {};
-    const option = select && select.options ? select.options[select.selectedIndex] : null;
-    const fromOption = option ? {
-        fullname: option.dataset.fullname || '',
-        employeeid: option.dataset.employeeid || '',
-        position: option.dataset.position || '',
-        department: option.dataset.department || '',
-        role: option.dataset.role || ''
-    } : {};
+
+    const cached = dtrSelectedEmployee || {};
+    const fromCache = {
+        fullname: cached.fullname || '',
+        employeeid: cached.employeeid || '',
+        position: cached.position || '',
+        department: cached.department || '',
+        role: cached.role || ''
+    };
 
     const apiFullname = apiEmployee.fullname
         || `${apiEmployee.firstname || ''} ${apiEmployee.lastname || ''}`.trim();
 
     return {
-        fullname: apiFullname || fromOption.fullname || 'Unknown',
-        employeeid: apiEmployee.employeeid || fromOption.employeeid || (apiRecord && apiRecord.employee_id) || '',
-        position: apiEmployee.position || fromOption.position || '',
-        department: apiEmployee.department || fromOption.department || '',
-        role: apiEmployee.role || fromOption.role || 'employee',
+        fullname: apiFullname || fromCache.fullname || 'Unknown',
+        employeeid: apiEmployee.employeeid || fromCache.employeeid || (apiRecord && apiRecord.employee_id) || '',
+        position: apiEmployee.position || fromCache.position || '',
+        department: apiEmployee.department || fromCache.department || '',
+        role: apiEmployee.role || fromCache.role || 'employee',
         regularTime: apiEmployee.regular_time || apiEmployee.regularTime || 'DEFAULT'
     };
 }
@@ -2051,10 +2457,10 @@ function renderDTREmployeeInfoPanel(info) {
 
 // Load DTR record for selected employee
 async function loadDTRRecord() {
-    const select = document.getElementById('dtrEmployeeSelect');
+    const hiddenInput = document.getElementById('dtrEmployeeSelect');
     const monthSelect = document.getElementById('dtrMonthSelect');
-    const rfid = select.value;
-    const month = monthSelect.value;
+    const rfid = hiddenInput ? hiddenInput.value : '';
+    const month = monthSelect ? monthSelect.value : '';
     
     if (!rfid || rfid === '') {
         showDTRMessage('Please select an employee.', 'warning');
@@ -2066,19 +2472,21 @@ async function loadDTRRecord() {
         return;
     }
     
-    // Get employee info from selected option
-    const option = select.options[select.selectedIndex];
-    const fullname = option.dataset.fullname || '';
-    const employeeid = option.dataset.employeeid || '';
-    const position = option.dataset.position || '';
-    const department = option.dataset.department || '';
-    const role = option.dataset.role || 'employee';
+    // Prefer the cached employee object (from the search dropdown) over
+    // reading from a <select> that no longer exists.
+    const emp = dtrSelectedEmployee
+        || dtrEmployeesCache.find(e => e.rfid === rfid)
+        || {};
+    const fullname = emp.fullname || '';
+    const employeeid = emp.employeeid || '';
+    const position = emp.position || '';
+    const department = emp.department || '';
+    const role = emp.role || 'employee';
     
     // Update employee info display - simplified (only name, ID, role, month)
     document.getElementById('dtrEmployeeName').textContent = fullname || '--';
     document.getElementById('dtrEmployeeId').textContent = employeeid || '--';
     document.getElementById('dtrRole').textContent = role ? role.toUpperCase() : '--';
-    document.getElementById('dtrSigEmployee').textContent = fullname || 'Employee Signature';
 
     // Show the full Name / Position / Department / Regular Time block,
     // aligned the same way it appears on the printed DTR.
@@ -2571,150 +2979,165 @@ function buildDTRHTML(record, dtr, employee) {
     `;
 }
 
-// Generate DTR PDF - Builds HTML and opens print dialog for PDF
-async function generateDTRPDF() {
-    const select = document.getElementById('dtrEmployeeSelect');
+// Shared helper: opens a new window, writes the DTR HTML into it, and
+// triggers the browser print dialog. Falls back to a Blob URL if
+// window.open is blocked by the browser.
+function openPrintWindow(html) {
+    const w = window.open('', '_blank', 'width=1100,height=800');
+    if (!w) {
+        // Popup blocked — fall back to a Blob URL that opens in a new tab
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const fallback = window.open(url, '_blank');
+        if (!fallback) {
+            // Last resort: navigate in the current tab
+            const blob2 = new Blob([html], { type: 'text/html' });
+            window.location.href = URL.createObjectURL(blob2);
+        }
+        return;
+    }
+
+    // Write the HTML document into the new window
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+
+    // Give the browser a moment to parse the document and load the
+    // styles before invoking print(). Using an explicit timeout is far
+    // more reliable than relying on `onload`, which often fires before
+    // the document is ready in the popup.
+    setTimeout(() => {
+        try {
+            w.focus();
+            w.print();
+        } catch (e) {
+            console.error('Print invocation failed:', e);
+        }
+    }, 500);
+}
+
+// Print DTR - Uses browser print functionality with formatted HTML
+async function printDTR() {
+    const hiddenInput = document.getElementById('dtrEmployeeSelect');
     const monthSelect = document.getElementById('dtrMonthSelect');
-    const rfid = select.value;
-    const month = monthSelect.value;
-    
-    if (!rfid || rfid === '') {
+    let rfid = hiddenInput ? hiddenInput.value : '';
+    let month = monthSelect ? monthSelect.value : '';
+
+    // If the user hasn't picked an employee yet but there are employees in
+    // the cache, auto-select the first one so print still works.
+    if (!rfid && dtrEmployeesCache.length > 0) {
+        selectDTREmployeeByRfid(dtrEmployeesCache[0].rfid, true);
+        rfid = hiddenInput ? hiddenInput.value : '';
+    }
+
+    // If the month hasn't been picked yet, use the current month.
+    if (!month) {
+        month = new Date().toISOString().slice(0, 7);
+    }
+
+    if (!rfid) {
         showDTRMessage('Please select an employee first.', 'warning');
         return;
     }
-    
-    if (!month || month === '') {
-        showDTRMessage('Please select a month.', 'warning');
-        return;
-    }
-    
+
     try {
-        showDTRMessage('Generating PDF...', 'info');
-        
-        // First, get the DTR data to build the HTML
+        showDTRMessage('Preparing print view...', 'info');
+
         const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
             method: 'GET',
             headers: getAuthHeaders(),
             credentials: 'include',
             cache: 'no-store'
         });
-        
+
         if (response.status === 401) {
             redirectToLogin();
             return;
         }
-        
         if (!response.ok) {
             showDTRMessage('Failed to load DTR data.', 'error');
             return;
         }
-        
+
+        const result = await response.json();
+        if (!result || result.status !== 'success' || !result.data) {
+            showDTRMessage('No DTR data available.', 'error');
+            return;
+        }
+
+        const record = result.data.record;
+        const dtr = record.dtr || [];
+        const employee = resolveDTREmployeeInfo(null, record.employee, record);
+        const dtrHTML = buildDTRHTML(record, dtr, employee);
+
+        openPrintWindow(dtrHTML);
+        showDTRMessage('Print window opened.', 'success');
+    } catch (error) {
+        console.error('Error printing DTR:', error);
+        showDTRMessage('Error printing DTR.', 'error');
+    }
+}
+
+// Generate DTR PDF - Builds HTML and opens print dialog for PDF
+async function generateDTRPDF() {
+    const hiddenInput = document.getElementById('dtrEmployeeSelect');
+    const monthSelect = document.getElementById('dtrMonthSelect');
+    let rfid = hiddenInput ? hiddenInput.value : '';
+    let month = monthSelect ? monthSelect.value : '';
+
+    // Auto-select the first employee if none is selected yet, so the
+    // button works even before the user touches the dropdown.
+    if (!rfid && dtrEmployeesCache.length > 0) {
+        selectDTREmployeeByRfid(dtrEmployeesCache[0].rfid, true);
+        rfid = hiddenInput ? hiddenInput.value : '';
+    }
+
+    // Default to the current month if the month picker is empty.
+    if (!month) {
+        month = new Date().toISOString().slice(0, 7);
+    }
+
+    if (!rfid) {
+        showDTRMessage('Please select an employee first.', 'warning');
+        return;
+    }
+
+    try {
+        showDTRMessage('Generating PDF...', 'info');
+
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        if (!response.ok) {
+            showDTRMessage('Failed to load DTR data.', 'error');
+            return;
+        }
+
         const result = await response.json();
         if (result.status !== 'success' || !result.data) {
             showDTRMessage('No DTR data available.', 'error');
             return;
         }
-        
+
         const record = result.data.record;
         const dtr = record.dtr || [];
-        const employee = resolveDTREmployeeInfo(select, record.employee, record);
-        
-        // Build the DTR HTML with the exact format from the image
+        const employee = resolveDTREmployeeInfo(null, record.employee, record);
         const dtrHTML = buildDTRHTML(record, dtr, employee);
-        
-        // Generate PDF from HTML using print
-        const printWindow = window.open('', '_blank', 'width=1100,height=800');
-        if (!printWindow) {
-            showDTRMessage('Please allow popups for this site to generate PDF.', 'warning');
-            return;
-        }
-        
-        printWindow.document.write(dtrHTML);
-        printWindow.document.close();
-        
-        printWindow.onload = function() {
-            setTimeout(() => {
-                printWindow.print();
-                // Don't close the window immediately so user can save as PDF
-                // The user can close it manually after printing
-            }, 500);
-        };
-        
-        showDTRMessage('PDF generated successfully!', 'success');
+
+        openPrintWindow(dtrHTML);
+        showDTRMessage('PDF window opened — choose "Save as PDF" in the print dialog.', 'success');
     } catch (error) {
         console.error('Error generating PDF:', error);
         showDTRMessage('Error generating PDF.', 'error');
     }
-}
-
-// Print DTR - Uses browser print functionality with formatted HTML
-function printDTR() {
-    const select = document.getElementById('dtrEmployeeSelect');
-    const monthSelect = document.getElementById('dtrMonthSelect');
-    const rfid = select.value;
-    const month = monthSelect.value;
-    
-    if (!rfid || rfid === '') {
-        showDTRMessage('Please select an employee first.', 'warning');
-        return;
-    }
-    
-    if (!month || month === '') {
-        showDTRMessage('Please select a month.', 'warning');
-        return;
-    }
-    
-    // Fetch the DTR data and print
-    fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
-        method: 'GET',
-        headers: getAuthHeaders(),
-        credentials: 'include',
-        cache: 'no-store'
-    })
-    .then(response => {
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-        if (!response.ok) {
-            showDTRMessage('Failed to load DTR data.', 'error');
-            return;
-        }
-        return response.json();
-    })
-    .then(result => {
-        if (!result || result.status !== 'success' || !result.data) {
-            showDTRMessage('No DTR data available.', 'error');
-            return;
-        }
-        
-        const record = result.data.record;
-        const dtr = record.dtr || [];
-        const employee = resolveDTREmployeeInfo(select, record.employee, record);
-        
-        // Build the DTR HTML
-        const dtrHTML = buildDTRHTML(record, dtr, employee);
-        
-        // Print the DTR
-        const printWindow = window.open('', '_blank', 'width=1100,height=800');
-        if (!printWindow) {
-            showDTRMessage('Please allow popups for this site to print.', 'warning');
-            return;
-        }
-        
-        printWindow.document.write(dtrHTML);
-        printWindow.document.close();
-        
-        printWindow.onload = function() {
-            setTimeout(() => {
-                printWindow.print();
-            }, 500);
-        };
-    })
-    .catch(error => {
-        console.error('Error printing DTR:', error);
-        showDTRMessage('Error printing DTR.', 'error');
-    });
 }
 
 // ============ END DTR FUNCTIONS ============
@@ -2802,7 +3225,11 @@ async function loadDashboardData() {
         updateDashboardStatistics(stats);
         updateAttendanceRate(stats);
         updateEmployeeTable(data.users || []);
-        updateScanTable(data.scans || []);
+        // Once the directory is loaded, refresh the profile modal fields
+        // (they read from allEmployees for email/phone/department).
+        populateProfileModalFromUser();
+        // updateScanTable is async (may fall back to /api/scan-feed); await it
+        await updateScanTable(data.scans || []);
         
         // Update attendance table with pagination
         updateAttendanceTable(data.scans || []);
@@ -2984,16 +3411,16 @@ async function saveSettings() {
         
         msgEl.style.color = '#10B981';
         msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Settings saved successfully!';
-        
-        // Refresh settings to get updated version info
+
+        // Refresh settings to get updated version info, then close the
+        // modal after a short pause so the user sees the success message.
         setTimeout(() => {
             loadSettings();
-        }, 1000);
-        
-        // Auto hide after 3 seconds
+        }, 800);
         setTimeout(() => {
+            closeSettingsModal();
             msgEl.style.display = 'none';
-        }, 5000);
+        }, 1400);
         
     } catch (error) {
         console.error('Error saving settings:', error);
@@ -3028,9 +3455,10 @@ async function verifyDashboardSession() {
         const data = await response.json();
         updateUserDisplay(data.user);
         await loadDashboardData();
-        // Load DTR data after dashboard loads
-        await loadDTREmployees();
+        // Load months first so loadDTREmployees() can trigger a DTR load
+        // with a valid month already selected.
         await loadDTRMonths();
+        await loadDTREmployees();
         // Load settings (which auto-checks version)
         await loadSettings();
         // Initialize search functionality
@@ -3105,6 +3533,12 @@ setSidebarState(true);
 // Sidebar nav: toggle active class when clicking items so the blue icon box updates
 document.querySelectorAll('.sidebar .nav-item').forEach((navItem) => {
     navItem.addEventListener('click', (e) => {
+        // The Settings and Profile links open modals — don't run the
+        // scroll / nav-highlight logic for them.
+        if (navItem.id === 'openSettingsBtn' || navItem.id === 'openProfileBtn') {
+            return;
+        }
+
         // if it's an anchor with a hash, update header, active state, and scroll explicitly
         const href = navItem.getAttribute('href');
         document.querySelectorAll('.sidebar .nav-item').forEach((n) => n.classList.remove('active'));
@@ -3166,16 +3600,6 @@ const pageHeaderMap = {
         breadcrumb: 'HR Documents',
         title: 'Reports',
         subtitle: 'Generate and export attendance reports.'
-    },
-    '#settings': {
-        breadcrumb: 'Settings',
-        title: 'Application Settings',
-        subtitle: 'Manage application preferences and integrations.'
-    },
-    '#profile': {
-        breadcrumb: 'Profile',
-        title: 'User Profile',
-        subtitle: 'View and edit your profile details.'
     }
 };
 
@@ -3335,6 +3759,24 @@ if (logoutConfirmYes) {
 }
 
 window.addEventListener('pageshow', verifyDashboardSession);
+/* ---------------- VERSION AUTO-PULL ---------------- */
+const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
+
+function loadAppVersion() {
+  const versionEl = document.getElementById('versionNumber');
+  if (!versionEl) return;
+  fetch(VERSION_URL, { cache: 'no-cache' })
+    .then((res) => res.ok ? res.text() : null)
+    .then((text) => {
+      if (!text) return;
+      const version = text.trim();
+      if (version) versionEl.textContent = version;
+    })
+    .catch(() => { /* keep fallback version */ });
+}
+
+loadAppVersion();
+/* ----------------------------------------------- */
 setInterval(updateClock, 1000);
 setInterval(loadDashboardData, 5000);
 setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds

@@ -905,12 +905,12 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .logout-modal-actions { display: flex; justify-content: center; gap: 12px; margin-top: 22px; }
 
 /* ============ FOOTER ============ */
-.footer { background: transparent; color: #ffffff; padding: 12px 28px; border-top: 1px solid rgba(255,255,255,0.06); }
+.footer { background: var(--sidebar-bg); color: #ffffff; padding: 20px 28px; }
 .footer .footer-brand, .footer .footer-info, .footer .footer-sub { color: #ffffff; }
 .footer .footer-info p { margin: 0; }
 .footer-content { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.footer-brand { color: #94A3B8; font-size: 13px; font-weight: 600; }
-.footer-brand span { color: var(--primary); }
+.footer-brand { color: #ffffff; font-size: 13px; font-weight: 600; }
+.footer-brand span { color: #ffffff; }
 .footer-info { font-size: 11px; text-align: right; }
 .footer-info p { margin-bottom: 2px; }
 

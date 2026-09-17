@@ -1707,6 +1707,157 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
   }
 }
 
+/* ===== DTR EMPLOYEE SEARCH COMBOBOX ===== */
+.dtr-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.dtr-search-icon {
+    position: absolute;
+    left: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.dtr-search-input {
+    padding-left: 34px !important;
+    padding-right: 34px !important;
+}
+
+.dtr-search-clear {
+    position: absolute;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--border);
+    color: var(--text-muted);
+    font-size: 10px;
+    cursor: pointer;
+    transition: all var(--transition);
+    border: none;
+}
+.dtr-search-clear:hover {
+    background: var(--danger-light);
+    color: var(--danger);
+}
+
+.dtr-search-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 300;
+    scrollbar-width: thin;
+}
+
+.dtr-search-dropdown::-webkit-scrollbar { width: 6px; }
+.dtr-search-dropdown::-webkit-scrollbar-thumb {
+    background: var(--border-dark);
+    border-radius: 3px;
+}
+
+.dtr-suggestion {
+    padding: 9px 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    transition: background var(--transition);
+    font-size: 13px;
+}
+.dtr-suggestion:last-child { border-bottom: none; }
+.dtr-suggestion:hover,
+.dtr-suggestion.active {
+    background: var(--primary-light);
+}
+
+.dtr-suggestion-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+
+.dtr-suggestion-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.dtr-suggestion-name {
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dtr-suggestion-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 1px;
+}
+
+.dtr-suggestion-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-full);
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+.dtr-suggestion-badge.role-employee {
+    background: var(--success-light);
+    color: #15803D;
+}
+.dtr-suggestion-badge.role-hr {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+}
+.dtr-suggestion-badge.role-admin {
+    background: var(--danger-light);
+    color: #B91C1C;
+}
+
+.dtr-suggestion-empty {
+    padding: 16px 14px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.dtr-suggestion-highlight {
+    background: #FEF3C7;
+    color: #92400E;
+    padding: 0 2px;
+    border-radius: 3px;
+    font-weight: 700;
+}
+
 /* ===== HR LETTERS ===== */
 .hr-letters-grid {
   display: grid;
@@ -2202,11 +2353,17 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 
 /* ===== FOOTER ===== */
 .footer {
-  background: var(--sidebar-bg);
-  color: #64748B;
-  padding: 20px 28px;
+  background: transparent;
+  color: #ffffff;
+  padding: 12px 28px;
   margin-left: 0;
+  border-top: 1px solid rgba(255,255,255,0.06);
 }
+
+.footer .footer-brand,
+.footer .footer-info,
+.footer .footer-sub { color: #ffffff; }
+.footer .footer-info p { margin: 0; }
 
 .footer-content {
   display: flex;
@@ -2216,8 +2373,8 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
   gap: 12px;
 }
 
-.footer-brand { color: #94A3B8; font-size: 13px; font-weight: 600; }
-.footer-brand span { color: var(--primary); }
+.footer-brand { color: #ffffff; font-size: 13px; font-weight: 600; }
+.footer-brand span { color: #ffffff; }
 .footer-info { font-size: 11px; text-align: right; }
 .footer-info p { margin-bottom: 2px; }
 
@@ -2920,4 +3077,107 @@ body.sidebar-collapsed .main {
         font-size: 12px;
         padding: 0 8px;
     }
+}
+
+/* ============================================================
+   SYSTEM SETTINGS + MY PROFILE MODALS
+   ============================================================ */
+
+/* Larger modal shell used for the two popup dialogs */
+.settings-modal,
+.profile-modal {
+    max-width: 900px;
+    width: 100%;
+}
+
+/* Settings modal header (burgundy gradient) */
+.settings-modal-header {
+    background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+}
+
+.settings-modal-avatar {
+    background: rgba(255,255,255,0.2);
+}
+
+/* Profile modal header (burgundy gradient, distinct icon avatar) */
+.profile-modal-header {
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+}
+
+.profile-modal-avatar {
+    background: rgba(255,255,255,0.2);
+}
+
+/* Two-column grid used inside both modals */
+.settings-grid,
+.profile-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+/* Each block is a card-like container */
+.settings-block,
+.profile-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+/* Block header */
+.settings-block-header,
+.profile-block-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.settings-block-header i,
+.profile-block-header i {
+    color: var(--primary);
+    font-size: 14px;
+}
+
+/* Block body */
+.settings-block-body,
+.profile-block-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+/* Profile modal reuses emp-info-row styling but ensures it stays clean */
+.profile-block-body .emp-info-row {
+    border-bottom: 1px solid var(--border);
+    padding: 8px 0;
+}
+.profile-block-body .emp-info-row:last-child {
+    border-bottom: none;
+}
+
+/* Responsive: stack the two blocks on narrow screens */
+@media (max-width: 768px) {
+    .settings-grid,
+    .profile-grid {
+        grid-template-columns: 1fr;
+        gap: 14px;
+    }
+
+    .settings-modal,
+    .profile-modal {
+        max-width: 100%;
+    }
+}
+
+/* ===== HIDE MODALS WHEN .hidden IS PRESENT ===== */
+.modal-overlay.hidden {
+    display: none !important;
 }

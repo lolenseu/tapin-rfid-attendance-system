@@ -1150,6 +1150,24 @@ if (logoutYes) {
 /* ---------------- INIT ---------------- */
 
 window.addEventListener('pageshow', verifyEmployeeSession);
+/* ---------------- VERSION AUTO-PULL ---------------- */
+const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
+
+function loadAppVersion() {
+  const versionEl = document.getElementById('versionNumber');
+  if (!versionEl) return;
+  fetch(VERSION_URL, { cache: 'no-cache' })
+    .then((res) => res.ok ? res.text() : null)
+    .then((text) => {
+      if (!text) return;
+      const version = text.trim();
+      if (version) versionEl.textContent = version;
+    })
+    .catch(() => { /* keep fallback version */ });
+}
+
+loadAppVersion();
+/* ----------------------------------------------- */
 setInterval(updateClock, 1000);
 updateClock();
 verifyEmployeeSession();

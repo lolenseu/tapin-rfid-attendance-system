@@ -500,12 +500,51 @@ async function fetchData() {
     }
 }
 
+// Auto-clear the profile display at 12:00 AM (midnight) so the screen
+// resets to the "Waiting for scan" state when a new day begins.
+let lastClearedDate = null;
+
+function checkMidnightClear() {
+    const now = new Date();
+    const today = now.toDateString();
+    if (lastClearedDate === today) {
+        return;
+    }
+    lastClearedDate = today;
+    currentRfid = null;
+    lastAttendanceSignature = '';
+    currentData = null;
+    if (employeeCard) {
+        employeeCard.classList.remove('visible');
+        employeeCard.innerHTML = '';
+    }
+    if (noData) {
+        noData.style.display = 'flex';
+    }
+    if (scannedAt) {
+        scannedAt.textContent = 'Waiting for scan...';
+    }
+    if (statusDot) {
+        statusDot.className = 'status-dot offline';
+    }
+    if (statusText) {
+        statusText.textContent = 'Waiting for scan';
+    }
+    if (lastUpdated) {
+        lastUpdated.textContent = 'Updated: ' + now.toLocaleTimeString('en-PH', { hour12: true });
+    }
+    console.log('[Midnight] Profile display auto-cleared for new day.');
+}
+
 function startPolling() {
     loadLogo();
     loadProfileIcon();
     fetchVersion(); // Fetch version once when page loads
+    checkMidnightClear();
     fetchData();
     setInterval(fetchData, POLL_INTERVAL);
+    // Check for midnight every minute so the clear happens promptly at 12:00 AM.
+    setInterval(checkMidnightClear, 60000);
 }
 
 document.addEventListener('DOMContentLoaded', startPolling);
