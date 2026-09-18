@@ -17,7 +17,7 @@ from configs import parameters as param
 from driver import BUZZER, PCF8574, PN532
 
 # API endpoint used by the device
-API_URL = "https://lolenseu.pythonanywhere.com/"
+API_URL = "http://lolenseu.pythonanywhere.com/"
 API_ADDR = "lolenseu.pythonanywhere.com"
 
 ## Global hardware objects
@@ -97,14 +97,14 @@ def check_internet_connection():
             return False
 
 def check_api_connectivity():
-    """Check if API is reachable using raw socket with SSL"""
+    """Check if API is reachable using raw socket"""
     s = None
 
     try:
         free_mem = optimize_memory()
         tprint(PRINTSTATUS.INFO, f"Free memory before API check: {free_mem} bytes")
-        
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         gc.collect()
 
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
@@ -114,9 +114,6 @@ def check_api_connectivity():
         del addr
         gc.collect()
 
-        s = create_ssl_socket(s)
-        gc.collect()
-        
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "test"})
         gc.collect()
 
@@ -129,7 +126,7 @@ def check_api_connectivity():
             "Connection: close\r\n"
             "\r\n"
         )
-        
+
         s.write(request)
         s.write(data)
 
@@ -159,7 +156,7 @@ def check_api_connectivity():
 def restart_device():
     """Restart the device"""
     tprint(PRINTSTATUS.WARN, "RESTARTING: No internet connection...")
-    
+
     # Show restart message on LCD
     try:
         if lcd:
@@ -169,7 +166,7 @@ def restart_device():
             lcd.putstr("RESTARTING...")
     except:
         pass
-    
+
     # Beep pattern - 3 beeps for restart
     try:
         if buzzer:
@@ -180,26 +177,26 @@ def restart_device():
                 time.sleep_ms(200)
     except:
         pass
-    
+
     time.sleep_ms(2000)
     gc.collect()
     machine.reset()
 
 def send_ping():
-    """Send device ping using raw socket with SSL with reduced buffer"""
+    """Send device ping using raw socket"""
     if not check_wifi_connection():
         return False
-    
-    # Optimize memory before SSL
+
+    # Optimize memory before sending
     free_mem = optimize_memory()
     tprint(PRINTSTATUS.INFO, f"Free memory before ping: {free_mem} bytes")
-        
+
     s = None
 
     try:
         tprint(PRINTSTATUS.INFO, "Sending ping...")
-        
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         gc.collect()
 
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
@@ -209,9 +206,6 @@ def send_ping():
         del addr
         gc.collect()
 
-        s = create_ssl_socket(s)
-        gc.collect()
-        
         data = json.dumps({"device_id": param.DEVICE_ID, "status": "alive"})
         gc.collect()
 
@@ -224,14 +218,14 @@ def send_ping():
             "Connection: close\r\n"
             "\r\n"
         )
-        
+
         s.write(request)
         s.write(data)
 
         del request
         del data
         gc.collect()
-        
+
         response = s.read(128)
 
         if response and (b"200" in response or b"OK" in response):
@@ -254,19 +248,19 @@ def send_ping():
         gc.collect()
 
 def post_data(rfid_str):
-    """Send RFID data using HTTPS with SSL and reduced buffer"""
+    """Send RFID data using HTTP"""
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "WiFi not connected")
         return False
-    
+
     free_mem = optimize_memory()
     tprint(PRINTSTATUS.INFO, f"Free memory before RFID send: {free_mem} bytes")
-        
+
     t = time.localtime()
     scanned_time = "{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}".format(
         t[0], t[1], t[2], t[3], t[4], t[5]
     )
-    
+
     data = json.dumps({
         "device_id": param.DEVICE_ID,
         "rfid": rfid_str,
@@ -274,14 +268,14 @@ def post_data(rfid_str):
     })
 
     gc.collect()
-    
+
     s = None
 
     try:
         tprint(PRINTSTATUS.INFO, f"Sending RFID: {rfid_str}")
         tprint(PRINTSTATUS.INFO, f"Data: {data}")
 
-        addr = usocket.getaddrinfo(API_ADDR, 443)[0][-1]
+        addr = usocket.getaddrinfo(API_ADDR, 80)[0][-1]
         gc.collect()
 
         s = usocket.socket(usocket.AF_INET, usocket.SOCK_STREAM)
@@ -291,35 +285,33 @@ def post_data(rfid_str):
         del addr
         gc.collect()
 
-        s = create_ssl_socket(s)
-        gc.collect()
-        
+        data_to_send = data  # Keep reference for cleanup
         request = (
             "POST /api/receive-rfid HTTP/1.1\r\n"
             "Host: " + API_ADDR + "\r\n"
             "Content-Type: application/json\r\n"
             "Accept: application/json\r\n"
-            "Content-Length: " + str(len(data)) + "\r\n"
+            "Content-Length: " + str(len(data_to_send)) + "\r\n"
             "Connection: close\r\n"
             "\r\n"
         )
-        
+
         s.write(request)
-        s.write(data)
+        s.write(data_to_send)
 
         del request
-        del data
+        del data_to_send
         del scanned_time
         gc.collect()
-        
+
         response = s.read(128)
-        
+
         try:
             response_str = response.decode('utf-8', errors='ignore')
             tprint(PRINTSTATUS.INFO, f"Full response: {response_str[:100]}")
         except:
             tprint(PRINTSTATUS.INFO, f"Full response: {response[:100]}")
-        
+
         if response and (b"200" in response or b"OK" in response):
             tprint(PRINTSTATUS.SUCCESS, "RFID sent OK")
             return True
@@ -330,7 +322,7 @@ def post_data(rfid_str):
             except:
                 tprint(PRINTSTATUS.WARN, f"Response: {response[:100]}")
             return False
-            
+
     except Exception as e:
         tprint(PRINTSTATUS.ERROR, f"Send error: {str(e)}")
         return False
@@ -347,7 +339,7 @@ def sync_manila_time():
     """Sync time from internet and adjust to Manila (UTC+8)"""
     if not check_wifi_connection():
         return False
-        
+
     try:
         # Try multiple NTP servers
         ntp_servers = ["pool.ntp.org", "time.google.com", "time.windows.com", "ntp.aliyun.com"]
@@ -365,7 +357,7 @@ def sync_manila_time():
                 tprint(PRINTSTATUS.WARN, f"NTP {server} failed: {str(e)}")
                 gc.collect()
                 continue
-        
+
         tprint(PRINTSTATUS.ERROR, "All NTP servers failed")
         return False
     except Exception as e:
@@ -375,7 +367,7 @@ def sync_manila_time():
 def monitor_internet_and_restart():
     """Monitor internet and restart if no connection"""
     global no_internet_count
-    
+
     # Check WiFi
     if not check_wifi_connection():
         tprint(PRINTSTATUS.ERROR, "No WiFi connection!")
@@ -383,15 +375,15 @@ def monitor_internet_and_restart():
         if no_internet_count >= 3:
             restart_device()
         return False
-    
+
     # Check internet connectivity
     if not check_internet_connection():
         tprint(PRINTSTATUS.ERROR, "No internet connection!")
         no_internet_count += 1
-        if no_internet_count >= 3: 
+        if no_internet_count >= 3:
             restart_device()
         return False
-    
+
     # Check API connectivity
     if not check_api_connectivity():
         tprint(PRINTSTATUS.ERROR, "API not reachable!")
@@ -399,7 +391,7 @@ def monitor_internet_and_restart():
         if no_internet_count >= 3:
             restart_device()
         return False
-    
+
     # Reset counter if all checks pass
     no_internet_count = 0
     return True
@@ -505,7 +497,7 @@ def reset_lcd_to_ready():
 ## Main function
 def main():
     global buzzer, lcd, rfid, no_internet_count
-    
+
     # Initialize counter
     no_internet_count = 0
 
@@ -559,7 +551,7 @@ def main():
     last_internet_check = time.ticks_ms()           # Track last internet check time
 
     tprint(PRINTSTATUS.SUCCESS, "Device Ready.")
-    
+
     # Display initial status on LCD
     try:
         lcd.clear()
@@ -568,11 +560,11 @@ def main():
         lcd.putstr("Scan RFID Card")
     except:
         pass
-    
+
     # --- MAIN LOOP ---
     while True:
         current_time = time.ticks_ms()
-        
+
         # 1. Check internet connectivity every 30 seconds - RESTART IF NO INTERNET
         if time.ticks_diff(current_time, last_internet_check) >= 30000:  # 30 seconds
             last_internet_check = current_time
@@ -608,21 +600,21 @@ def main():
             else:
                 hour12 = hour24 - 12
                 period = "PM"
-                
+
             time_str = "Time:{:02d}:{:02d}:{:02d} {}".format(hour12, t[4], t[5], period)
             try:
                 lcd.move_to(0, 0)
                 lcd.putstr(time_str)
             except:
                 pass
-            
+
             # Check if we need to clear status after 8 seconds
             if last_status_time > 0:
                 time_since_status = time.ticks_diff(current_time, last_status_time)
                 if time_since_status >= timer_delay:
                     clear_status()
                     last_status_time = 0
-            
+
             # Check if we need to reset display after 8 seconds of no scan
             if last_scan_time > 0:
                 time_since_last_scan = time.ticks_diff(current_time, last_scan_time)
@@ -641,7 +633,7 @@ def main():
                 # Check if this is a new RFID or same RFID but cooldown expired
                 is_new_rfid = (rfid_str != last_rfid)
                 is_cooldown_expired = False
-                
+
                 if not is_new_rfid:
                     # Same RFID - check cooldown
                     time_since_last_scan = time.ticks_diff(current_time, last_rfid_time)
@@ -651,7 +643,7 @@ def main():
                     else:
                         remaining = (timer_delay - time_since_last_scan) // 1000
                         tprint(PRINTSTATUS.INFO, f"Cooldown active for RFID: {rfid_str} ({remaining}s remaining)")
-                
+
                 # Process RFID if it's new OR cooldown expired
                 if is_new_rfid or is_cooldown_expired:
                     last_rfid = rfid_str
