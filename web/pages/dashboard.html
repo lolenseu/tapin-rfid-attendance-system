@@ -319,26 +319,6 @@
               <div class="dtr-form-subtitle">CSC Form No. 48 — Revised 2018</div>
             </div>
             <div class="dtr-body">
-              <!-- Employee info display - Simplified -->
-              <div class="dtr-info-display">
-                <div class="dtr-info-row">
-                  <span class="dtr-info-label">Employee:</span>
-                  <span class="dtr-info-value" id="dtrEmployeeName">--</span>
-                </div>
-                <div class="dtr-info-row">
-                  <span class="dtr-info-label">Employee ID:</span>
-                  <span class="dtr-info-value" id="dtrEmployeeId">--</span>
-                </div>
-                <div class="dtr-info-row">
-                  <span class="dtr-info-label">Role:</span>
-                  <span class="dtr-info-value" id="dtrRole">--</span>
-                </div>
-                <div class="dtr-info-row">
-                  <span class="dtr-info-label">Month:</span>
-                  <span class="dtr-info-value" id="dtrMonth">--</span>
-                </div>
-              </div>
-
               <div class="dtr-table-wrap">
                 <table class="dtr-table" id="dtrTable">
                   <thead>
@@ -396,21 +376,35 @@
             <p class="section-subtitle">View and manage employee personal information and profiles.</p>
           </div>
           <div class="flex gap-2">
-            <button class="btn btn-outline" onclick="toggleEmployeeFilter()"><i class="fa-solid fa-filter"></i> Filter</button>
+            <button class="btn btn-outline" id="employeeHideFilterBtn" onclick="toggleEmployeeFilter()">
+              <i class="fa-solid fa-eye-slash"></i> Hide Filter
+            </button>
             <button class="btn btn-primary" onclick="document.getElementById('employeeRegistrationForm').scrollIntoView({ behavior: 'smooth' })"><i class="fa-solid fa-user-plus"></i> Add Employee</button>
           </div>
         </div>
 
         <!-- Filter Bar -->
-        <div class="employee-filter-bar" id="employeeFilterBar" style="display:none;">
-          <div class="card mb-4">
+        <div class="employee-filter-bar" id="employeeFilterBar">
+          <div class="card mb-6">
+            <div class="card-header">
+              <div class="card-title"><i class="fa-solid fa-filter"></i> Filter</div>
+            </div>
             <div class="card-body">
               <div class="filter-grid">
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom:0;position:relative;">
                   <label><i class="fa-solid fa-search"></i> Search</label>
-                  <input class="form-control" type="text" id="employeeSearchInput" placeholder="Search by name, ID, or email..." oninput="filterEmployees()">
+                  <div class="dtr-search-wrap">
+                    <i class="fa-solid fa-magnifying-glass dtr-search-icon"></i>
+                    <input class="form-control dtr-search-input" type="text" id="employeeSearchInput" placeholder="Search by name, ID, or email..." oninput="searchEmployeesWithSuggestions(this.value)" onfocus="searchEmployeesWithSuggestions(this.value)" onkeydown="handleEmployeeSearchKeydown(event)" />
+                    <input type="hidden" id="employeeSelect" value="" />
+                    <button type="button" class="dtr-search-clear" id="employeeSearchClear" aria-label="Clear" onclick="clearEmployeeSearch()" style="display:none;">
+                      <i class="fa-solid fa-times"></i>
+                    </button>
+                  </div>
+                  <div class="dtr-search-dropdown" id="employeeSearchDropdown" style="display:none;"></div>
                 </div>
-                <div class="form-group">
+                <!-- Role and Department filters unchanged -->
+                <div class="form-group" style="margin-bottom:0;">
                   <label><i class="fa-solid fa-tag"></i> Role</label>
                   <select class="form-control" id="employeeRoleFilter" onchange="filterEmployees()">
                     <option value="all">All Roles</option>
@@ -419,16 +413,15 @@
                     <option value="employee">Employee</option>
                   </select>
                 </div>
-                <div class="form-group">
+                <div class="form-group" style="margin-bottom:0;">
                   <label><i class="fa-solid fa-building"></i> Department</label>
                   <select class="form-control" id="employeeDeptFilter" onchange="filterEmployees()">
                     <option value="all">All Departments</option>
                   </select>
                 </div>
-                <div class="form-group" style="display:flex;align-items:flex-end;">
-                  <button class="btn btn-outline w-full" onclick="clearEmployeeFilters()"><i class="fa-solid fa-undo"></i> Clear Filters</button>
-                </div>
+                <button class="btn btn-outline" onclick="clearEmployeeFilters()"><i class="fa-solid fa-undo"></i> Clear Filters</button>
               </div>
+              <p id="employeeMessage" style="margin-top:10px;font-size:13px;display:none;"></p>
             </div>
           </div>
         </div>

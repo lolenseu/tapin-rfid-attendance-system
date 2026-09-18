@@ -885,17 +885,35 @@ function goToPage(page) {
     }
 }
 
-// Toggle filter bar visibility
+// Toggle DTR filter panel visibility (Select Employee card) - visible by
+// default, toggled with the eye-slash/eye icon button.
+function toggleDTRFilter() {
+    const filterArea = document.getElementById('dtrFilterArea');
+    const btn = document.getElementById('dtrHideFilterBtn');
+    if (!filterArea) return;
+    const isVisible = filterArea.style.display !== 'none';
+    filterArea.style.display = isVisible ? 'none' : 'block';
+    if (btn) {
+        btn.innerHTML = isVisible
+            ? '<i class="fa-solid fa-eye"></i> Show Filter'
+            : '<i class="fa-solid fa-eye-slash"></i> Hide Filter';
+    }
+}
+
+// Toggle filter bar visibility - same design/behavior as the DTR filter
+// toggle above: visible by default, eye-slash/eye icon swap.
 function toggleEmployeeFilter() {
     const filterBar = document.getElementById('employeeFilterBar');
+    const btn = document.getElementById('employeeHideFilterBtn');
     if (filterBar) {
         const isVisible = filterBar.style.display !== 'none';
         filterBar.style.display = isVisible ? 'none' : 'block';
         
         // Update button text
-        const btn = document.querySelector('.section-actions .btn-outline');
         if (btn) {
-            btn.innerHTML = isVisible ? '<i class="fa-solid fa-filter"></i> Filter' : '<i class="fa-solid fa-filter"></i> Hide Filter';
+            btn.innerHTML = isVisible
+                ? '<i class="fa-solid fa-eye"></i> Show Filter'
+                : '<i class="fa-solid fa-eye-slash"></i> Hide Filter';
         }
     }
 }
@@ -1871,7 +1889,7 @@ function resolveDTREmployeeInfo(select, apiEmployee, apiRecord) {
     } : {};
 
     const apiFullname = apiEmployee.fullname
-        || `${apiEmployee.firstname || ''} ${apiEmployee.lastname || ''}`.trim();
+        || (apiEmployee.lastname ? `${apiEmployee.lastname}, ${apiEmployee.firstname || ''}`.trim() : '');
 
     return {
         fullname: apiFullname || fromOption.fullname || 'Unknown',
@@ -1972,10 +1990,8 @@ async function loadDTRRecord() {
     const department = option.dataset.department || '';
     const role = option.dataset.role || 'employee';
     
-    // Update employee info display - simplified (only name, ID, role, month)
-    document.getElementById('dtrEmployeeName').textContent = fullname || '--';
-    document.getElementById('dtrEmployeeId').textContent = employeeid || '--';
-    document.getElementById('dtrRole').textContent = role ? role.toUpperCase() : '--';
+    // Update employee info display - simplified (only signature; the
+    // Employee/Employee ID/Role/Month block was removed)
     document.getElementById('dtrSigEmployee').textContent = fullname || 'Employee Signature';
 
     // Show the full Name / Position / Department / Regular Time block,
@@ -2018,9 +2034,6 @@ async function loadDTRRecord() {
         if (result.status === 'success' && result.data) {
             const record = result.data.record;
             const dtr = record.dtr || [];
-            
-            // Update month display
-            document.getElementById('dtrMonth').textContent = record.month_display || month;
             
             // Update totals
             document.getElementById('dtrTotalHours').textContent = record.total_hours || '0.00';
@@ -2111,7 +2124,9 @@ function showDTRMessage(message, type = 'info') {
 
 // Build DTR HTML matching the exact two-copy layout from the reference image
 function buildDTRHTML(record, dtr, employee) {
-    const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
+    const fullname = employee.fullname
+        || (employee.lastname ? `${employee.lastname}, ${employee.firstname || ''}`.trim() : '')
+        || 'Unknown';
     const position = employee.position || '';
     const department = employee.department || '';
     const employeeId = employee.employeeid || record.employee_id || '';
@@ -2163,7 +2178,7 @@ function buildDTRHTML(record, dtr, employee) {
                 <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${department}</span></div>
                 <div class="info-row two-col">
                     <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${employee.regularTime || 'DEFAULT'}</span></span>
-                    <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-blank"></span></span>
+                    <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-value">1</span><span class="info-blank"></span></span>
                 </div>
             </div>
 
@@ -2288,13 +2303,14 @@ function buildDTRHTML(record, dtr, employee) {
                     font-size: 15px;
                     font-weight: bold;
                     text-transform: uppercase;
-                    margin-bottom: 1px;
+                    margin-bottom: 6px;
                 }
                 .dtr-subtitle {
                     text-align: center;
                     font-size: 9px;
                     font-weight: bold;
                     text-transform: uppercase;
+                    margin-bottom: 4px;
                 }
                 .dtr-daterange {
                     text-align: center;
@@ -2376,7 +2392,7 @@ function buildDTRHTML(record, dtr, employee) {
                 }
                 .summary-line {
                     display: flex;
-                    gap: 14px;
+                    justify-content: space-between;
                     padding: 1px 0;
                 }
                 .summary-item {
