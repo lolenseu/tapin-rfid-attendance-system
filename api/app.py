@@ -121,9 +121,9 @@ ALLOWED_ORIGINS = [
 if not is_production():
     ALLOWED_ORIGINS.append("*")
 
-CORS(app, 
+CORS(app,
      origins=ALLOWED_ORIGINS,
-     supports_credentials=True, 
+     supports_credentials=True,
      allow_headers=["Content-Type", "Authorization", "Cookie", "Set-Cookie", "X-Requested-With"],
      expose_headers=["Content-Type", "Authorization"],
      methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
@@ -174,7 +174,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     # Try using the current working directory
     BASE_DIR = os.getcwd()
-    
+
 # If still not found, try the directory where app.py is located
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -185,6 +185,11 @@ USER_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "users.json")
 # Store every received RFID scan and timestamp.
 ATTENDANCE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "attendance.json")
 
+# Persistent leave database (mirror of the feed, kept forever).
+# Structure: {"requests": [...], "approved": [...], "rejected": [...]}
+# This is the NEW leaves.json — it lives alongside users.json and is NEVER wiped.
+LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "leaves.json")
+
 # Profile images storage
 PROFILE_STORAGE = os.path.join(BASE_DIR, "storage", "profiles")
 
@@ -194,8 +199,10 @@ SCAN_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_feed.json")
 # Scan events storage - keeps raw scan events (moved to feed)
 SCAN_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_events.json")
 
-# Leave requests storage (moved to feed)
-LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves.json")
+# Leave feed storage — this is the OLD leaves.json, renamed.
+# Structure matches the persistent file: {"requests": [...], "approved": [...], "rejected": [...]}
+# It lives in storage/feed/ and IS wiped nightly at 12:00 AM.
+LEAVE_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves_feed.json")
 
 # Activity feed storage - keeps all system activities for timeline
 ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.json")
@@ -203,26 +210,43 @@ ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.js
 # Settings storage
 SETTINGS_FILE = os.path.join(BASE_DIR, "storage", "config", "settings.json")
 
+# ============================================================================
+# NOTIFICATION STORAGE - PER-RFID FILES
+# ============================================================================
+# Every user (admin, hr, employee) gets their own notification file keyed by
+# their RFID. Path: storage/notification/<RFID>.json
+#
+# Example: RFID FB822A54 -> storage/notification/FB822A54.json
+#
+# Right before we overwrite any notification file, the current content is
+# copied to <RFID>.json.backup in the same folder — same convention as
+# users.json.backup and attendance.json.backup.
+NOTIFICATION_STORAGE = os.path.join(BASE_DIR, "storage", "notification")
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
 print(f"USER_DATA_FILE: {USER_DATA_FILE}")
 print(f"ATTENDANCE_DATA_FILE: {ATTENDANCE_DATA_FILE}")
+print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
 print(f"PROFILE_STORAGE: {PROFILE_STORAGE}")
 print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
 print(f"SCAN_EVENTS_FILE: {SCAN_EVENTS_FILE}")
-print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
+print(f"LEAVE_FEED_FILE: {LEAVE_FEED_FILE}")
 print(f"ACTIVITY_FEED_FILE: {ACTIVITY_FEED_FILE}")
 print(f"SETTINGS_FILE: {SETTINGS_FILE}")
+print(f"NOTIFICATION_STORAGE: {NOTIFICATION_STORAGE}")
 print(f"REPORTLAB_AVAILABLE: {REPORTLAB_AVAILABLE}")
 print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
 print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
@@ -302,39 +326,114 @@ last_scan_tracking = {}
 # Cooldown between scans for the same RFID (in seconds). Default 10 minutes.
 SCAN_COOLDOWN_SECONDS = 10 * 60
 
-# Track the last date we performed a midnight rollover so each user's
-# daily state (latest scan + scan cooldown) is cleared at 12:00 AM.
-_last_rollover_date = None
+# ============================================================================
+# NIGHTLY FEED WIPE (runs once per calendar day, at first request after 12:00 AM)
+# ============================================================================
+# Track the last date we performed the nightly wipe so all four feed files
+# are cleared exactly once per calendar day — at the first request received
+# after midnight. Wiping is a no-op if already done today.
+#
+# Files wiped nightly (in storage/feed/):
+#     - scan_feed.json       (scans)
+#     - scan_events.json     (scan_events)
+#     - activity_feed.json   (activities)
+#     - leaves_feed.json     (requests + approved + rejected)  <-- OLD leaves.json
+#
+# Files NOT wiped (persistent, in storage/database/):
+#     - users.json           (employee records)
+#     - attendance.json      (DTR records)
+#     - leaves.json          (NEW mirror of the feed — kept forever)
+#     - settings.json        (config)
+#
+# IMPORTANT: leaves_feed.json and leaves.json hold the SAME data at any given
+# moment. Every write goes to both files. Only the feed copy is emptied at
+# midnight — the database copy is the permanent record.
+_last_feed_wipe_date = None
 
-def perform_midnight_rollover():
-    """Clear each user's daily scan state at 12:00 AM (midnight).
+def perform_nightly_feed_wipe():
+    """Wipe all four feed files once per calendar day at 12:00 AM.
 
-    This resets the latest scan and the per-RFID scan cooldown so a new
-    day starts with a clean slate. Safe to call on every request.
+    Files cleared (all under storage/feed/):
+        - storage/feed/scan_feed.json      (scans list)
+        - storage/feed/scan_events.json    (scan_events list)
+        - storage/feed/activity_feed.json  (activities list)
+        - storage/feed/leaves_feed.json    (requests + approved + rejected)
+                                            ^ this is the OLD leaves.json
+
+    The persistent mirror at storage/database/leaves.json is NEVER touched.
+
+    Also clears in-memory daily state (latest scan + per-RFID cooldown).
+
+    Safe to call on every request — it short-circuits if already run today.
     """
-    global _last_rollover_date, latest_scan, last_scan_tracking
+    global _last_feed_wipe_date, latest_scan, last_scan_tracking, scan_events
+
     today = datetime.now().date()
-    if _last_rollover_date == today:
+    if _last_feed_wipe_date == today:
         return
-    _last_rollover_date = today
+    _last_feed_wipe_date = today
+
+    now_iso = datetime.now().isoformat()
+
+    # --- 1) scan_feed.json ---------------------------------------------------
+    try:
+        scan_feed_data = load_scan_feed()
+        scan_feed_data["scans"] = []
+        scan_feed_data["total_scans"] = 0
+        scan_feed_data["last_cleanup"] = now_iso
+        save_scan_feed(scan_feed_data)
+    except Exception as e:
+        print(f"[Nightly] Failed to wipe scan_feed.json: {e}")
+
+    # --- 2) scan_events.json -------------------------------------------------
+    try:
+        scan_events = []
+        save_scan_events({"scan_events": []})
+    except Exception as e:
+        print(f"[Nightly] Failed to wipe scan_events.json: {e}")
+
+    # --- 3) activity_feed.json -----------------------------------------------
+    try:
+        save_activity_feed({
+            "activities": [],
+            "total_activities": 0,
+            "last_cleanup": now_iso
+        })
+    except Exception as e:
+        print(f"[Nightly] Failed to wipe activity_feed.json: {e}")
+
+    # --- 4) leaves_feed.json (the OLD leaves.json — same shape as the mirror) -
+    # NOTE: We ONLY wipe the feed copy here. The mirror at
+    # storage/database/leaves.json is intentionally left alone.
+    try:
+        empty_leaves = {"requests": [], "approved": [], "rejected": []}
+        save_leave_feed_data(empty_leaves)
+        # Refresh the in-memory feed copy so the running app sees the empty state
+        leave_feed_data.clear()
+        leave_feed_data.update(empty_leaves)
+    except Exception as e:
+        print(f"[Nightly] Failed to wipe leaves_feed.json: {e}")
+
+    # --- 5) In-memory daily state -------------------------------------------
     last_scan_tracking.clear()
     latest_scan["rfid"] = None
     latest_scan["scanned_at"] = None
-    print(f"[Midnight] Cleared latest scan and cooldown for all users (date={today.isoformat()})")
+
+    print(f"[Nightly] All feeds wiped for {today.isoformat()} at {now_iso}")
 
 ## Functions ------------------------------------
 # Image compression function
 def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_dimensions=(300, 300)):
     """
     Compress and resize an image to reduce file size.
-    
+
     Args:
         image_file: The uploaded image file
         rfid: The RFID to use as filename
         max_size_kb: Maximum file size in KB (default: 100KB)
         quality: Initial JPEG quality (1-100)
         max_dimensions: Max width and height (default: 300x300)
-    
+
     Returns:
         str: The saved file path or None if failed
     """
@@ -346,11 +445,11 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
         filename = rfid_filename + extension
         image_file.save(os.path.join(PROFILE_STORAGE, filename))
         return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-    
+
     try:
         # Open the image
         img = Image.open(image_file)
-        
+
         # Convert to RGB if necessary (for PNG with transparency)
         if img.mode in ('RGBA', 'LA', 'P'):
             background = Image.new('RGB', img.size, (255, 255, 255))
@@ -358,20 +457,20 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 img = img.convert('RGBA')
             background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
             img = background
-        
+
         # Resize image maintaining aspect ratio
         img.thumbnail(max_dimensions, Image.Resampling.LANCZOS)
-        
+
         # Determine file extension
         extension = os.path.splitext(image_file.filename)[1].lower()
         rfid_filename = secure_filename(rfid)
         os.makedirs(PROFILE_STORAGE, exist_ok=True)
-        
+
         # Try to save as JPEG for better compression
         if extension in ['.jpg', '.jpeg']:
             filename = rfid_filename + '.jpg'
             filepath = os.path.join(PROFILE_STORAGE, filename)
-            
+
             # Try different quality settings to achieve target size
             current_quality = quality
             while current_quality > 10:
@@ -379,49 +478,49 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 buffer = io.BytesIO()
                 img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
                 size_kb = len(buffer.getvalue()) / 1024
-                
+
                 if size_kb <= max_size_kb:
                     # Save to file
                     img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"Image compressed to {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-                
+
                 # Reduce quality by 5
                 current_quality -= 5
-            
+
             # If still too large, save with minimum quality
             img.save(filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-        
+
         elif extension in ['.png']:
             # For PNG, convert to JPEG for better compression
             filename = rfid_filename + '.jpg'
             filepath = os.path.join(PROFILE_STORAGE, filename)
-            
+
             # Try different quality settings
             current_quality = quality
             while current_quality > 10:
                 buffer = io.BytesIO()
                 img.save(buffer, format='JPEG', quality=current_quality, optimize=True)
                 size_kb = len(buffer.getvalue()) / 1024
-                
+
                 if size_kb <= max_size_kb:
                     img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"PNG compressed to JPEG {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-                
+
                 current_quality -= 5
-            
+
             img.save(filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-        
+
         else:
             # For other formats, try to save as JPEG
             filename = rfid_filename + '.jpg'
             filepath = os.path.join(PROFILE_STORAGE, filename)
             img.save(filepath, format='JPEG', quality=quality, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
-            
+
     except Exception as e:
         print(f"Error compressing image: {e}")
         # Fallback: save without compression
@@ -442,7 +541,7 @@ def load_settings():
         # Create default settings file
         save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS.copy()
-    
+
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -514,6 +613,381 @@ def fetch_version_from_github():
         print(f"Error fetching version from GitHub: {e}")
         return None
 
+# ============================================================================
+# NOTIFICATION STORAGE HELPERS
+# ============================================================================
+# Every user (admin, hr, employee) has their own notification file keyed by
+# their RFID. Path: storage/notification/<RFID>.json
+#
+# Each file shape:
+#     {
+#         "rfid": "FB822A54",
+#         "uid": "021",
+#         "fullname": "JIM-MAR DE LOS REYES",
+#         "role": "employee",
+#         "notifications": [ { id, type, title, message, read, created_at }, ... ],
+#         "unread_count": 0,
+#         "total_count": 0,
+#         "last_updated": "..."
+#     }
+#
+# Before overwriting any notification file, the previous content is copied to
+# <RFID>.json.backup in the SAME folder — exactly like users.json.backup.
+
+def _sanitize_rfid(rfid):
+    """Sanitize an RFID so it is safe to use as a filename."""
+    if not rfid:
+        return ""
+    cleaned = re.sub(r'[^A-Za-z0-9_\-]', '', str(rfid).strip().upper())
+    return cleaned
+
+def _notification_path(rfid):
+    """Return the absolute path to a user's notification file."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return None
+    return os.path.join(NOTIFICATION_STORAGE, f"{safe_rfid}.json")
+
+def _notification_backup_path(rfid):
+    """Return the absolute path to a user's notification backup file (.json.backup)."""
+    path = _notification_path(rfid)
+    if not path:
+        return None
+    return path + ".backup"
+
+def _empty_notification_doc(rfid, uid=None, fullname=None, role=None):
+    """Build a fresh empty notification document for a given RFID."""
+    return {
+        "rfid": _sanitize_rfid(rfid),
+        "uid": uid or "",
+        "fullname": fullname or "",
+        "role": role or "",
+        "notifications": [],
+        "unread_count": 0,
+        "total_count": 0,
+        "last_updated": datetime.now().isoformat()
+    }
+
+def _backup_notification_file(rfid, existing_doc):
+    """Write a .json.backup copy of the current notification document.
+
+    Called right before we overwrite the live file so the previous version
+    is preserved as <RFID>.json.backup in the same folder.
+    """
+    try:
+        backup_path = _notification_backup_path(rfid)
+        if not backup_path or existing_doc is None:
+            return
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(existing_doc, f, indent=4)
+            f.write("\n")
+        print(f"Notification backup written: {backup_path}")
+    except Exception as e:
+        print(f"Warning: failed to write notification backup for {rfid}: {e}")
+
+def load_notifications(rfid, uid=None, fullname=None, role=None):
+    """Load the notification document for a given RFID.
+
+    If the file does not exist, an empty document is created and returned.
+    """
+    path = _notification_path(rfid)
+    if not path:
+        return _empty_notification_doc(rfid, uid, fullname, role)
+
+    if not os.path.exists(path):
+        doc = _empty_notification_doc(rfid, uid, fullname, role)
+        # Persist the empty doc so the user has a real file going forward.
+        try:
+            os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(doc, f, indent=4)
+                f.write("\n")
+        except Exception as e:
+            print(f"Warning: could not create notification file for {rfid}: {e}")
+        return doc
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading notification file for {rfid}: {e}")
+        return _empty_notification_doc(rfid, uid, fullname, role)
+
+    # Normalize structure
+    if not isinstance(data, dict):
+        data = _empty_notification_doc(rfid, uid, fullname, role)
+    if "notifications" not in data or not isinstance(data["notifications"], list):
+        data["notifications"] = []
+    data["rfid"] = _sanitize_rfid(rfid)
+    if uid is not None:
+        data["uid"] = uid
+    if fullname is not None:
+        data["fullname"] = fullname
+    if role is not None:
+        data["role"] = role
+    # Recompute counts so the file is always consistent
+    data["total_count"] = len(data["notifications"])
+    data["unread_count"] = sum(1 for n in data["notifications"] if not n.get("read", False))
+    if "last_updated" not in data:
+        data["last_updated"] = datetime.now().isoformat()
+    return data
+
+def save_notifications(rfid, doc, backup=True):
+    """Persist a notification document to disk.
+
+    If `backup` is True and the live file already exists, the previous
+    content is first written to <RFID>.json.backup in the same folder.
+    """
+    path = _notification_path(rfid)
+    if not path:
+        return False
+
+    existing = None
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = None
+
+    if backup and existing is not None:
+        _backup_notification_file(rfid, existing)
+
+    doc["rfid"] = _sanitize_rfid(rfid)
+    doc["total_count"] = len(doc.get("notifications", []))
+    doc["unread_count"] = sum(1 for n in doc.get("notifications", []) if not n.get("read", False))
+    doc["last_updated"] = datetime.now().isoformat()
+
+    try:
+        os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=4)
+            f.write("\n")
+        print(f"Notifications saved for {rfid} ({doc['total_count']} entries, {doc['unread_count']} unread)")
+        return True
+    except Exception as e:
+        print(f"Error saving notifications for {rfid}: {e}")
+        return False
+
+def push_notification(rfid, title, message, notif_type="system", uid=None, fullname=None, role=None):
+    """Append a new notification for the given RFID and save.
+
+    Returns the created notification entry, or None if the RFID is invalid.
+    """
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return None
+
+    doc = load_notifications(safe_rfid, uid=uid, fullname=fullname, role=role)
+
+    # Build a request-safe ID based on the current count.
+    try:
+        next_num = max([int(n.get("id", "0")) for n in doc.get("notifications", [])] + [0]) + 1
+    except Exception:
+        next_num = len(doc.get("notifications", [])) + 1
+    new_id = str(next_num).zfill(3)
+
+    entry = {
+        "id": new_id,
+        "type": notif_type,
+        "title": title,
+        "message": message,
+        "read": False,
+        "created_at": datetime.now().isoformat()
+    }
+
+    doc["notifications"].insert(0, entry)
+    # Cap at 200 entries per user to keep files small.
+    if len(doc["notifications"]) > 200:
+        doc["notifications"] = doc["notifications"][:200]
+
+    save_notifications(safe_rfid, doc)
+    return entry
+
+def clear_notifications(rfid):
+    """Clear all notifications for a given RFID (keeps the file itself)."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return False
+
+    doc = load_notifications(safe_rfid)
+    doc["notifications"] = []
+    doc["unread_count"] = 0
+    doc["total_count"] = 0
+    save_notifications(safe_rfid, doc)
+    print(f"Cleared all notifications for {safe_rfid}")
+    return True
+
+def mark_notification_read(rfid, notification_id):
+    """Mark a single notification as read."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return False
+
+    doc = load_notifications(safe_rfid)
+    found = False
+    for n in doc.get("notifications", []):
+        if str(n.get("id")) == str(notification_id):
+            n["read"] = True
+            found = True
+            break
+
+    if not found:
+        return False
+
+    save_notifications(safe_rfid, doc)
+    return True
+
+def mark_all_notifications_read(rfid):
+    """Mark every notification for a given RFID as read."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return False
+
+    doc = load_notifications(safe_rfid)
+    for n in doc.get("notifications", []):
+        n["read"] = True
+    save_notifications(safe_rfid, doc)
+    return True
+
+def delete_notification(rfid, notification_id):
+    """Delete a single notification entry."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return False
+
+    doc = load_notifications(safe_rfid)
+    before = len(doc.get("notifications", []))
+    doc["notifications"] = [
+        n for n in doc.get("notifications", [])
+        if str(n.get("id")) != str(notification_id)
+    ]
+    after = len(doc["notifications"])
+
+    if before == after:
+        return False
+
+    save_notifications(safe_rfid, doc)
+    return True
+
+# ============================================================================
+# LEAVE STORAGE (TWO FILES, SAME SHAPE)
+# ============================================================================
+# Both files use the SAME structure:
+#     {"requests": [...], "approved": [...], "rejected": [...]}
+#
+# storage/feed/leaves_feed.json         <- OLD leaves.json, wiped nightly
+# storage/database/leaves.json          <- NEW mirror, never wiped
+#
+# Every write goes to BOTH files so they always match. Only the feed copy
+# is emptied at 12:00 AM by perform_nightly_feed_wipe().
+
+def _empty_leaves():
+    """Return a fresh empty leave structure."""
+    return {"requests": [], "approved": [], "rejected": []}
+
+def _normalize_leave_payload(data):
+    """Ensure the three top-level keys exist and are lists."""
+    if not isinstance(data, dict):
+        return _empty_leaves()
+    if "requests" not in data or not isinstance(data["requests"], list):
+        data["requests"] = []
+    if "approved" not in data or not isinstance(data["approved"], list):
+        data["approved"] = []
+    if "rejected" not in data or not isinstance(data["rejected"], list):
+        data["rejected"] = []
+    return data
+
+def load_leave_data():
+    """Load the persistent leave database from storage/database/leaves.json.
+
+    Structure matches the feed: {requests, approved, rejected}.
+    """
+    if not os.path.exists(LEAVE_DATA_FILE):
+        default_data = _empty_leaves()
+        with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+            f.write("\n")
+        print(f"Created new persistent leave file: {LEAVE_DATA_FILE}")
+        return default_data
+
+    try:
+        with open(LEAVE_DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return _normalize_leave_payload(data)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading persistent leave file: {e}")
+        return _empty_leaves()
+
+def save_leave_data(leave_data):
+    """Save the persistent leave database to storage/database/leaves.json."""
+    os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
+    with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(leave_data, f, indent=4)
+        f.write("\n")
+    print(f"Leave data saved to {LEAVE_DATA_FILE}")
+
+def load_leave_feed_data():
+    """Load the transient leave feed from storage/feed/leaves_feed.json.
+
+    Structure matches the persistent file: {requests, approved, rejected}.
+    """
+    if not os.path.exists(LEAVE_FEED_FILE):
+        default_data = _empty_leaves()
+        with open(LEAVE_FEED_FILE, "w", encoding="utf-8") as f:
+            json.dump(default_data, f, indent=4)
+            f.write("\n")
+        print(f"Created new leave feed file: {LEAVE_FEED_FILE}")
+        return default_data
+
+    try:
+        with open(LEAVE_FEED_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return _normalize_leave_payload(data)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading leave feed file: {e}")
+        return _empty_leaves()
+
+def save_leave_feed_data(leave_feed):
+    """Save the transient leave feed to storage/feed/leaves_feed.json."""
+    os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
+    with open(LEAVE_FEED_FILE, "w", encoding="utf-8") as f:
+        json.dump(leave_feed, f, indent=4)
+        f.write("\n")
+    print(f"Leave feed saved to {LEAVE_FEED_FILE}")
+
+def save_both_leave_files(payload):
+    """Write the same payload to BOTH the persistent database and the feed.
+
+    Both files hold identical content at all times. Only the feed copy
+    gets emptied at midnight.
+    """
+    save_leave_data(payload)
+    save_leave_feed_data(payload)
+    # Also refresh the in-memory feed copy so reads stay in sync.
+    try:
+        leave_feed_data.clear()
+        leave_feed_data.update(payload)
+    except Exception:
+        pass
+
+# Load both on startup. If the feed is missing but the persistent file
+# exists, copy the persistent data into the feed so they start in sync.
+leave_data = load_leave_data()
+leave_feed_data = load_leave_feed_data()
+
+if not leave_feed_data.get("requests") and not leave_feed_data.get("approved") and not leave_feed_data.get("rejected"):
+    # Feed is empty — mirror the persistent file so they match on boot.
+    if leave_data.get("requests") or leave_data.get("approved") or leave_data.get("rejected"):
+        print("Leave feed was empty — mirroring persistent leaves.json into feed for consistency.")
+        leave_feed_data = {
+            "requests": list(leave_data.get("requests", [])),
+            "approved": list(leave_data.get("approved", [])),
+            "rejected": list(leave_data.get("rejected", [])),
+        }
+        save_leave_feed_data(leave_feed_data)
+
 # Load activity feed data
 def load_activity_feed():
     """Load activity feed data from JSON file"""
@@ -528,7 +1002,7 @@ def load_activity_feed():
             f.write("\n")
         print(f"Created new activity feed file: {ACTIVITY_FEED_FILE}")
         return default_data
-    
+
     try:
         with open(ACTIVITY_FEED_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -555,29 +1029,18 @@ def save_activity_feed(activity_data):
 def add_activity(action, details, user=None, activity_type="system"):
     """
     Add a system activity to the feed.
-    
+
     Args:
         action (str): The action performed (e.g., "employee_registered", "rfid_scanned")
         details (str): Description of the activity
         user (dict): User who performed the action
         activity_type (str): Type of activity (system, employee, attendance, leave, etc.)
-    
+
     Returns:
         dict: The created activity entry
     """
     activity_feed_data = load_activity_feed()
-    
-    # Cleanup old activities if needed (keep last 500 entries)
-    last_cleanup = datetime.fromisoformat(activity_feed_data.get("last_cleanup", datetime.now().isoformat()))
-    days_since_cleanup = (datetime.now() - last_cleanup).days
-    
-    if days_since_cleanup >= 7:
-        # Keep only last 500 activities
-        if len(activity_feed_data["activities"]) > 500:
-            activity_feed_data["activities"] = activity_feed_data["activities"][:500]
-        activity_feed_data["last_cleanup"] = datetime.now().isoformat()
-        print("Weekly activity feed cleanup performed")
-    
+
     activity_entry = {
         "id": str(len(activity_feed_data["activities"]) + 1),
         "action": action,
@@ -586,55 +1049,20 @@ def add_activity(action, details, user=None, activity_type="system"):
         "timestamp": datetime.now().isoformat(),
         "user": user
     }
-    
+
     # Insert at the beginning (newest first)
     activity_feed_data["activities"].insert(0, activity_entry)
-    
+
     # Keep only last 1000 activities
     if len(activity_feed_data["activities"]) > 1000:
         activity_feed_data["activities"] = activity_feed_data["activities"][:1000]
-    
+
     activity_feed_data["total_activities"] = len(activity_feed_data["activities"])
-    
+
     save_activity_feed(activity_feed_data)
-    
+
     print(f"Activity logged: {action} - {details}")
     return activity_entry
-
-# Load leave data
-def load_leave_data():
-    if not os.path.exists(LEAVE_DATA_FILE):
-        default_data = {"requests": [], "approved": [], "rejected": []}
-        with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_data, f, indent=4)
-            f.write("\n")
-        print(f"Created new leave file: {LEAVE_DATA_FILE}")
-        return default_data
-    
-    try:
-        with open(LEAVE_DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if "requests" not in data:
-                data["requests"] = []
-            if "approved" not in data:
-                data["approved"] = []
-            if "rejected" not in data:
-                data["rejected"] = []
-            return data
-    except (OSError, ValueError, json.JSONDecodeError) as e:
-        print(f"Error reading leave file: {e}")
-        return {"requests": [], "approved": [], "rejected": []}
-
-# Save leave data
-def save_leave_data(leave_data):
-    os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
-    with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(leave_data, f, indent=4)
-        f.write("\n")
-    print(f"Leave data saved to {LEAVE_DATA_FILE}")
-
-# Load leave data
-leave_data = load_leave_data()
 
 # Load scan events
 def load_scan_events():
@@ -645,7 +1073,7 @@ def load_scan_events():
             f.write("\n")
         print(f"Created new scan events file: {SCAN_EVENTS_FILE}")
         return default_data
-    
+
     try:
         with open(SCAN_EVENTS_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -668,7 +1096,7 @@ def save_scan_events(scan_events_data):
 def load_attendance_data():
     # Ensure the directory exists
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
-    
+
     if not os.path.exists(ATTENDANCE_DATA_FILE):
         # Create empty file with proper structure
         default_data = {"records": []}
@@ -677,7 +1105,7 @@ def load_attendance_data():
             f.write("\n")
         print(f"Created new attendance file: {ATTENDANCE_DATA_FILE}")
         return default_data
-    
+
     try:
         with open(ATTENDANCE_DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -712,7 +1140,7 @@ def load_scan_feed():
             f.write("\n")
         print(f"Created new scan feed file: {SCAN_FEED_FILE}")
         return default_data
-    
+
     try:
         with open(SCAN_FEED_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -749,15 +1177,6 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
     scan_feed_data = load_scan_feed()
 
     scan_date = datetime.now().date().isoformat()
-
-    last_cleanup = datetime.fromisoformat(scan_feed_data.get("last_cleanup", datetime.now().isoformat()))
-    days_since_cleanup = (datetime.now() - last_cleanup).days
-
-    if days_since_cleanup >= 7:
-        scan_feed_data["scans"] = []
-        scan_feed_data["last_cleanup"] = datetime.now().isoformat()
-        scan_feed_data["total_scans"] = 0
-        print("Weekly scan feed cleanup performed")
 
     # Build the fresh payload for this tap.
     employee_snapshot = None
@@ -834,7 +1253,7 @@ if scan_events:
 def save_attendance_data():
     """Save attendance records to attendance.json file - ONLY records, no scan events"""
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
-    
+
     if os.path.exists(ATTENDANCE_DATA_FILE):
         backup_file = ATTENDANCE_DATA_FILE + ".backup"
         try:
@@ -842,7 +1261,7 @@ def save_attendance_data():
             shutil.copy2(ATTENDANCE_DATA_FILE, backup_file)
         except:
             pass
-    
+
     with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump({
             "records": attendance_records
@@ -856,7 +1275,7 @@ def build_dtr_dict(year, month):
     days_in_month = calendar.monthrange(year, month)[1]
     dtr = {}
     month_name = calendar.month_abbr[month].lower()
-    
+
     for day in range(1, days_in_month + 1):
         date_obj = datetime(year, month, day)
         date_key = f"{day}-{month_name}"
@@ -883,13 +1302,13 @@ def get_attendance_record(employee, scan_date):
     month_key = scan_date.strftime("%Y-%m")
     month_display = scan_date.strftime("%B %Y")
     uid = employee.get("uid")
-    
+
     # First try to find existing record for this user and month
     for record in attendance_records:
         if record.get("uid") == uid and record.get("month") == month_key:
             print(f"Found existing record for {employee.get('firstname')} for month {month_key}")
             return record
-    
+
     # No record exists - create a new one with DTR format
     existing_ids = []
     for r in attendance_records:
@@ -898,7 +1317,7 @@ def get_attendance_record(employee, scan_date):
                 existing_ids.append(int(r.get("id")))
         except:
             pass
-    
+
     new_id = str(max(existing_ids + [0]) + 1).zfill(3)
 
     record = {
@@ -950,33 +1369,33 @@ def determine_scan_type(day_data, scan_time, employee):
     """
     rfid = employee.get("rfid")
     period = get_period(scan_time)
-    
+
     # Check if day is on leave - skip scanning
     if is_on_leave(day_data):
         print(f"Day marked as ON LEAVE for {rfid} - scan skipped")
         return None
-    
+
     # Check AM status from the day record
     am_has_in = has_time_in_for_period(day_data, "am")
     am_has_out = has_time_out_for_period(day_data, "am")
     am_complete = am_has_in and am_has_out
-    
+
     # Check PM status from the day record
     pm_has_in = has_time_in_for_period(day_data, "pm")
     pm_has_out = has_time_out_for_period(day_data, "pm")
     pm_complete = pm_has_in and pm_has_out
-    
+
     # AM period handling
     if period == "am":
         if not am_has_in:
             return ("am", "in")
-        
+
         if am_has_in and not am_has_out:
             if rfid in last_scan_tracking:
                 last_scan_data = last_scan_tracking[rfid]
                 last_scan_time = last_scan_data.get("last_scan_time")
                 last_scan_type = last_scan_data.get("last_scan_type")
-                
+
                 if last_scan_type == "in":
                     time_diff_seconds = (scan_time - last_scan_time).total_seconds()
                     if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
@@ -985,11 +1404,11 @@ def determine_scan_type(day_data, scan_time, employee):
                         mins = time_diff_seconds / 60.0
                         print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
                         return None
-        
+
         if am_complete:
             print(f"AM already complete for {rfid}")
             return None
-    
+
     # PM period handling
     elif period == "pm":
         if not am_complete:
@@ -1011,16 +1430,16 @@ def determine_scan_type(day_data, scan_time, employee):
                             print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
                             return None
                 return ("am", "out")
-        
+
         if not pm_has_in:
             return ("pm", "in")
-        
+
         if pm_has_in and not pm_has_out:
             if rfid in last_scan_tracking:
                 last_scan_data = last_scan_tracking[rfid]
                 last_scan_time = last_scan_data.get("last_scan_time")
                 last_scan_type = last_scan_data.get("last_scan_type")
-                
+
                 if last_scan_type == "in":
                     time_diff_seconds = (scan_time - last_scan_time).total_seconds()
                     if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
@@ -1029,11 +1448,11 @@ def determine_scan_type(day_data, scan_time, employee):
                         mins = time_diff_seconds / 60.0
                         print(f"PM cooldown not met for {rfid} - {mins:.2f} minutes")
                         return None
-        
+
         if pm_complete:
             print(f"PM already complete for {rfid}")
             return None
-    
+
     if not has_time_in_for_period(day_data, period):
         return (period, "in")
     else:
@@ -1057,18 +1476,18 @@ def record_attendance_scan(employee, scanned_at):
 
     # Get or create the record for this user and month
     record = get_attendance_record(employee, scan_time)
-    
+
     # Find the day record in DTR
     day_date = scan_time.strftime("%Y-%m-%d")
     day_data = None
     date_key = None
-    
+
     for key, day in record.get("dtr", {}).items():
         if day.get("date") == day_date:
             day_data = day
             date_key = key
             break
-    
+
     if not day_data:
         # This shouldn't happen, but just in case
         day_data = {
@@ -1084,20 +1503,20 @@ def record_attendance_scan(employee, scanned_at):
             "status": ""
         }
         record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
-    
+
     time_value = format_dtr_time(scan_time)
-    
+
     # Determine the scan type (time in or time out)
     scan_result = determine_scan_type(day_data, scan_time, employee)
-    
+
     if scan_result is None:
         print(f"Scan skipped for {rfid} - cooldown not met, already scanned, or on leave")
         return record, "skipped"
-    
+
     period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
-    
+
     if scan_type == "in":
         if not day_data[in_key]:
             day_data[in_key] = time_value
@@ -1107,10 +1526,10 @@ def record_attendance_scan(employee, scanned_at):
                 "last_scan_type": "in"
             }
             add_scan_to_feed(
-                rfid, 
-                scanned_at, 
-                employee, 
-                True, 
+                rfid,
+                scanned_at,
+                employee,
+                True,
                 f"{period}_in"
             )
             # Log activity
@@ -1120,6 +1539,19 @@ def record_attendance_scan(employee, scanned_at):
                 {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
                 "attendance"
             )
+            # Push a notification to this user's own notification file.
+            try:
+                push_notification(
+                    rfid,
+                    f"Time In Recorded ({period.upper()})",
+                    f"Your {period.upper()} time-in was recorded at {time_value}.",
+                    notif_type="attendance",
+                    uid=employee.get("uid"),
+                    fullname=f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+                    role=employee.get("role")
+                )
+            except Exception as e:
+                print(f"Warning: failed to push time-in notification for {rfid}: {e}")
         else:
             print(f"{period.upper()} TIME IN already exists for {rfid}")
             return record, "already_exists"
@@ -1132,10 +1564,10 @@ def record_attendance_scan(employee, scanned_at):
                 "last_scan_type": "out"
             }
             add_scan_to_feed(
-                rfid, 
-                scanned_at, 
-                employee, 
-                True, 
+                rfid,
+                scanned_at,
+                employee,
+                True,
                 f"{period}_out"
             )
             # Log activity
@@ -1145,10 +1577,23 @@ def record_attendance_scan(employee, scanned_at):
                 {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
                 "attendance"
             )
+            # Push a notification to this user's own notification file.
+            try:
+                push_notification(
+                    rfid,
+                    f"Time Out Recorded ({period.upper()})",
+                    f"Your {period.upper()} time-out was recorded at {time_value}.",
+                    notif_type="attendance",
+                    uid=employee.get("uid"),
+                    fullname=f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+                    role=employee.get("role")
+                )
+            except Exception as e:
+                print(f"Warning: failed to push time-out notification for {rfid}: {e}")
         else:
             print(f"{period.upper()} TIME OUT already exists for {rfid}")
             return record, "already_exists"
-    
+
     # Calculate hours after each update.
     # Pass the period so 12-hour stored times are interpreted correctly.
     am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""), period="am")
@@ -1174,7 +1619,7 @@ def record_attendance_scan(employee, scanned_at):
     else:
         day_data["ut"] = "0.00"
         day_data["ot"] = "0.00"
-    
+
     # Calculate total hours for the month
     total_hours_month = 0
     total_ut_month = 0
@@ -1186,11 +1631,11 @@ def record_attendance_scan(employee, scanned_at):
             total_ot_month += float(day.get("ot", "0.00"))
         except:
             pass
-    
+
     record["total_hours"] = f"{total_hours_month:.2f}"
     record["total_ut"] = f"{total_ut_month:.2f}"
     record["total_ot"] = f"{total_ot_month:.2f}"
-    
+
     return record, "success"
 
 # Parse the timestamp supplied by the RFID device.
@@ -1243,7 +1688,7 @@ def initialize_attendance_records():
 # Build the RFID lookup database from all user roles.
 def load_employee_database():
     os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
-    
+
     if not os.path.exists(USER_DATA_FILE):
         print("File not found: storage/database/users.json - database is empty")
         default_data = {"admin": [], "hr": [], "employees": []}
@@ -1251,7 +1696,7 @@ def load_employee_database():
             json.dump(default_data, f, indent=4)
             f.write("\n")
         return {}
-    
+
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -1314,14 +1759,14 @@ def get_online_devices():
 def get_dashboard_statistics():
     today = datetime.now().date()
     today_events = [event for event in scan_events if event.get("scanned_on") == today.isoformat()]
-    
+
     # All employees (regardless of RFID)
     all_employees = [
         emp for emp in employee_database.values()
         if emp.get("role") == "employee"
     ]
     total_employees = len(all_employees)
-    
+
     # Only those with real RFIDs can be matched to scans
     employee_rfids = {
         emp.get("rfid", "").strip().upper()
@@ -1388,10 +1833,18 @@ def get_dashboard_data():
         }
         for employee in employee_database.values()
     ]
-    
+
     # Load activity feed
     activity_feed = load_activity_feed()
-    
+
+    # Both leave files hold the same data, so the persistent copy is the
+    # source of truth for the dashboard payload.
+    leaves_payload = {
+        "requests": leave_data.get("requests", []),
+        "approved": leave_data.get("approved", []),
+        "rejected": leave_data.get("rejected", []),
+    }
+
     return {
         "stats": get_dashboard_statistics(),
         "users": users,
@@ -1399,7 +1852,7 @@ def get_dashboard_data():
         "scans": recent_scans,
         "devices": get_online_devices(),
         "latest_scan": recent_scans[0] if recent_scans else None,
-        "leaves": leave_data,
+        "leaves": leaves_payload,
         "activities": activity_feed.get("activities", [])
     }
 
@@ -1417,7 +1870,7 @@ def verify_token():
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith('Bearer '):
         return None, jsonify({"status": "error", "message": "No token provided"}), 401
-    
+
     token = auth_header.split(' ')[1]
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
@@ -1436,38 +1889,38 @@ def get_employee_attendance(rfid):
     """Get attendance details for a specific employee including today's time in/out"""
     rfid = rfid.strip().upper()
     employee = employee_database.get(rfid)
-    
+
     # Fallback: try to find by UID if not found by RFID
     if not employee:
         for emp in employee_database.values():
             if str(emp.get("uid", "")).strip() == rfid:
                 employee = emp
                 break
-    
+
     if not employee:
         return jsonify({
             "status": "error",
             "message": "Employee not found"
         }), 404
-    
+
     today = datetime.now().date()
     today_str = today.strftime("%Y-%m-%d")
     month_key = today.strftime("%Y-%m")
-    
+
     # Find attendance record for this employee
     attendance_record = None
     for record in attendance_records:
         if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
             attendance_record = record
             break
-    
+
     # Get today's data from DTR
     am_in = None
     am_out = None
     pm_in = None
     pm_out = None
     status = None
-    
+
     if attendance_record:
         for key, day in attendance_record.get("dtr", {}).items():
             if day.get("date") == today_str:
@@ -1477,7 +1930,7 @@ def get_employee_attendance(rfid):
                 pm_out = day.get("pm_out", "")
                 status = day.get("status", "")
                 break
-    
+
     # Build response
     response_data = {
         "status": "success",
@@ -1498,8 +1951,119 @@ def get_employee_attendance(rfid):
             "status": status or ""
         }
     }
-    
+
     return jsonify(response_data), 200
+
+# ============================================================================
+# NOTIFICATION API ROUTES
+# ============================================================================
+
+@app.route("/api/notifications/<rfid>", methods=["GET"])
+def get_notifications(rfid):
+    """Fetch the notification document for a specific RFID."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    # Pull employee info if we know this RFID so the doc is always current.
+    employee = employee_database.get(safe_rfid)
+    uid = employee.get("uid") if employee else None
+    fullname = f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip() if employee else None
+    role = employee.get("role") if employee else None
+
+    doc = load_notifications(safe_rfid, uid=uid, fullname=fullname, role=role)
+    return jsonify({"status": "success", "data": doc}), 200
+
+@app.route("/api/notifications/<rfid>", methods=["POST"])
+def create_notification(rfid):
+    """Create a new notification for a specific RFID.
+
+    Body (JSON):
+        {
+            "title": "...",
+            "message": "...",
+            "type": "system" | "attendance" | "leave" | "employee"
+        }
+    """
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    data = request.get_json() or {}
+    title = str(data.get("title", "")).strip()
+    message = str(data.get("message", "")).strip()
+    notif_type = str(data.get("type", "system")).strip().lower() or "system"
+
+    if not title or not message:
+        return jsonify({"status": "error", "message": "title and message are required"}), 400
+
+    employee = employee_database.get(safe_rfid)
+    entry = push_notification(
+        safe_rfid,
+        title,
+        message,
+        notif_type=notif_type,
+        uid=employee.get("uid") if employee else None,
+        fullname=f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip() if employee else None,
+        role=employee.get("role") if employee else None
+    )
+
+    if not entry:
+        return jsonify({"status": "error", "message": "Could not create notification"}), 500
+
+    return jsonify({"status": "success", "data": entry}), 200
+
+@app.route("/api/notifications/<rfid>/clear", methods=["POST"])
+def clear_user_notifications(rfid):
+    """Clear ALL notifications for a given RFID."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    ok = clear_notifications(safe_rfid)
+    if not ok:
+        return jsonify({"status": "error", "message": "Could not clear notifications"}), 500
+
+    return jsonify({"status": "success", "message": "All notifications cleared"}), 200
+
+@app.route("/api/notifications/<rfid>/read-all", methods=["POST"])
+def mark_all_read(rfid):
+    """Mark every notification for a given RFID as read."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    ok = mark_all_notifications_read(safe_rfid)
+    if not ok:
+        return jsonify({"status": "error", "message": "Could not update notifications"}), 500
+
+    return jsonify({"status": "success", "message": "All notifications marked read"}), 200
+
+@app.route("/api/notifications/<rfid>/<notification_id>", methods=["PATCH"])
+def update_notification(rfid, notification_id):
+    """Mark a single notification as read."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    ok = mark_notification_read(safe_rfid, notification_id)
+    if not ok:
+        return jsonify({"status": "error", "message": "Notification not found"}), 404
+
+    return jsonify({"status": "success", "message": "Notification marked read"}), 200
+
+@app.route("/api/notifications/<rfid>/<notification_id>", methods=["DELETE"])
+def delete_single_notification(rfid, notification_id):
+    """Delete a single notification entry."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    ok = delete_notification(safe_rfid, notification_id)
+    if not ok:
+        return jsonify({"status": "error", "message": "Notification not found"}), 404
+
+    return jsonify({"status": "success", "message": "Notification deleted"}), 200
 
 ## DTR GENERATION ROUTES ------------------------------------
 # Get all employees (excluding admin and hr) for DTR selection
@@ -1517,7 +2081,7 @@ def get_dtr_employees():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     employees = []
     for key, emp in employee_database.items():
         role = emp.get("role", "").lower()
@@ -1533,10 +2097,10 @@ def get_dtr_employees():
                 "department": emp.get("department", ""),
                 "role": role
             })
-    
+
     # Sort by fullname
     employees.sort(key=lambda x: x.get("fullname", ""))
-    
+
     return jsonify({
         "status": "success",
         "data": employees
@@ -1557,39 +2121,39 @@ def get_dtr_record(rfid):
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     identifier = rfid.strip().upper()
     employee = employee_database.get(identifier)
-    
+
     # Fallback: try to find by UID if not found by RFID
     if not employee:
         for emp in employee_database.values():
             if str(emp.get("uid", "")).strip() == identifier:
                 employee = emp
                 break
-    
+
     if not employee:
         return jsonify({
             "status": "error",
             "message": "Employee not found"
         }), 404
-    
+
     # Get month parameter (default to current month)
     month = request.args.get("month", datetime.now().strftime("%Y-%m"))
-    
+
     # Find attendance record for this employee and month
     attendance_record = None
     for record in attendance_records:
         if record.get("uid") == employee.get("uid") and record.get("month") == month:
             attendance_record = record
             break
-    
+
     if not attendance_record:
         # Create a new record for this employee and month
         scan_date = datetime.strptime(month + "-01", "%Y-%m-%d")
         attendance_record = get_attendance_record(employee, scan_date)
         save_attendance_data()
-    
+
     # Prepare the response with DTR data
     dtr_data = []
     for date_key, day_data in attendance_record.get("dtr", {}).items():
@@ -1605,7 +2169,7 @@ def get_dtr_record(rfid):
             "ot": day_data.get("ot", "0.00"),
             "status": day_data.get("status", "")
         })
-    
+
     # Log activity
     add_activity(
         "dtr_viewed",
@@ -1613,7 +2177,7 @@ def get_dtr_record(rfid):
         {"name": session.get("user", {}).get("fullname", "User")},
         "attendance"
     )
-    
+
     return jsonify({
         "status": "success",
         "data": {
@@ -1650,7 +2214,7 @@ def generate_dtr_pdf(rfid):
             "status": "error",
             "message": "PDF generation is not available. Please install reportlab."
         }), 500
-    
+
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         user_data, error_response, status_code = verify_token()
@@ -1662,44 +2226,44 @@ def generate_dtr_pdf(rfid):
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     identifier = rfid.strip().upper()
     employee = employee_database.get(identifier)
-    
+
     # Fallback: try to find by UID if not found by RFID
     if not employee:
         for emp in employee_database.values():
             if str(emp.get("uid", "")).strip() == identifier:
                 employee = emp
                 break
-    
+
     if not employee:
         return jsonify({
             "status": "error",
             "message": "Employee not found"
         }), 404
-    
+
     # Get month parameter (default to current month)
     month = request.args.get("month", datetime.now().strftime("%Y-%m"))
-    
+
     # Find attendance record for this employee and month
     attendance_record = None
     for record in attendance_records:
         if record.get("uid") == employee.get("uid") and record.get("month") == month:
             attendance_record = record
             break
-    
+
     if not attendance_record:
         scan_date = datetime.strptime(month + "-01", "%Y-%m-%d")
         attendance_record = get_attendance_record(employee, scan_date)
         save_attendance_data()
-    
+
     # Create PDF
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter), 
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(letter),
                            rightMargin=0.5*inch, leftMargin=0.5*inch,
                            topMargin=0.5*inch, bottomMargin=0.5*inch)
-    
+
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(
         name='CenterTitle',
@@ -1739,15 +2303,15 @@ def generate_dtr_pdf(rfid):
         fontName='Helvetica',
         spaceAfter=2
     ))
-    
+
     elements = []
-    
+
     # Title
     elements.append(Paragraph("DAILY TIME RECORD", styles['CenterTitle']))
     elements.append(Paragraph("Civil Service Commission · Republic of the Philippines", styles['CenterSubtitle']))
     elements.append(Paragraph("CSC Form No. 48 — Revised 2018", styles['CenterSmall']))
     elements.append(Spacer(1, 0.15*inch))
-    
+
     # Employee Info
     fullname = f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip()
     employee_info = [
@@ -1758,7 +2322,7 @@ def generate_dtr_pdf(rfid):
         [Paragraph(f"<b>Month:</b> {attendance_record.get('month_display', '')}", styles['InfoText']),
          Paragraph(f"<b>RFID:</b> {employee.get('rfid', '')}", styles['InfoText'])]
     ]
-    
+
     info_table = Table(employee_info, colWidths=[4.5*inch, 4.5*inch])
     info_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
@@ -1769,12 +2333,12 @@ def generate_dtr_pdf(rfid):
     ]))
     elements.append(info_table)
     elements.append(Spacer(1, 0.15*inch))
-    
+
     # DTR Table
     dtr_data = []
     header = ['Day', 'Date', 'AM In', 'AM Out', 'PM In', 'PM Out', 'Hours', 'UT', 'OT', 'Status']
     dtr_data.append(header)
-    
+
     for date_key, day in attendance_record.get("dtr", {}).items():
         row = [
             day.get("day", ""),
@@ -1789,7 +2353,7 @@ def generate_dtr_pdf(rfid):
             day.get("status", "")
         ]
         dtr_data.append(row)
-    
+
     # Add totals row
     dtr_data.append([
         "TOTALS", "", "", "", "", "",
@@ -1798,11 +2362,11 @@ def generate_dtr_pdf(rfid):
         attendance_record.get("total_ot", "0.00"),
         ""
     ])
-    
+
     # Create table with column widths - landscape gives more room
     col_widths = [0.5*inch, 0.9*inch, 0.65*inch, 0.65*inch, 0.65*inch, 0.65*inch, 0.6*inch, 0.5*inch, 0.5*inch, 0.7*inch]
     dtr_table = Table(dtr_data, colWidths=col_widths, repeatRows=1)
-    
+
     # Style the table
     table_style = TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
@@ -1822,16 +2386,16 @@ def generate_dtr_pdf(rfid):
         ('LEFTPADDING', (0, 0), (-1, -1), 2),
         ('RIGHTPADDING', (0, 0), (-1, -1), 2),
     ])
-    
+
     # Color rows that are on leave
     for i, row in enumerate(dtr_data[1:], start=1):
         if len(row) > 9 and row[9] == "on_leave":
             table_style.add('BACKGROUND', (0, i), (-1, i), colors.yellow)
-    
+
     dtr_table.setStyle(table_style)
     elements.append(dtr_table)
     elements.append(Spacer(1, 0.2*inch))
-    
+
     # Signature lines
     sig_data = [
         ['', '', ''],
@@ -1850,11 +2414,11 @@ def generate_dtr_pdf(rfid):
         ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
     ]))
     elements.append(sig_table)
-    
+
     # Build PDF
     doc.build(elements)
     buffer.seek(0)
-    
+
     # Log activity
     add_activity(
         "dtr_generated",
@@ -1862,13 +2426,13 @@ def generate_dtr_pdf(rfid):
         {"name": session.get("user", {}).get("fullname", "User")},
         "attendance"
     )
-    
+
     # Return PDF
     filename = f"DTR_{employee.get('lastname', 'unknown')}_{employee.get('firstname', 'unknown')}_{month}.pdf"
     response = make_response(buffer.getvalue())
     response.headers['Content-Type'] = 'application/pdf'
     response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
-    
+
     return response
 
 # Get available months for DTR
@@ -1886,23 +2450,23 @@ def get_dtr_months():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     months = set()
     for record in attendance_records:
         month = record.get("month")
         month_display = record.get("month_display")
         if month and month_display:
             months.add((month, month_display))
-    
+
     # Sort by month descending (newest first)
     sorted_months = sorted(list(months), key=lambda x: x[0], reverse=True)
-    
+
     # If no months exist, add current month
     if not sorted_months:
         current_month = datetime.now().strftime("%Y-%m")
         current_display = datetime.now().strftime("%B %Y")
         sorted_months = [(current_month, current_display)]
-    
+
     return jsonify({
         "status": "success",
         "data": [{"value": m[0], "label": m[1]} for m in sorted_months]
@@ -1916,29 +2480,36 @@ def request_leave():
         data = request.get_json()
         if not data:
             return jsonify({"status": "error", "message": "Missing data"}), 400
-        
+
         required = ["rfid", "start_date", "end_date", "reason", "leave_type"]
         if not all(key in data for key in required):
             return jsonify({
-                "status": "error", 
+                "status": "error",
                 "message": "Missing required fields: rfid, start_date, end_date, reason, leave_type"
             }), 400
-        
+
         rfid = data["rfid"].strip().upper()
         employee = employee_database.get(rfid)
-        
+
         # Fallback: try to find by UID if not found by RFID
         if not employee:
             for emp in employee_database.values():
                 if str(emp.get("uid", "")).strip() == rfid:
                     employee = emp
                     break
-        
+
         if not employee:
             return jsonify({"status": "error", "message": "Employee not found"}), 404
-        
-        request_id = str(len(leave_data["requests"]) + 1).zfill(3)
-        
+
+        # Build a request ID that won't collide with existing entries.
+        existing_ids = []
+        for req in leave_data.get("requests", []) + leave_data.get("approved", []) + leave_data.get("rejected", []):
+            try:
+                existing_ids.append(int(req.get("id", "0")))
+            except (ValueError, TypeError):
+                pass
+        request_id = str(max(existing_ids + [0]) + 1).zfill(3)
+
         leave_request = {
             "id": request_id,
             "rfid": rfid,
@@ -1956,19 +2527,20 @@ def request_leave():
             "processed_by": None,
             "days": []
         }
-        
+
         start_date = datetime.strptime(data["start_date"], "%Y-%m-%d")
         end_date = datetime.strptime(data["end_date"], "%Y-%m-%d")
-        
+
         current_date = start_date
         while current_date <= end_date:
             if current_date.weekday() < 5:
                 leave_request["days"].append(current_date.strftime("%Y-%m-%d"))
             current_date += timedelta(days=1)
-        
+
+        # Append to the persistent structure and mirror to BOTH files.
         leave_data["requests"].append(leave_request)
-        save_leave_data(leave_data)
-        
+        save_both_leave_files(leave_data)
+
         # Log activity
         add_activity(
             "leave_requested",
@@ -1976,13 +2548,27 @@ def request_leave():
             {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
             "leave"
         )
-        
+
+        # Notify the employee that their request was received.
+        try:
+            push_notification(
+                rfid,
+                "Leave Request Submitted",
+                f"Your {data['leave_type']} leave request from {data['start_date']} to {data['end_date']} is now pending approval.",
+                notif_type="leave",
+                uid=employee.get("uid"),
+                fullname=f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+                role=employee.get("role")
+            )
+        except Exception as e:
+            print(f"Warning: failed to push leave-request notification: {e}")
+
         return jsonify({
             "status": "success",
             "message": "Leave request submitted successfully",
             "data": leave_request
         }), 200
-        
+
     except Exception as e:
         print(f"Leave request error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2001,43 +2587,48 @@ def get_leave_requests():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
+    # Persistent file is the source of truth — the feed mirrors it.
     return jsonify({
         "status": "success",
-        "data": leave_data
+        "data": {
+            "requests": leave_data.get("requests", []),
+            "approved": leave_data.get("approved", []),
+            "rejected": leave_data.get("rejected", []),
+        }
     }), 200
 
 # Get leave requests for a specific employee
 @app.route("/api/leave-requests/<rfid>", methods=["GET"])
 def get_employee_leave_requests(rfid):
     identifier = rfid.strip().upper()
-    
+
     # Try RFID lookup first
     employee = employee_database.get(identifier)
-    
+
     # Fallback: try to find by UID
     if not employee:
         for emp in employee_database.values():
             if str(emp.get("uid", "")).strip() == identifier:
                 employee = emp
                 break
-    
+
     if not employee:
         return jsonify({"status": "error", "message": "Employee not found"}), 404
-    
+
     # Use the employee's UID for filtering so it works with both RFID and UID lookups
     uid = employee.get("uid")
-    
+
     employee_requests = [
-        req for req in leave_data["requests"] if req.get("uid") == uid
+        req for req in leave_data.get("requests", []) if req.get("uid") == uid
     ]
     employee_approved = [
-        req for req in leave_data["approved"] if req.get("uid") == uid
+        req for req in leave_data.get("approved", []) if req.get("uid") == uid
     ]
     employee_rejected = [
-        req for req in leave_data["rejected"] if req.get("uid") == uid
+        req for req in leave_data.get("rejected", []) if req.get("uid") == uid
     ]
-    
+
     return jsonify({
         "status": "success",
         "data": {
@@ -2062,32 +2653,32 @@ def approve_leave(request_id):
                     "status": "error",
                     "message": "Session expired or user is not logged in"
                 }), 401
-        
+
         request_to_approve = None
         request_index = -1
-        
+
         for idx, req in enumerate(leave_data["requests"]):
             if req.get("id") == request_id:
                 request_to_approve = req
                 request_index = idx
                 break
-        
+
         if not request_to_approve:
             return jsonify({"status": "error", "message": "Leave request not found"}), 404
-        
+
         request_to_approve["status"] = "approved"
         request_to_approve["processed_at"] = datetime.now().isoformat()
         request_to_approve["processed_by"] = user_data.get("fullname") or user_data.get("username")
-        
+
         leave_data["approved"].append(request_to_approve)
         leave_data["requests"].pop(request_index)
-        
+
         # Update attendance records for the approved leave days
         uid = request_to_approve.get("uid")
         for date_str in request_to_approve.get("days", []):
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
             month_key = date_obj.strftime("%Y-%m")
-            
+
             for record in attendance_records:
                 if record.get("uid") == uid and record.get("month") == month_key:
                     for key, day in record.get("dtr", {}).items():
@@ -2103,10 +2694,11 @@ def approve_leave(request_id):
                             print(f"Marked {date_str} as ON LEAVE for {request_to_approve.get('fullname')}")
                             break
                     break
-        
-        save_leave_data(leave_data)
+
+        # Mirror to BOTH leave files.
+        save_both_leave_files(leave_data)
         save_attendance_data()
-        
+
         # Log activity
         add_activity(
             "leave_approved",
@@ -2114,13 +2706,27 @@ def approve_leave(request_id):
             {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
             "leave"
         )
-        
+
+        # Notify the employee that their request was approved.
+        try:
+            push_notification(
+                request_to_approve.get("rfid"),
+                "Leave Request Approved",
+                f"Your {request_to_approve.get('leave_type', 'leave')} request from {request_to_approve.get('start_date', '')} to {request_to_approve.get('end_date', '')} has been approved.",
+                notif_type="leave",
+                uid=request_to_approve.get("uid"),
+                fullname=request_to_approve.get("fullname"),
+                role="employee"
+            )
+        except Exception as e:
+            print(f"Warning: failed to push leave-approved notification: {e}")
+
         return jsonify({
             "status": "success",
             "message": "Leave request approved successfully",
             "data": request_to_approve
         }), 200
-        
+
     except Exception as e:
         print(f"Approve leave error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2140,28 +2746,29 @@ def reject_leave(request_id):
                     "status": "error",
                     "message": "Session expired or user is not logged in"
                 }), 401
-        
+
         request_to_reject = None
         request_index = -1
-        
+
         for idx, req in enumerate(leave_data["requests"]):
             if req.get("id") == request_id:
                 request_to_reject = req
                 request_index = idx
                 break
-        
+
         if not request_to_reject:
             return jsonify({"status": "error", "message": "Leave request not found"}), 404
-        
+
         request_to_reject["status"] = "rejected"
         request_to_reject["processed_at"] = datetime.now().isoformat()
         request_to_reject["processed_by"] = user_data.get("fullname") or user_data.get("username")
-        
+
         leave_data["rejected"].append(request_to_reject)
         leave_data["requests"].pop(request_index)
-        
-        save_leave_data(leave_data)
-        
+
+        # Mirror to BOTH leave files.
+        save_both_leave_files(leave_data)
+
         # Log activity
         add_activity(
             "leave_rejected",
@@ -2169,13 +2776,27 @@ def reject_leave(request_id):
             {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
             "leave"
         )
-        
+
+        # Notify the employee that their request was rejected.
+        try:
+            push_notification(
+                request_to_reject.get("rfid"),
+                "Leave Request Rejected",
+                f"Your {request_to_reject.get('leave_type', 'leave')} request from {request_to_reject.get('start_date', '')} to {request_to_reject.get('end_date', '')} has been rejected.",
+                notif_type="leave",
+                uid=request_to_reject.get("uid"),
+                fullname=request_to_reject.get("fullname"),
+                role="employee"
+            )
+        except Exception as e:
+            print(f"Warning: failed to push leave-rejected notification: {e}")
+
         return jsonify({
             "status": "success",
             "message": "Leave request rejected",
             "data": request_to_reject
         }), 200
-        
+
     except Exception as e:
         print(f"Reject leave error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -2196,18 +2817,18 @@ def get_settings():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     # Check for version update from GitHub
     github_version = fetch_version_from_github()
     current_version = settings.get("system", {}).get("version", "1.0.0")
-    
+
     # Return settings with version info
     response_data = settings.copy()
     response_data["system"] = response_data.get("system", {}).copy()
     response_data["system"]["version"] = current_version
     response_data["system"]["github_version"] = github_version
     response_data["system"]["version_url"] = settings.get("system", {}).get("version_url", "")
-    
+
     return jsonify({
         "status": "success",
         "data": response_data
@@ -2228,7 +2849,7 @@ def update_settings():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     try:
         data = request.get_json()
         if not data:
@@ -2236,27 +2857,27 @@ def update_settings():
                 "status": "error",
                 "message": "No data provided"
             }), 400
-        
+
         # Update attendance settings
         if "attendance" in data:
             for key in ["work_start", "work_end", "lunch_start", "lunch_end", "grace_period"]:
                 if key in data["attendance"]:
                     settings["attendance"][key] = data["attendance"][key]
-        
+
         # Update institution settings
         if "institution" in data:
             for key in ["name", "system_name", "academic_year", "hr_email"]:
                 if key in data["institution"]:
                     settings["institution"][key] = data["institution"][key]
-        
+
         # Update system settings (except version which is auto-managed)
         if "system" in data:
             if "version_url" in data["system"]:
                 settings["system"]["version_url"] = data["system"]["version_url"]
-        
+
         # Save settings
         save_settings(settings)
-        
+
         # Log activity
         add_activity(
             "settings_updated",
@@ -2264,13 +2885,13 @@ def update_settings():
             {"name": session.get("user", {}).get("fullname", "User")},
             "system"
         )
-        
+
         return jsonify({
             "status": "success",
             "message": "Settings updated successfully",
             "data": settings
         }), 200
-        
+
     except Exception as e:
         print(f"Error updating settings: {e}")
         return jsonify({
@@ -2293,23 +2914,23 @@ def check_version():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     github_version = fetch_version_from_github()
     current_version = settings.get("system", {}).get("version", "1.0.0")
-    
+
     is_newer = False
     if github_version:
         try:
             # Simple version comparison
             current_parts = current_version.split('.')
             github_parts = github_version.split('.')
-            
+
             # Pad to same length
             while len(current_parts) < len(github_parts):
                 current_parts.append('0')
             while len(github_parts) < len(current_parts):
                 github_parts.append('0')
-            
+
             for i in range(len(current_parts)):
                 if int(github_parts[i]) > int(current_parts[i]):
                     is_newer = True
@@ -2318,7 +2939,7 @@ def check_version():
                     break
         except:
             is_newer = github_version != current_version
-    
+
     return jsonify({
         "status": "success",
         "data": {
@@ -2344,11 +2965,11 @@ def reset_settings():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     global settings
     settings = DEFAULT_SETTINGS.copy()
     save_settings(settings)
-    
+
     # Log activity
     add_activity(
         "settings_reset",
@@ -2356,7 +2977,7 @@ def reset_settings():
         {"name": session.get("user", {}).get("fullname", "User")},
         "system"
     )
-    
+
     return jsonify({
         "status": "success",
         "message": "Settings reset to defaults",
@@ -2438,7 +3059,7 @@ def login():
                 stored_hash = emp.get("password_hash", "").lower()
                 print(f"Stored hash: '{stored_hash}'")
                 print(f"Input hash:  '{password_hash}'")
-                
+
                 if password_hash == stored_hash:
                     role = get_user_role(emp)
                     user_data = {
@@ -2449,18 +3070,18 @@ def login():
                         "role": role,
                         "rfid": emp.get("rfid")
                     }
-                    
+
                     token = jwt.encode({
                         'user': user_data,
                         'exp': datetime.utcnow() + JWT_EXPIRATION
                     }, JWT_SECRET, algorithm='HS256')
-                    
+
                     session.permanent = True
                     session["user"] = user_data
                     session.modified = True
-                    
+
                     print("Login successful for:", username)
-                    
+
                     # Log login activity
                     add_activity(
                         "user_login",
@@ -2468,7 +3089,21 @@ def login():
                         {"name": user_data.get('fullname'), "uid": user_data.get('uid')},
                         "system"
                     )
-                    
+
+                    # Push a login notification to this user's own file.
+                    try:
+                        push_notification(
+                            emp.get("rfid"),
+                            "Login Successful",
+                            f"Your account was accessed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+                            notif_type="system",
+                            uid=emp.get("uid"),
+                            fullname=f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                            role=role
+                        )
+                    except Exception as e:
+                        print(f"Warning: failed to push login notification: {e}")
+
                     return jsonify({
                         "status": "success",
                         "message": "Login successful",
@@ -2505,7 +3140,7 @@ def get_session():
         user_data, error_response, status_code = verify_token()
         if not error_response:
             return jsonify({"status": "success", "user": user_data}), 200
-    
+
     user = session.get("user")
     if not user:
         return jsonify({
@@ -2522,7 +3157,7 @@ def get_session():
 def logout():
     try:
         user = session.get("user")
-        
+
         # Log logout activity before clearing session
         if user:
             add_activity(
@@ -2531,17 +3166,17 @@ def logout():
                 {"name": user.get('fullname'), "uid": user.get('uid')},
                 "system"
             )
-        
+
         session.clear()
-        
+
         response = jsonify({
             "status": "success",
             "message": "Logged out successfully"
         })
-        
+
         response.set_cookie('tapin_session', '', expires=0)
         response.set_cookie('session', '', expires=0)
-        
+
         print("User logged out successfully")
         return response, 200
     except Exception as e:
@@ -2564,7 +3199,7 @@ def register_employee():
                 "message": "Missing required fields",
                 "required_fields": required
             }), 400
-        
+
         role = str(data.get("role", "employee")).strip().lower()
         if role not in ["admin", "hr", "employee"]:
             return jsonify({
@@ -2576,9 +3211,9 @@ def register_employee():
         category = "employees" if role == "employee" else role
         image_file = request.files.get("image")
         image_path = ""
-        
+
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
-        
+
         if os.path.exists(USER_DATA_FILE):
             with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
                 database = json.load(f)
@@ -2587,7 +3222,7 @@ def register_employee():
 
         username = str(data.get("username", "")).strip()
         rfid = str(data.get("rfid", "")).strip().upper()
-        
+
         if any(emp.get("rfid", "").strip().upper() == rfid or emp.get("username") == username
                for records in database.values() for emp in records):
             return jsonify({
@@ -2613,10 +3248,10 @@ def register_employee():
                     "status": "error",
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
-            
+
             # Use the compression function
             image_path = compress_and_save_image(image_file, rfid)
-            
+
             if not image_path:
                 # Fallback to original saving method if compression fails
                 rfid_filename = secure_filename(rfid)
@@ -2645,11 +3280,11 @@ def register_employee():
             "timestamp_modified": now
         }
         database.setdefault(category, []).append(employee)
-        
+
         if os.path.exists(USER_DATA_FILE):
             import shutil
             shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
-        
+
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(database, f, indent=4)
             f.write("\n")
@@ -2657,7 +3292,7 @@ def register_employee():
         employee_database[rfid] = employee
 
         print("Registered:", employee["firstname"], employee["lastname"], "UID:", uid, "RFID:", rfid)
-        
+
         # Log activity
         add_activity(
             "employee_registered",
@@ -2665,7 +3300,21 @@ def register_employee():
             {"name": "System", "uid": "system"},
             "employee"
         )
-        
+
+        # Create an empty notification file for the new user, with a welcome entry.
+        try:
+            push_notification(
+                rfid,
+                "Welcome to TAPIN",
+                f"Hello {employee['firstname']}, your account has been registered successfully.",
+                notif_type="system",
+                uid=uid,
+                fullname=f"{employee['firstname']} {employee['lastname']}".strip(),
+                role=role
+            )
+        except Exception as e:
+            print(f"Warning: failed to create welcome notification: {e}")
+
         return jsonify({
             "status": "success",
             "message": "Employee registered successfully",
@@ -2683,23 +3332,23 @@ def update_employee(rfid):
     try:
         rfid = rfid.strip().upper()
         data = request.form
-        
+
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
-        
+
         if not os.path.exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "Database file not found"
             }), 404
-        
+
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
             database = json.load(f)
-        
+
         found = False
         updated_employee = None
         category_found = None
         index_found = None
-        
+
         for category in ["admin", "hr", "employees"]:
             if category in database:
                 for idx, emp in enumerate(database[category]):
@@ -2711,7 +3360,7 @@ def update_employee(rfid):
                         break
                 if found:
                     break
-        
+
         # Fallback: try to find by UID if not found by RFID
         if not found:
             for category in ["admin", "hr", "employees"]:
@@ -2725,15 +3374,15 @@ def update_employee(rfid):
                             break
                     if found:
                         break
-        
+
         if not found:
             return jsonify({
                 "status": "error",
                 "message": "Employee not found"
             }), 404
-        
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
         # Update text fields
         if "lastname" in data and data.get("lastname"):
             updated_employee["lastname"] = str(data.get("lastname", "")).strip()
@@ -2753,11 +3402,11 @@ def update_employee(rfid):
             updated_employee["department"] = str(data.get("department", "")).strip()
         if "position" in data:
             updated_employee["position"] = str(data.get("position", "")).strip()
-        
+
         # Update password if provided
         if "password" in data and data.get("password"):
             updated_employee["password_hash"] = hashlib.md5(str(data.get("password", "")).encode("utf-8")).hexdigest()
-        
+
         # Handle image update
         image_file = request.files.get("image")
         if image_file and image_file.filename:
@@ -2768,7 +3417,7 @@ def update_employee(rfid):
                     "status": "error",
                     "message": "Image must be JPG, JPEG, PNG, GIF, or WEBP"
                 }), 400
-            
+
             # Delete old image file if it exists
             old_image = updated_employee.get("image")
             if old_image:
@@ -2779,10 +3428,10 @@ def update_employee(rfid):
                         print(f"Deleted old image: {old_image_path}")
                     except Exception as e:
                         print(f"Error deleting old image: {e}")
-            
+
             # Use the compression function for new image
             image_path = compress_and_save_image(image_file, rfid)
-            
+
             if image_path:
                 updated_employee["image"] = image_path
                 print(f"New image saved: {image_path}")
@@ -2830,19 +3479,19 @@ def update_employee(rfid):
                     print(f"Warning: failed to update attendance records for RFID change: {e}")
 
         updated_employee["timestamp_modified"] = now
-        
+
         # Update database
         database[category_found][index_found] = updated_employee
-        
+
         # Create backup
         import shutil
         shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
-        
+
         # Save to file
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(database, f, indent=4)
             f.write("\n")
-        
+
         # Update in-memory database (handle RFID rename if requested)
         try:
             if new_rfid_value:
@@ -2857,7 +3506,7 @@ def update_employee(rfid):
                 employee_database[rfid] = updated_employee
         except Exception as e:
             print(f"Warning: failed to update in-memory employee_database mapping: {e}")
-        
+
         # Log activity
         add_activity(
             "employee_updated",
@@ -2865,13 +3514,27 @@ def update_employee(rfid):
             {"name": "System", "uid": "system"},
             "employee"
         )
-        
+
+        # Notify the employee that their profile was updated.
+        try:
+            push_notification(
+                updated_employee.get("rfid") or rfid,
+                "Profile Updated",
+                "Your profile information was updated successfully.",
+                notif_type="employee",
+                uid=updated_employee.get("uid"),
+                fullname=f"{updated_employee.get('firstname', '')} {updated_employee.get('lastname', '')}".strip(),
+                role=updated_employee.get("role")
+            )
+        except Exception as e:
+            print(f"Warning: failed to push profile-update notification: {e}")
+
         return jsonify({
             "status": "success",
             "message": "Employee updated successfully",
             "data": updated_employee
         }), 200
-        
+
     except Exception as e:
         print(f"Update error: {str(e)}")
         import traceback
@@ -2896,7 +3559,7 @@ def dashboard_data():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     return jsonify({
         "status": "success",
         "data": get_dashboard_data()
@@ -2913,6 +3576,8 @@ def dashboard_stats():
 # Serve scan feed data
 @app.route("/api/scan-feed", methods=["GET"])
 def get_scan_feed():
+    # Wipe all feeds once per calendar day (first request after midnight).
+    perform_nightly_feed_wipe()
     scan_feed_data = load_scan_feed()
     return jsonify({
         "status": "success",
@@ -2923,14 +3588,16 @@ def get_scan_feed():
 @app.route("/api/activity-feed", methods=["GET"])
 def get_activity_feed():
     """Get the activity feed data for the dashboard timeline"""
+    # Wipe all feeds once per calendar day (first request after midnight).
+    perform_nightly_feed_wipe()
     limit = request.args.get("limit", default=50, type=int)
     activity_feed_data = load_activity_feed()
     activities = activity_feed_data.get("activities", [])
-    
+
     # Return limited activities
     if limit and limit > 0:
         activities = activities[:limit]
-    
+
     return jsonify({
         "status": "success",
         "data": {
@@ -2978,7 +3645,7 @@ def get_attendance():
                 "status": "error",
                 "message": "Session expired or user is not logged in"
             }), 401
-    
+
     month = request.args.get("month", datetime.now().strftime("%Y-%m"))
     records = [record for record in attendance_records if record.get("month") == month]
     return jsonify({
@@ -2991,7 +3658,8 @@ def get_attendance():
 @app.route("/api/get-latest-rfid", methods=["GET"])
 def get_latest_rfid():
     """Get the latest RFID scan with full attendance data for the employee"""
-    perform_midnight_rollover()
+    # Wipe all feeds once per calendar day (first request after midnight).
+    perform_nightly_feed_wipe()
     rfid = latest_scan.get("rfid")
     scanned_at = latest_scan.get("scanned_at")
     employee = employee_database.get(rfid) if rfid else None
@@ -3003,7 +3671,7 @@ def get_latest_rfid():
         # Build employee data with full image URL
         stored_image = employee.get("image", "")
         image_url = ""
-        
+
         if stored_image:
             if stored_image.startswith("http"):
                 image_url = stored_image
@@ -3028,12 +3696,12 @@ def get_latest_rfid():
             "role": employee.get("role"),
             "image": image_url
         }
-        
+
         # Get today's attendance data - ALWAYS try to get or create record
         today = datetime.now()
         today_str = today.strftime("%Y-%m-%d")
         month_key = today.strftime("%Y-%m")
-        
+
         # Try to find existing record
         for record in attendance_records:
             if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
@@ -3048,7 +3716,7 @@ def get_latest_rfid():
                         }
                         break
                 break
-        
+
         # If no record found, create one and return empty data
         if attendance_data is None:
             # Create a new attendance record for this employee
@@ -3096,7 +3764,7 @@ def reload_db():
     global employee_database
     employee_database = load_employee_database()
     initialize_attendance_records()
-    
+
     # Log activity
     add_activity(
         "database_reloaded",
@@ -3104,7 +3772,7 @@ def reload_db():
         {"name": "System", "uid": "system"},
         "system"
     )
-    
+
     return jsonify({
         "status": "success",
         "message": "Database reloaded",
@@ -3149,20 +3817,20 @@ def receive_rfid():
     try:
         print(f"RFID receive request received")
         print(f"Content-Type: {request.headers.get('Content-Type')}")
-        
-        # Ensure each user's daily scan state is cleared at midnight.
-        perform_midnight_rollover()
-        
+
+        # Wipe all feeds once per calendar day (first request after midnight).
+        perform_nightly_feed_wipe()
+
         # Get raw data for debugging
         raw_data = request.get_data()
         print(f"Raw data: {raw_data}")
-        
+
         # Try to parse JSON
         data = request.get_json()
         if not data:
             print("ERROR: Invalid JSON or missing data")
             return "ERROR: Invalid JSON or missing data", 400
-            
+
         if "rfid" not in data or "scanned_at" not in data:
             print("ERROR: Missing required fields: rfid and scanned_at")
             return "ERROR: Missing required fields: rfid and scanned_at", 400
@@ -3175,15 +3843,15 @@ def receive_rfid():
         # Update latest scan
         latest_scan["rfid"] = rfid
         latest_scan["scanned_at"] = scanned_at
-        
+
         # Check if employee exists
         employee = employee_database.get(rfid)
         found = bool(employee)
-        
+
         # Do NOT call add_scan_to_feed here — record_attendance_scan will do it
         # with the correct scan_type (am_in / am_out / pm_in / pm_out) once the
         # in/out state machine runs below.
-        
+
         # Add to scan events (raw data for statistics)
         scan_event = {
             "rfid": rfid,
@@ -3253,6 +3921,10 @@ def page_not_found(e):
 @app.route("/api/settings", methods=["OPTIONS"])
 @app.route("/api/settings/check-version", methods=["OPTIONS"])
 @app.route("/api/settings/reset", methods=["OPTIONS"])
+@app.route("/api/notifications/<rfid>", methods=["OPTIONS"])
+@app.route("/api/notifications/<rfid>/clear", methods=["OPTIONS"])
+@app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])
+@app.route("/api/notifications/<rfid>/<notification_id>", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
@@ -3287,12 +3959,12 @@ def handle_scanner_options():
 ## Main ------------------------------------
 if __name__ == "__main__":
     initialize_attendance_records()
-    
+
     # Get port from environment variable (Railway sets PORT)
     # If PORT env var is set (e.g., on Railway), use it directly.
     # Otherwise, find a free port starting from 5000 for local development.
     env_port = os.environ.get("PORT")
-    
+
     if env_port:
         # Production / Railway: use the provided port
         port = int(env_port)
@@ -3308,7 +3980,7 @@ if __name__ == "__main__":
             print(f"✅ Found free port: {port}")
         else:
             port = 5000
-    
+
     # Print environment info
     print(f"\n{'='*60}")
     print(f"🚀 Starting TapIn API Server")
@@ -3317,7 +3989,7 @@ if __name__ == "__main__":
     print(f"📁 Storage: {BASE_DIR}/storage")
     print(f"🌐 Port: {port}")
     print(f"{'='*60}\n")
-    
+
     # For production, use HTTPS secure settings
     if is_production():
         app.run(host='0.0.0.0', port=port, debug=False)
