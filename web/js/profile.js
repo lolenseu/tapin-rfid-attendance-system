@@ -212,6 +212,33 @@ function formatTimeFromISO(isoString) {
     }
 }
 
+// Format DTR time (stored as 12-hour without AM/PM) for display with correct AM/PM based on field context
+function formatDtrTimeForDisplay(timeStr, period) {
+    if (!timeStr) return '--';
+    if (timeStr.includes(':')) {
+        try {
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+                let hour = parseInt(parts[0]);
+                const minute = parts[1];
+
+                // For DTR times, we know the context (AM/PM field) so we can display correctly
+                // Convert to 12-hour format for display
+                hour = hour % 12;
+                if (hour === 0) hour = 12;
+
+                // Determine AM/PM based on the field context, not the hour value
+                const ampm = period === 'pm' ? 'PM' : 'AM';
+                return `${hour}:${minute} ${ampm}`;
+            }
+            return timeStr;
+        } catch {
+            return timeStr;
+        }
+    }
+    return timeStr;
+}
+
 function getInitials(firstname, lastname) {
     const f = (firstname || '').charAt(0).toUpperCase();
     const l = (lastname || '').charAt(0).toUpperCase();
@@ -291,11 +318,11 @@ function renderEmployee(emp, attendance) {
     // Debug: log attendance data
     console.log('Attendance data:', attendance);
     
-    // Get attendance times - format them properly
-    const amIn = attendance && attendance.am_in ? formatTime(attendance.am_in) : '--';
-    const amOut = attendance && attendance.am_out ? formatTime(attendance.am_out) : '--';
-    const pmIn = attendance && attendance.pm_in ? formatTime(attendance.pm_in) : '--';
-    const pmOut = attendance && attendance.pm_out ? formatTime(attendance.pm_out) : '--';
+    // Get attendance times - format them properly with correct AM/PM based on field context
+    const amIn = attendance && attendance.am_in ? `${formatDtrTimeForDisplay(attendance.am_in, 'am')}` : '--';
+    const amOut = attendance && attendance.am_out ? `${formatDtrTimeForDisplay(attendance.am_out, 'am')}` : '--';
+    const pmIn = attendance && attendance.pm_in ? `${formatDtrTimeForDisplay(attendance.pm_in, 'pm')}` : '--';
+    const pmOut = attendance && attendance.pm_out ? `${formatDtrTimeForDisplay(attendance.pm_out, 'pm')}` : '--';
     const status = attendance && attendance.status ? attendance.status : '';
 
     // Build status badge if on leave
@@ -548,6 +575,33 @@ function startPolling() {
 }
 
 document.addEventListener('DOMContentLoaded', startPolling);
+
+// Format DTR time (stored as 12-hour without AM/PM) for display with correct AM/PM based on field context
+function formatDtrTimeForDisplay(timeStr, period) {
+    if (!timeStr) return '--';
+    if (timeStr.includes(':')) {
+        try {
+            const parts = timeStr.split(':');
+            if (parts.length >= 2) {
+                let hour = parseInt(parts[0]);
+                const minute = parts[1];
+
+                // For DTR times, we know the context (AM/PM field) so we can display correctly
+                // Convert to 12-hour format for display
+                hour = hour % 12;
+                if (hour === 0) hour = 12;
+
+                // Determine AM/PM based on the field context, not the hour value
+                const ampm = period === 'pm' ? 'PM' : 'AM';
+                return `${hour}:${minute} ${ampm}`;
+            }
+            return timeStr;
+        } catch {
+            return timeStr;
+        }
+    }
+    return timeStr;
+}
 
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {

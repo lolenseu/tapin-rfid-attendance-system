@@ -1416,6 +1416,20 @@ def determine_scan_type(day_data, scan_time, employee):
                 print(f"Late AM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                 return ("am", "in")
             elif am_has_in and not am_has_out:
+                # Check if we're past lunch_end - if so, treat as PM time in instead of AM out
+                try:
+                    lunch_end_str = settings.get("attendance", {}).get("lunch_end", "13:00")
+                    lunch_end_hour = int(lunch_end_str.split(":")[0])
+                    lunch_end_minute = int(lunch_end_str.split(":")[1]) if ":" in lunch_end_str else 0
+                    lunch_end_time = scan_time.replace(hour=lunch_end_hour, minute=lunch_end_minute, second=0, microsecond=0)
+
+                    if scan_time >= lunch_end_time:
+                        print(f"AM period ended (past lunch_end {lunch_end_str}), treating scan as PM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
+                        return ("pm", "in")
+                except Exception as e:
+                    print(f"Error checking lunch_end time: {e}")
+                    # Fall back to original logic if settings parsing fails
+
                 if rfid in last_scan_tracking:
                     last_scan_data = last_scan_tracking[rfid]
                     last_scan_time = last_scan_data.get("last_scan_time")
