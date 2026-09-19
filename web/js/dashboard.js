@@ -1,5 +1,8 @@
 const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
+// The logged-in admin's own user record, populated once the session is verified
+let currentAdminUser = null;
+
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');
     localStorage.removeItem('tapinToken');
@@ -976,6 +979,120 @@ function clearEmployeeFilters() {
     renderEmployeeCards(filteredEmployees);
 }
 
+// Employee Directory search dropdown state
+let employeeSelectedSuggestionIndex = -1;
+
+// Live-filters the employee grid as the user types AND shows a matching
+// suggestions dropdown (same pattern/markup as the DTR employee search).
+function searchEmployeesWithSuggestions(value) {
+    // Keep the grid itself filtering live, same as before.
+    filterEmployees();
+
+    const dropdown = document.getElementById('employeeSearchDropdown');
+    const clearBtn = document.getElementById('employeeSearchClear');
+    if (!dropdown) return;
+
+    const term = (value || '').trim().toLowerCase();
+    if (clearBtn) clearBtn.style.display = term ? 'flex' : 'none';
+    employeeSelectedSuggestionIndex = -1;
+
+    if (!term) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    const matches = allEmployees.filter(emp => {
+        const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
+        const employeeId = (emp.employeeid || '').toLowerCase();
+        const email = (emp.email || '').toLowerCase();
+        return fullname.includes(term) || employeeId.includes(term) || email.includes(term);
+    }).slice(0, 8);
+
+    dropdown.innerHTML = matches.length === 0
+        ? '<div class="dtr-suggestion-empty">No employees found</div>'
+        : matches.map((emp) => {
+            const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
+            const role = (emp.role || 'employee').toLowerCase();
+            return `
+                <div class="dtr-suggestion" onclick="selectEmployeeSuggestion('${escapeHtml(emp.uid)}')">
+                    <div class="dtr-suggestion-avatar">${escapeHtml(initials(emp))}</div>
+                    <div class="dtr-suggestion-body">
+                        <div class="dtr-suggestion-name">${highlightMatchText(fullname, term)}</div>
+                        <div class="dtr-suggestion-meta">${escapeHtml(emp.employeeid || 'N/A')}${emp.department ? ' &bull; ' + escapeHtml(emp.department) : ''}</div>
+                    </div>
+                    <span class="dtr-suggestion-badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
+                </div>`;
+        }).join('');
+
+    dropdown.style.display = 'block';
+}
+
+// Picking a suggestion narrows the search box to that person and re-filters
+function selectEmployeeSuggestion(uid) {
+    const emp = getEmployeeByUid(uid);
+    if (!emp) return;
+
+    const input = document.getElementById('employeeSearchInput');
+    const dropdown = document.getElementById('employeeSearchDropdown');
+    const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
+
+    if (input) input.value = fullname;
+    if (dropdown) dropdown.style.display = 'none';
+    filterEmployees();
+}
+
+// Clear the Employee Directory search box (role/department filters stay as-is)
+function clearEmployeeSearch() {
+    const input = document.getElementById('employeeSearchInput');
+    const dropdown = document.getElementById('employeeSearchDropdown');
+    const clearBtn = document.getElementById('employeeSearchClear');
+
+    if (input) input.value = '';
+    if (dropdown) dropdown.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+    employeeSelectedSuggestionIndex = -1;
+    filterEmployees();
+}
+
+// Keyboard navigation (arrows/enter/escape) for the Employee search dropdown
+function handleEmployeeSearchKeydown(event) {
+    const dropdown = document.getElementById('employeeSearchDropdown');
+    if (!dropdown || dropdown.style.display === 'none') return;
+    const items = dropdown.querySelectorAll('.dtr-suggestion');
+    if (!items.length) return;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        employeeSelectedSuggestionIndex = Math.min(employeeSelectedSuggestionIndex + 1, items.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        employeeSelectedSuggestionIndex = Math.max(employeeSelectedSuggestionIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const target = employeeSelectedSuggestionIndex >= 0 ? items[employeeSelectedSuggestionIndex] : items[0];
+        target.click();
+        return;
+    } else if (event.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+    } else {
+        return;
+    }
+
+    items.forEach(i => i.classList.remove('active'));
+    items[employeeSelectedSuggestionIndex].classList.add('active');
+    items[employeeSelectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+}
+
+// Hide the Employee search dropdown when clicking anywhere else on the page
+document.addEventListener('click', (event) => {
+    const input = document.getElementById('employeeSearchInput');
+    const dropdown = document.getElementById('employeeSearchDropdown');
+    if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
 // ============ END EMPLOYEE FUNCTIONS ============
 
 // ============ VIEW EMPLOYEE MODAL ============
@@ -1764,7 +1881,11 @@ async function loadActivityFeed() {
 
 // ============ DTR FUNCTIONS ============
 
-// Load DTR employees for the dropdown
+// Employees available for the DTR search box (populated below)
+let dtrEmployeesList = [];
+let dtrSelectedSuggestionIndex = -1;
+
+// Load DTR employees for the search box
 async function loadDTREmployees() {
     try {
         const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/employees`, {
@@ -1786,38 +1907,144 @@ async function loadDTREmployees() {
         
         const result = await response.json();
         if (result.status === 'success' && result.data) {
-            const select = document.getElementById('dtrEmployeeSelect');
-            if (!select) return;
-            
-            // Clear existing options except the first one
-            while (select.options.length > 1) {
-                select.remove(1);
-            }
-            
-            // Add employees to dropdown
-            result.data.forEach(emp => {
-                const option = document.createElement('option');
-                option.value = emp.rfid;
-                option.textContent = `${emp.fullname} (${emp.employeeid || 'N/A'})`;
-                option.dataset.fullname = emp.fullname;
-                option.dataset.employeeid = emp.employeeid || '';
-                option.dataset.position = emp.position || '';
-                option.dataset.department = emp.department || '';
-                option.dataset.role = emp.role || 'employee';
-                select.appendChild(option);
-            });
-            
+            dtrEmployeesList = result.data || [];
+
             // Auto-load first employee if available
-            if (result.data.length > 0) {
-                select.value = result.data[0].rfid;
-                // Load the DTR automatically
-                loadDTRRecord();
+            if (dtrEmployeesList.length > 0) {
+                selectDTREmployee(dtrEmployeesList[0].rfid);
             }
         }
     } catch (error) {
         console.error('Error loading DTR employees:', error);
     }
 }
+
+// Build the initials shown on a DTR search suggestion's avatar circle
+function initialsFromFullname(fullname) {
+    return String(fullname || '').trim().split(/\s+/).map(p => p[0] || '').join('').slice(0, 2).toUpperCase() || '--';
+}
+
+// Wrap the matched portion of a suggestion's name in a highlight span
+function highlightMatchText(text, term) {
+    const safeText = escapeHtml(text || '');
+    if (!term) return safeText;
+    const idx = safeText.toLowerCase().indexOf(term.toLowerCase());
+    if (idx === -1) return safeText;
+    return safeText.slice(0, idx)
+        + '<span class="dtr-suggestion-highlight">' + safeText.slice(idx, idx + term.length) + '</span>'
+        + safeText.slice(idx + term.length);
+}
+
+// Filter the DTR employee list as the user types and show matching
+// suggestions in the dropdown (mirrors the Employee Directory search).
+function filterDTREmployees() {
+    const input = document.getElementById('dtrEmployeeSearch');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    const clearBtn = document.getElementById('dtrSearchClear');
+    if (!input || !dropdown) return;
+
+    const term = input.value.trim().toLowerCase();
+    if (clearBtn) clearBtn.style.display = term ? 'flex' : 'none';
+    dtrSelectedSuggestionIndex = -1;
+
+    const matches = (term
+        ? dtrEmployeesList.filter(emp => {
+            const fullname = (emp.fullname || '').toLowerCase();
+            const employeeId = (emp.employeeid || '').toLowerCase();
+            return fullname.includes(term) || employeeId.includes(term);
+        })
+        : dtrEmployeesList
+    ).slice(0, 8);
+
+    dropdown.innerHTML = matches.length === 0
+        ? '<div class="dtr-suggestion-empty">No employees found</div>'
+        : matches.map((emp) => {
+            const role = (emp.role || 'employee').toLowerCase();
+            return `
+                <div class="dtr-suggestion" onclick="selectDTREmployee('${escapeHtml(emp.rfid)}')">
+                    <div class="dtr-suggestion-avatar">${initialsFromFullname(emp.fullname)}</div>
+                    <div class="dtr-suggestion-body">
+                        <div class="dtr-suggestion-name">${highlightMatchText(emp.fullname, term)}</div>
+                        <div class="dtr-suggestion-meta">${escapeHtml(emp.employeeid || 'N/A')}${emp.department ? ' &bull; ' + escapeHtml(emp.department) : ''}</div>
+                    </div>
+                    <span class="dtr-suggestion-badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
+                </div>`;
+        }).join('');
+
+    dropdown.style.display = 'block';
+}
+
+// Pick an employee from the DTR search dropdown (or auto-select on load)
+function selectDTREmployee(rfid) {
+    const emp = dtrEmployeesList.find(e => e.rfid === rfid);
+    if (!emp) return;
+
+    const input = document.getElementById('dtrEmployeeSearch');
+    const hidden = document.getElementById('dtrEmployeeSelect');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    const clearBtn = document.getElementById('dtrSearchClear');
+
+    if (input) input.value = `${emp.fullname} (${emp.employeeid || 'N/A'})`;
+    if (hidden) hidden.value = emp.rfid;
+    if (dropdown) dropdown.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'flex';
+
+    // Auto-load the DTR once an employee is picked
+    loadDTRRecord();
+}
+
+// Clear the DTR employee search box
+function clearDTRSearch() {
+    const input = document.getElementById('dtrEmployeeSearch');
+    const hidden = document.getElementById('dtrEmployeeSelect');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    const clearBtn = document.getElementById('dtrSearchClear');
+
+    if (input) input.value = '';
+    if (hidden) hidden.value = '';
+    if (dropdown) dropdown.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+    dtrSelectedSuggestionIndex = -1;
+}
+
+// Keyboard navigation (arrows/enter/escape) for the DTR search dropdown
+function handleDTRSearchKeydown(event) {
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    if (!dropdown || dropdown.style.display === 'none') return;
+    const items = dropdown.querySelectorAll('.dtr-suggestion');
+    if (!items.length) return;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        dtrSelectedSuggestionIndex = Math.min(dtrSelectedSuggestionIndex + 1, items.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        dtrSelectedSuggestionIndex = Math.max(dtrSelectedSuggestionIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const target = dtrSelectedSuggestionIndex >= 0 ? items[dtrSelectedSuggestionIndex] : items[0];
+        target.click();
+        return;
+    } else if (event.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+    } else {
+        return;
+    }
+
+    items.forEach(i => i.classList.remove('active'));
+    items[dtrSelectedSuggestionIndex].classList.add('active');
+    items[dtrSelectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+}
+
+// Hide the DTR suggestion dropdown when clicking anywhere else on the page
+document.addEventListener('click', (event) => {
+    const input = document.getElementById('dtrEmployeeSearch');
+    const dropdown = document.getElementById('dtrEmployeeDropdown');
+    if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
 
 // Load available months for DTR
 async function loadDTRMonths() {
@@ -1879,24 +2106,18 @@ async function loadDTRMonths() {
 // endpoint's employee object is incomplete.
 function resolveDTREmployeeInfo(select, apiEmployee, apiRecord) {
     apiEmployee = apiEmployee || {};
-    const option = select && select.options ? select.options[select.selectedIndex] : null;
-    const fromOption = option ? {
-        fullname: option.dataset.fullname || '',
-        employeeid: option.dataset.employeeid || '',
-        position: option.dataset.position || '',
-        department: option.dataset.department || '',
-        role: option.dataset.role || ''
-    } : {};
+    const rfid = select && select.value;
+    const fromList = rfid ? (dtrEmployeesList.find(e => e.rfid === rfid) || {}) : {};
 
     const apiFullname = apiEmployee.fullname
         || (apiEmployee.lastname ? `${apiEmployee.lastname}, ${apiEmployee.firstname || ''}`.trim() : '');
 
     return {
-        fullname: apiFullname || fromOption.fullname || 'Unknown',
-        employeeid: apiEmployee.employeeid || fromOption.employeeid || (apiRecord && apiRecord.employee_id) || '',
-        position: apiEmployee.position || fromOption.position || '',
-        department: apiEmployee.department || fromOption.department || '',
-        role: apiEmployee.role || fromOption.role || 'employee',
+        fullname: apiFullname || fromList.fullname || 'Unknown',
+        employeeid: apiEmployee.employeeid || fromList.employeeid || (apiRecord && apiRecord.employee_id) || '',
+        position: apiEmployee.position || fromList.position || '',
+        department: apiEmployee.department || fromList.department || '',
+        role: apiEmployee.role || fromList.role || 'employee',
         regularTime: apiEmployee.regular_time || apiEmployee.regularTime || 'DEFAULT'
     };
 }
@@ -1969,6 +2190,10 @@ function renderDTREmployeeInfoPanel(info) {
 async function loadDTRRecord() {
     const select = document.getElementById('dtrEmployeeSelect');
     const monthSelect = document.getElementById('dtrMonthSelect');
+    if (!select || !monthSelect) {
+        console.error('loadDTRRecord: missing #dtrEmployeeSelect or #dtrMonthSelect in the page.');
+        return;
+    }
     const rfid = select.value;
     const month = monthSelect.value;
     
@@ -1982,17 +2207,18 @@ async function loadDTRRecord() {
         return;
     }
     
-    // Get employee info from selected option
-    const option = select.options[select.selectedIndex];
-    const fullname = option.dataset.fullname || '';
-    const employeeid = option.dataset.employeeid || '';
-    const position = option.dataset.position || '';
-    const department = option.dataset.department || '';
-    const role = option.dataset.role || 'employee';
+    // Get employee info from the DTR employees list
+    const emp = dtrEmployeesList.find(e => e.rfid === rfid) || {};
+    const fullname = emp.fullname || '';
+    const employeeid = emp.employeeid || '';
+    const position = emp.position || '';
+    const department = emp.department || '';
+    const role = emp.role || 'employee';
     
     // Update employee info display - simplified (only signature; the
     // Employee/Employee ID/Role/Month block was removed)
-    document.getElementById('dtrSigEmployee').textContent = fullname || 'Employee Signature';
+    const sigEl = document.getElementById('dtrSigEmployee');
+    if (sigEl) sigEl.textContent = fullname || 'Employee Signature';
 
     // Show the full Name / Position / Department / Regular Time block,
     // aligned the same way it appears on the printed DTR.
@@ -2036,9 +2262,12 @@ async function loadDTRRecord() {
             const dtr = record.dtr || [];
             
             // Update totals
-            document.getElementById('dtrTotalHours').textContent = record.total_hours || '0.00';
-            document.getElementById('dtrTotalOt').textContent = record.total_ot || '0.00';
-            document.getElementById('dtrTotalUt').textContent = record.total_ut || '0.00';
+            const totalHoursEl = document.getElementById('dtrTotalHours');
+            const totalOtEl = document.getElementById('dtrTotalOt');
+            const totalUtEl = document.getElementById('dtrTotalUt');
+            if (totalHoursEl) totalHoursEl.textContent = record.total_hours || '0.00';
+            if (totalOtEl) totalOtEl.textContent = record.total_ot || '0.00';
+            if (totalUtEl) totalUtEl.textContent = record.total_ut || '0.00';
             
             // Update DTR table
             const tbody = document.getElementById('dtrTableBody');
@@ -2124,12 +2353,31 @@ function showDTRMessage(message, type = 'info') {
 
 // Build DTR HTML matching the exact two-copy layout from the reference image
 function buildDTRHTML(record, dtr, employee) {
-    const fullname = employee.fullname
-        || (employee.lastname ? `${employee.lastname}, ${employee.firstname || ''}`.trim() : '')
-        || 'Unknown';
+    // Name is ALWAYS "LASTNAME, FIRSTNAME" format (lastname first, uppercase).
+    // We build this from lastname + firstname directly so we never fall back to
+    // a pre-formatted "Firstname Lastname" string coming from the API.
+    const rawLast = (employee.lastname || '').trim();
+    const rawFirst = (employee.firstname || '').trim();
+    let fullname;
+    if (rawLast || rawFirst) {
+        fullname = rawLast
+            ? `${rawLast}, ${rawFirst}`.replace(/,\s*$/, '')
+            : rawFirst;
+    } else {
+        // Last resort: parse an existing "Firstname Lastname" string and flip it
+        const src = (employee.fullname || 'Unknown').trim();
+        const parts = src.split(/\s+/);
+        if (parts.length >= 2) {
+            const last = parts.pop();
+            fullname = `${last}, ${parts.join(' ')}`;
+        } else {
+            fullname = src;
+        }
+    }
+    fullname = fullname.toUpperCase();
+
     const position = employee.position || '';
     const department = employee.department || '';
-    const employeeId = employee.employeeid || record.employee_id || '';
     const totalUt = record.total_ut || '0.00';
 
     // Get the month range — formatted "M/D/YY" and derived from whatever
@@ -2169,8 +2417,10 @@ function buildDTRHTML(record, dtr, employee) {
         return `
         <div class="dtr-copy">
             <div class="dtr-title">DAILY TIME RECORD</div>
+            <div class="dtr-title-space">&nbsp;</div>
             <div class="dtr-subtitle">DAILY TIME RECORD</div>
             <div class="dtr-daterange">From: ${fromDate} To: ${toDate}</div>
+            <div class="dtr-title-space">&nbsp;</div>
 
             <div class="dtr-info">
                 <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${fullname}</span></div>
@@ -2178,7 +2428,7 @@ function buildDTRHTML(record, dtr, employee) {
                 <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${department}</span></div>
                 <div class="info-row two-col">
                     <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${employee.regularTime || 'DEFAULT'}</span></span>
-                    <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-value">1</span><span class="info-blank"></span></span>
+                    <span class="info-half"><span class="info-label label-auto">Payroll No. :</span><span class="info-value payroll-underline">1</span></span>
                 </div>
             </div>
 
@@ -2246,8 +2496,8 @@ function buildDTRHTML(record, dtr, employee) {
 
             ${isPersonnelCopy ? `
             <div class="dtr-recorded">
-                <div class="recorded-row">RECORDED BY :<span class="recorded-line"></span></div>
-                <div class="recorded-row">DATE<span class="recorded-colon">:</span><span class="recorded-line"></span></div>
+                <div class="recorded-row"><span class="recorded-label">RECORDED BY</span><span class="recorded-colon">:</span><span class="recorded-line"></span></div>
+                <div class="recorded-row"><span class="recorded-label">DATE</span><span class="recorded-colon">:</span><span class="recorded-line"></span></div>
             </div>` : ''}
         </div>`;
     }
@@ -2291,7 +2541,7 @@ function buildDTRHTML(record, dtr, employee) {
                     flex: 1 1 50%;
                     width: 50%;
                     min-width: 0;
-                    padding: 2px 6px;
+                    padding: 2px 14px; /* padding left & right to center the text */
                 }
                 .dtr-vertical-divider {
                     width: 0;
@@ -2303,20 +2553,23 @@ function buildDTRHTML(record, dtr, employee) {
                     font-size: 15px;
                     font-weight: bold;
                     text-transform: uppercase;
-                    margin-bottom: 6px;
+                }
+                /* Blank spacing line between big title and small subtitle,
+                   and between date range and employee info block */
+                .dtr-title-space {
+                    height: 8px;
+                    line-height: 8px;
                 }
                 .dtr-subtitle {
                     text-align: center;
                     font-size: 9px;
                     font-weight: bold;
                     text-transform: uppercase;
-                    margin-bottom: 4px;
                 }
                 .dtr-daterange {
                     text-align: center;
                     font-size: 9px;
                     font-weight: bold;
-                    margin-bottom: 4px;
                 }
                 .dtr-info {
                     font-size: 9px;
@@ -2333,6 +2586,7 @@ function buildDTRHTML(record, dtr, employee) {
                 .info-half {
                     display: flex;
                     gap: 4px;
+                    align-items: flex-end;
                 }
                 .info-label {
                     font-weight: bold;
@@ -2351,12 +2605,12 @@ function buildDTRHTML(record, dtr, employee) {
                     font-weight: bold;
                     text-transform: uppercase;
                 }
-                .info-blank {
-                    display: inline-block;
-                    min-width: 55px;
+                /* Payroll No. value with underline under the "1" */
+                .info-value.payroll-underline {
                     border-bottom: 1px solid #000;
-                    height: 10px;
-                    margin-left: 2px;
+                    min-width: 24px;
+                    text-align: center;
+                    display: inline-block;
                 }
                 .dtr-table {
                     width: 100%;
@@ -2391,8 +2645,9 @@ function buildDTRHTML(record, dtr, employee) {
                     margin: 3px 0;
                 }
                 .summary-line {
-                    display: flex;
-                    justify-content: space-between;
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    column-gap: 10px;
                     padding: 1px 0;
                 }
                 .summary-item {
@@ -2413,9 +2668,9 @@ function buildDTRHTML(record, dtr, employee) {
                 .dtr-cert {
                     font-size: 7.5px;
                     text-align: center;
-                    line-height: 1.25;
-                    margin: 4px 0 2px 0;
-                    padding: 0 14px;
+                    line-height: 1.35;
+                    margin: 6px 0 2px 0;
+                    padding: 0 45px;
                 }
                 .dtr-sig {
                     text-align: center;
@@ -2451,23 +2706,38 @@ function buildDTRHTML(record, dtr, employee) {
                     margin-top: 6px;
                 }
                 .dtr-recorded {
-                    margin-top: 4px;
-                    font-size: 8px;
+                    margin-top: 10px;
+                    font-size: 8.5px;
                     font-weight: bold;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    padding: 0 45px;
+                    gap: 4px;
                 }
                 .recorded-row {
                     display: flex;
                     align-items: flex-end;
-                    gap: 4px;
-                    margin-top: 4px;
+                    justify-content: flex-start;
+                    width: 100%;
                 }
-                .recorded-colon {
-                    margin-left: -2px;
+                .recorded-row .recorded-label {
+                    font-weight: bold;
+                    white-space: nowrap;
+                    flex-shrink: 0;
+                    display: inline-block;
+                    width: 75px;
                 }
-                .recorded-line {
+                .recorded-row .recorded-colon {
+                    font-weight: bold;
+                    flex-shrink: 0;
+                    margin-right: 6px
+                }
+                .recorded-row .recorded-line {
                     flex: 1;
                     border-bottom: 1px solid #000;
                     height: 10px;
+                    min-width: 120px;
                 }
                 @media print {
                     .dtr-page {
@@ -2774,7 +3044,62 @@ function updateSystemStatus(data) {
     // Network status - always online if API responds
 }
 
+// ============ PROFILE MODAL FUNCTIONS ============
+
+// Open the Profile modal and populate it from the logged-in admin's own data
+function openProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (!modal) return;
+
+    const user = currentAdminUser || {};
+    const fullname = user.fullname
+        || `${user.firstname || ''} ${user.lastname || ''}`.trim()
+        || user.username
+        || 'Unknown';
+    const role = (user.role || 'employee').toUpperCase();
+
+    const titleEl = document.getElementById('profileModalTitle');
+    const subtitleEl = document.getElementById('profileModalSubtitle');
+    const avatarEl = document.getElementById('profileModalAvatar');
+    const emailEl = document.getElementById('profileEmail');
+    const phoneEl = document.getElementById('profilePhone');
+    const departmentEl = document.getElementById('profileDepartment');
+    const employeeIdEl = document.getElementById('profileEmployeeId');
+    const roleEl = document.getElementById('profileRole');
+
+    if (titleEl) titleEl.textContent = fullname;
+    if (subtitleEl) subtitleEl.textContent = role;
+    if (avatarEl) avatarEl.textContent = initials(user) !== '--' ? initials(user) : initialsFromFullname(fullname);
+    if (emailEl) emailEl.textContent = user.email || '--';
+    if (phoneEl) phoneEl.textContent = user.phone || '--';
+    if (departmentEl) departmentEl.textContent = user.department || '--';
+    if (employeeIdEl) employeeIdEl.textContent = user.employeeid || user.uid || '--';
+    if (roleEl) roleEl.textContent = role;
+
+    modal.classList.remove('hidden');
+}
+
+// Close the Profile modal
+function closeProfileModal() {
+    const modal = document.getElementById('profileModal');
+    if (modal) modal.classList.add('hidden');
+}
+
 // ============ SETTINGS FUNCTIONS ============
+
+// Open the Settings modal and load the current settings into it
+function openSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    loadSettings();
+}
+
+// Close the Settings modal
+function closeSettingsModal() {
+    const modal = document.getElementById('settingsModal');
+    if (modal) modal.classList.add('hidden');
+}
 
 // Load settings
 async function loadSettings() {
@@ -2942,6 +3267,7 @@ async function verifyDashboardSession() {
             return;
         }
         const data = await response.json();
+        currentAdminUser = data.user || null;
         updateUserDisplay(data.user);
         await loadDashboardData();
         // Load DTR data after dashboard loads
