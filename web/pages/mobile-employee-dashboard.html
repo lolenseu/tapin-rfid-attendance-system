@@ -46,47 +46,37 @@
     </div>
 
     <div class="stats-grid">
-      <div class="mini-stat stat-blue">
+      <div class="mini-stat stat-green">
         <div class="mini-icon"><i class="fa-solid fa-user-check"></i></div>
-        <div class="mini-label">Present</div>
-        <div class="mini-value" id="statTotalPresent">0</div>
+        <div class="mini-info">
+          <div class="mini-label">Present</div>
+          <div class="mini-value" id="statTotalPresent">0</div>
+        </div>
       </div>
       <div class="mini-stat stat-red">
         <div class="mini-icon"><i class="fa-solid fa-user-xmark"></i></div>
-        <div class="mini-label">Absent</div>
-        <div class="mini-value" id="statTotalAbsent">0</div>
+        <div class="mini-info">
+          <div class="mini-label">Absent</div>
+          <div class="mini-value" id="statTotalAbsent">0</div>
+        </div>
       </div>
       <div class="mini-stat stat-cyan">
         <div class="mini-icon"><i class="fa-solid fa-clock"></i></div>
-        <div class="mini-label">Hours</div>
-        <div class="mini-value" id="statTotalHours">0.00</div>
+        <div class="mini-info">
+          <div class="mini-label">Hours</div>
+          <div class="mini-value" id="statTotalHours">0.00</div>
+        </div>
       </div>
       <div class="mini-stat stat-purple">
         <div class="mini-icon"><i class="fa-solid fa-house"></i></div>
-        <div class="mini-label">Leaves</div>
-        <div class="mini-value" id="statLeaveCount">0</div>
+        <div class="mini-info">
+          <div class="mini-label">Leaves</div>
+          <div class="mini-value" id="statLeaveCount">0</div>
+        </div>
       </div>
     </div>
 
-    <div class="quick-grid">
-      <a href="#page-dtr" class="quick-tile" data-nav="page-dtr">
-        <i class="fa-solid fa-file-signature"></i>
-        <span>My DTR</span>
-      </a>
-      <a href="#page-attendance" class="quick-tile" data-nav="page-attendance">
-        <i class="fa-solid fa-calendar-check"></i>
-        <span>Attendance</span>
-      </a>
-      <a href="#page-leave" class="quick-tile" data-nav="page-leave">
-        <i class="fa-solid fa-envelope-open-text"></i>
-        <span>Leave</span>
-      </a>
-      <a href="#page-profile" class="quick-tile" data-nav="page-profile">
-        <i class="fa-solid fa-circle-user"></i>
-        <span>Profile</span>
-      </a>
-    </div>
-
+    
     <div class="section-card">
       <div class="section-title"><i class="fa-solid fa-user"></i> My Account</div>
       <div class="info-list">
@@ -121,11 +111,7 @@
           <option value="">-- Select month --</option>
         </select>
       </div>
-      <div class="btn-row">
-        <button class="btn btn-outline" onclick="printMyDTR()"><i class="fa-solid fa-print"></i> Print</button>
-        <button class="btn btn-primary" onclick="generateMyDTRPDF()"><i class="fa-solid fa-file-pdf"></i> Export</button>
-      </div>
-      <p id="myDtrMessage" class="msg" style="display:none;"></p>
+            <p id="myDtrMessage" class="msg" style="display:none;"></p>
     </div>
 
     <div class="section-card">

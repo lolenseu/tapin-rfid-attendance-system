@@ -6,7 +6,7 @@
     <color name="tapin_navy">#002855</color>
     <color name="tapin_teal">#00C2B2</color>
     <color name="white">#FFFFFF</color>
-    <string name="app_name">TapIn RFID Attendance System</string>
+    <string name="app_name">TapIn</string>
     <style name="Theme.TapIn" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:statusBarColor">@color/tapin_maroon_dark</item>
         <item name="android:navigationBarColor">@color/tapin_maroon_dark</item>
@@ -14,7 +14,7 @@
         <item name="android:windowBackground">@color/tapin_maroon_dark</item>
     </style>
     <style name="Theme.TapIn.Starting" parent="Theme.SplashScreen">
-        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
         <item name="windowSplashScreenBackground">@color/white</item>
         <item name="postSplashScreenTheme">@style/Theme.TapIn</item>
     </style>

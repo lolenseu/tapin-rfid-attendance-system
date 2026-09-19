@@ -167,25 +167,34 @@ img { max-width: 100%; display: block; }
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
   display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.mini-icon {
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.mini-info {
+  display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.mini-icon {
-  width: 34px; height: 34px;
-  border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px;
-}
 .mini-label {
-  font-size: 10px; font-weight: 700;
+  font-size: 11px; font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: .05em;
-  margin-top: 2px;
 }
-.mini-value { font-size: 20px; font-weight: 800; line-height: 1; }
+.mini-value { font-size: 24px; font-weight: 800; line-height: 1; }
 
+/* ---- Stat cards: Present card uses green to match its icon ---- */
 .stat-blue .mini-icon  { background: var(--primary-light); color: var(--primary); }
+.stat-blue .mini-icon i { color: var(--success); }
+.stat-green .mini-icon { background: var(--success-light); color: var(--success); }
 .stat-red .mini-icon   { background: var(--danger-light);  color: var(--danger); }
 .stat-cyan .mini-icon  { background: var(--accent-light);  color: var(--accent); }
 .stat-purple .mini-icon{ background: var(--leave-light);   color: var(--leave); }
@@ -451,7 +460,7 @@ textarea.form-control { resize: vertical; min-height: 70px; font-family: inherit
   align-items: center;
   justify-content: center;
   gap: 3px;
-  color: #94A3B8;
+  color: #fff;
   font-size: 10px;
   font-weight: 600;
   position: relative;

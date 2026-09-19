@@ -854,15 +854,11 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .card-body { padding: 20px; overflow: hidden; box-sizing: border-box; }
 
 /* Make sure card inner grids don't cause horizontal overflow */
-.card-body .quick-actions-grid,
 .card-body .stats-grid,
 .card-body .employees-grid,
 .card-body .reports-grid {
   width: 100%;
   max-width: 100%;
-}
-.quick-actions-grid .quick-action {
-  min-width: 0; /* allow items to shrink below their content width */
 }
 
 @media (max-width: 768px) {
@@ -963,6 +959,7 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 
 /* Stat card color variants */
 .stat-blue .stat-icon-wrap { background: var(--primary-light); color: var(--primary); }
+.stat-blue .stat-icon-wrap i { color: var(--success); }
 .stat-blue .stat-progress-bar { background: linear-gradient(90deg, var(--primary), var(--secondary)); }
 .stat-blue::before { background: var(--primary); }
 
@@ -986,71 +983,6 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .stat-cyan .stat-progress-bar { background: linear-gradient(90deg, var(--accent), #A32638); }
 .stat-cyan::before { background: var(--accent); }
 
-.quick-actions-grid {
-  display: grid;
-  /* allow items to shrink more so many actions fit on narrow screens */
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 10px;
-  margin-bottom: 24px;
-}
-
-.quick-action {
-  background: var(--card-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 10px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  transition: all .22s ease;
-  text-align: center;
-  min-height: 72px;
-  box-sizing: border-box;
-}
-
-.quick-action:hover {
-  border-color: var(--primary);
-  background: var(--primary-light);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-glow);
-}
-
-.quick-action:hover .qa-icon { background: var(--primary); color: white; }
-.quick-action:hover .qa-label { color: var(--primary-dark); }
-
-.qa-icon {
-  width: 40px; height: 40px;
-  border-radius: var(--radius);
-  background: var(--bg);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 15px;
-  color: var(--primary);
-  transition: all var(--transition);
-  flex-shrink: 0;
-}
-
-.qa-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.2;
-  transition: color var(--transition);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-@media (max-width: 520px) {
-  .quick-actions-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .quick-action { padding: 10px 8px; min-height: 64px; }
-  .qa-label { font-size: 12px; }
-}
-
-@media (max-width: 360px) {
-  .quick-actions-grid { grid-template-columns: repeat(1, 1fr); }
-  .qa-label { font-size: 13px; }
-}
 
 .table-wrap {
   overflow-x: auto;
@@ -2513,11 +2445,6 @@ body.sidebar-collapsed .main {
   .stat-icon-wrap { width: 36px; height: 36px; font-size: 15px; margin-bottom: 10px; }
   .stat-value { font-size: 22px; }
 
-  .quick-actions-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-  .quick-action { min-height: 68px; padding: 12px 8px; }
-  .qa-icon { width: 36px; height: 36px; font-size: 14px; }
-  .qa-label { font-size: 11px; }
-
   .card-body { padding: 14px; }
   .card-header { padding: 12px 14px 10px; }
   .card-title { font-size: 13px; }
@@ -2540,6 +2467,7 @@ body.sidebar-collapsed .main {
   /* Modals: slightly tighter but still centered cards */
   .modal-content { max-width: 100%; max-height: 92vh; }
   .modal-header { padding: 18px 20px; }
+  . }
   .modal-body { padding: 18px 20px; }
   .modal-footer { padding: 14px 20px; flex-wrap: wrap; }
   .modal-footer .btn { flex: 1; justify-content: center; }
@@ -2557,7 +2485,6 @@ body.sidebar-collapsed .main {
   .stat-card { padding: 10px; }
   .stat-value { font-size: 18px; }
   .stat-icon-wrap { width: 32px; height: 32px; font-size: 13px; }
-  .quick-actions-grid { grid-template-columns: repeat(3, 1fr); }
   .hr-letters-grid { grid-template-columns: 1fr; }
   .templates-grid { grid-template-columns: repeat(2, 1fr); }
   .employees-grid { grid-template-columns: 1fr; gap: 12px; }

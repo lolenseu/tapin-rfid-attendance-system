@@ -112,11 +112,13 @@ async function verifySession() {
     const enriched = allEmployees.find(e => e.rfid === currentUser?.rfid || e.uid === currentUser?.uid);
     if (enriched) currentUser = { ...currentUser, ...enriched };
 
+    // Load attendance data early so we have latest scan for paintUserInfo
+    await loadAttendance();
+
     paintUserInfo();
     paintProfile();
     await loadLeaveRequests();
     await loadDtrMonths();
-    await loadAttendance();
     await loadMonthlyStats();
   } catch (err) {
     console.error(err);
@@ -142,6 +144,12 @@ function paintUserInfo() {
   if (avatar) avatar.textContent = initialsOf(currentUser);
 }
 
+function getImageUrl(imagePath) {
+  if (!imagePath) return '';
+  if (imagePath.startsWith('http')) return imagePath;
+  return `${apiBaseUrl}/${imagePath}`;
+}
+
 function paintProfile() {
   if (!currentUser) return;
   const name = currentUser.fullname
@@ -159,8 +167,9 @@ function paintProfile() {
 
   const avatar = document.getElementById('mobileProfileAvatar');
   if (avatar) {
-    if (currentUser.image) {
-      avatar.innerHTML = `<img src="${apiBaseUrl}/uploads/${escapeHtml(currentUser.image)}" alt="" />`;
+    const imageUrl = getImageUrl(currentUser.image);
+    if (imageUrl) {
+      avatar.innerHTML = `<img src="${imageUrl}" alt="${escapeHtml(name)}" onerror="this.style.display='none';this.parentElement.textContent='${initialsOf(currentUser)}';">`;
     } else {
       avatar.textContent = initialsOf(currentUser);
     }
@@ -358,6 +367,12 @@ async function loadAttendance() {
     if (!res.ok) return;
     const result = await res.json();
     const scans = (result.data?.scans || []).filter(s => s.rfid === currentUser.rfid);
+
+    // Set latest scan for dashboard header
+    if (scans.length > 0 && currentUser) {
+      // Assuming scans are sorted with most recent first
+      currentUser.latest_scan = scans[0].scanned_at;
+    }
 
     if (!scans.length) {
       list.innerHTML = '';
