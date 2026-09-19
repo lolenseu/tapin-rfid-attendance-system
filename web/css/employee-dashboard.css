@@ -212,7 +212,6 @@ input, select, textarea { font: inherit; }
 .sidebar-overlay {
   position: fixed;
   inset: 0;
-  /* Dark unified overlay for sidebars and modals */
   background: rgba(2, 6, 23, 0.66);
   backdrop-filter: blur(3px);
   -webkit-backdrop-filter: blur(3px);
@@ -223,7 +222,7 @@ input, select, textarea { font: inherit; }
 }
 .sidebar-overlay.visible { opacity: 1; visibility: visible; }
 
-/* Collapsed sidebar */
+/* Collapsed sidebar (desktop/tablet only) */
 body.sidebar-collapsed .sidebar { width: 86px !important; transform: none !important; overflow: hidden; }
 body.sidebar-collapsed .brand-text { display: none; }
 body.sidebar-collapsed .sidebar-brand { justify-content: center; padding-left: 10px; padding-right: 10px; }
@@ -791,7 +790,6 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .modal-overlay {
   position: fixed;
   inset: 0;
-  /* Darker, more transparent overlay for focus */
   background: rgba(2, 6, 23, 0.66);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -812,7 +810,6 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   width: 100%;
   max-height: 90vh;
   overflow-y: auto;
-  /* Deeper shadow for popup content */
   box-shadow: 0 40px 120px rgba(2, 6, 23, 0.65);
   animation: slideUp 0.28s ease;
 }
@@ -872,7 +869,6 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .logout-modal-backdrop {
   position: fixed;
   inset: 0;
-  /* Dark unified backdrop for logout/modal */
   background: rgba(2, 6, 23, 0.66);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -914,32 +910,114 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 .footer-info { font-size: 11px; text-align: right; }
 .footer-info p { margin-bottom: 2px; }
 
-/* ============ RESPONSIVE ============ */
+/* ============================================================
+   RESPONSIVE
+   Screen-adaptive only — no mobile-specific layout changes.
+   On smaller screens the layout simply compresses: sidebar
+   becomes a drawer, grids collapse to a single column, tables
+   scroll horizontally. Mobile phone experience lives in the
+   dedicated mobile-employee-dashboard.* files.
+   ============================================================ */
+
+/* Tablet: narrower sidebar, tighter stats grid */
 @media (max-width: 1024px) {
   :root { --sidebar-w: 220px; }
   .stats-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .grid-2 { grid-template-columns: 1fr; }
+  .edit-grid { grid-template-columns: 1fr; }
 }
 
-@media (max-width: 768px) {
+/* Small tablet / large phone (portrait): sidebar becomes a drawer */
+@media (max-width: 820px) {
   :root { --sidebar-w: 260px; }
-  .sidebar { transform: translateX(-100%); z-index: 130; box-shadow: 0 24px 40px rgba(44, 10, 18, 0.24); }
+  .sidebar {
+    transform: translateX(-100%);
+    z-index: 130;
+    box-shadow: 0 24px 40px rgba(44, 10, 18, 0.24);
+  }
   .sidebar.is-open { transform: translateX(0); }
   .main { margin-left: 0; }
-  .content { padding: 8px 16px 32px; }
-  .topbar { padding: 0 16px; gap: 10px; }
-  .grid-2 { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .content { padding: 8px 18px 24px; }
+  .topbar { padding: 0 18px; gap: 12px; }
   .topbar-center { display: none; }
-  .edit-grid { grid-template-columns: 1fr; }
-  .dtr-info-display { grid-template-columns: 1fr; gap: 4px; }
   .footer-content { flex-direction: column; text-align: center; }
   .footer-info { text-align: center; }
 }
 
-@media (max-width: 480px) {
-  .stats-grid { grid-template-columns: 1fr 1fr; }
-  .stat-card { padding: 10px; }
-  .stat-value { font-size: 18px; }
-  .stat-icon-wrap { width: 32px; height: 32px; font-size: 13px; }
-  .quick-actions-grid { grid-template-columns: repeat(2, 1fr); }
+/* Phones: single-column everything, tighter spacing */
+@media (max-width: 600px) {
+  body { font-size: 13px; }
+  .content { padding: 6px 14px 20px; }
+  .topbar { padding: 0 14px; height: 56px; }
+  .topbar-btn { width: 34px; height: 34px; }
+  .admin-name { font-size: 11px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-role { font-size: 9px; }
+
+  .page-section { padding: 14px; margin: 10px 0 16px; border-radius: 14px; }
+  .section-title { font-size: 18px; }
+  .section-subtitle { font-size: 12px; }
+  .section-actions,
+  .global-section-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .section-actions .flex,
+  .global-section-actions .flex {
+    width: 100%;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .section-actions .btn,
+  .global-section-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .stat-card { padding: 14px; border-radius: 12px; }
+  .stat-icon-wrap { width: 36px; height: 36px; font-size: 15px; margin-bottom: 10px; }
+  .stat-value { font-size: 22px; }
+
+  .quick-actions-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .quick-action { min-height: 68px; padding: 12px 8px; }
+  .qa-icon { width: 36px; height: 36px; font-size: 14px; }
+  .qa-label { font-size: 11px; }
+
+  .card-body { padding: 14px; }
+  .card-header { padding: 12px 14px 10px; }
+  .card-title { font-size: 13px; }
+
+  /* Wide tables become horizontally scrollable */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .data-table { font-size: 12px; }
+  .data-table th,
+  .data-table td { padding: 8px 10px; }
+
+  /* DTR: allow horizontal scroll for the wide table */
+  .dtr-wrap { max-width: 100%; }
+  .dtr-body { padding: 16px; }
+  .dtr-header { padding: 18px 20px; }
+  .dtr-info-display { grid-template-columns: 1fr; gap: 4px; }
+  .dtr-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .dtr-table { min-width: 620px; }
+  .dtr-totals { grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 12px; }
+
+  /* Modals: slightly tighter but still centered cards */
+  .modal-content { max-width: 100%; max-height: 92vh; }
+  .modal-header { padding: 18px 20px; }
+  .modal-body { padding: 18px 20px; }
+  .modal-footer { padding: 14px 20px; flex-wrap: wrap; }
+  .modal-footer .btn { flex: 1; justify-content: center; }
+
+  .logout-modal { padding: 22px 18px 18px; }
+  .logout-modal h3 { font-size: 18px; }
+
+  .footer { padding: 16px 18px; }
+  .footer-brand { font-size: 12px; }
 }

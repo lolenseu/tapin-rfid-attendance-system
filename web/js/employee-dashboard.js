@@ -107,6 +107,8 @@ function resolveMyEmployeeInfo(currentUser, apiEmployee) {
 
   return {
     fullname: apiFullname || userFullname || 'Unknown',
+    firstname: apiEmployee.firstname || currentUser.firstname || '',
+    lastname: apiEmployee.lastname || currentUser.lastname || '',
     employeeid: apiEmployee.employeeid || currentUser.employeeid || currentUser.uid || '',
     position: apiEmployee.position || currentUser.position || '',
     department: apiEmployee.department || currentUser.department || '',
@@ -153,7 +155,7 @@ function setSidebarState(isOpen) {
     sidebarToggle.classList.toggle('is-open', isOpen);
     sidebarToggle.setAttribute('aria-expanded', String(isOpen));
   }
-  if (sidebarOverlay) sidebarOverlay.classList.toggle('visible', isMobile && isOpen);
+  if (sidebarOverlay) sidebarOverlay.classList.toggle('is-visible', isMobile && isOpen);
 }
 
 if (sidebarToggle) {
@@ -257,9 +259,17 @@ async function verifyEmployeeSession() {
     updateUserDisplay(currentUser);
     populateAccountInfo();
     populateProfileCard();
+
+    // IMPORTANT: Load leave requests FIRST so the stats calculation can
+    // exclude approved leave days from the "absent" count.
     await loadMyLeaveRequests();
+
+    // Now compute this month's stats using the DTR record for this user.
+    await loadMyMonthlyStats();
+
     await loadDtrMonths();
     await loadMyAttendance();
+    await loadMyActivityTimeline();
   } catch (err) {
     console.error('Session verify error:', err);
     redirectToLogin();
@@ -278,96 +288,171 @@ async function loadDashboardUsers() {
     const result = await res.json();
     const data = result.data || {};
     allEmployees = data.users || [];
-    updateMonthlyStats(data);
   } catch (err) {
     console.error('Load dashboard users error:', err);
   }
 }
 
-/* ---------------- MONTHLY STATS ---------------- */
+/* ---------------- MONTHLY STATS (driven by DTR record) ---------------- */
 
-function updateMonthlyStats(data) {
-  const me = allEmployees.find(e => e.rfid === currentUser?.rfid || e.uid === currentUser?.uid);
-  const myScans = (data.scans || []).filter(s => me && s.rfid === me.rfid);
-
-  // Determine current month
-  const now = new Date();
-  const currentMonth = now.getMonth();
-  const currentYear = now.getFullYear();
-
-  const monthScans = myScans.filter(s => {
-    const d = new Date(s.scanned_at);
-    return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-  });
-
-  // Determine the employee's actual working days in the current month.
-  // Exclude weekends and approved leave dates.
-  const leaveDates = new Set();
-  myLeaveRequests.filter(r => r.status === 'approved').forEach(r => {
-    const start = new Date(r.start_date);
-    const end = new Date(r.end_date);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
-
-    const cursor = new Date(start);
-    while (cursor <= end) {
-      const currentDate = new Date(cursor);
-      if (currentDate.getMonth() === currentMonth && currentDate.getFullYear() === currentYear) {
-        leaveDates.add(currentDate.toDateString());
-      }
-      cursor.setDate(cursor.getDate() + 1);
-    }
-  });
-
-  const employeeAttendanceDates = new Set();
-  monthScans.forEach(s => {
-    const d = new Date(s.scanned_at);
-    employeeAttendanceDates.add(d.toDateString());
-  });
-
-  const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
-  let workingDays = 0;
-  const employeePresentDates = new Set();
-
-  for (let i = 1; i <= daysInMonth; i++) {
-    const d = new Date(currentYear, currentMonth, i);
-    const day = d.getDay();
-    if (day === 0 || day === 6) continue;
-
-    const dateKey = d.toDateString();
-    if (leaveDates.has(dateKey)) continue;
-
-    workingDays++;
-    if (employeeAttendanceDates.has(dateKey)) {
-      employeePresentDates.add(dateKey);
-    }
+// Pulls this month's DTR record for the logged-in user and derives the
+// Present / Absent / Hours / Leave stats from it. The DTR endpoint is the
+// authoritative source of hours and per-day attendance, so we use it here
+// instead of the raw dashboard scans list.
+//
+// Holidays: the DTR day rows may carry status === 'holiday' (or similar
+// holiday flags from the API). Holiday rows are skipped from every count:
+// they are not present, not absent, and do not contribute working days.
+async function loadMyMonthlyStats() {
+  if (!currentUser || !currentUser.rfid) {
+    resetMonthlyStats();
+    return;
   }
 
-  const totalPresent = employeePresentDates.size;
-  const totalAbsent = Math.max(workingDays - totalPresent, 0);
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  // Total hours for the current month only
-  let totalHours = 0;
-  monthScans.forEach(s => {
-    const hoursValue = Number.parseFloat(s.hours ?? s.total_hours ?? 0);
-    if (!Number.isNaN(hoursValue)) totalHours += hoursValue;
-  });
+  try {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${currentUser.rfid}?month=${currentMonth}`, {
+      method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
+    });
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) { resetMonthlyStats(); return; }
 
-  // Leave counts
-  const approvedLeaves = myLeaveRequests.filter(r => r.status === 'approved').length;
-  const pendingLeaves = myLeaveRequests.filter(r => r.status === 'pending').length;
+    const result = await res.json();
+    if (result.status !== 'success' || !result.data || !result.data.record) {
+      resetMonthlyStats();
+      return;
+    }
 
-  // Update DOM
-  setText('statTotalPresent', totalPresent);
-  setText('statTotalAbsent', totalAbsent);
-  setText('statTotalHours', totalHours.toFixed(2));
-  setText('statLeaveCount', approvedLeaves + pendingLeaves);
+    const record = result.data.record;
+    const dtr = record.dtr || [];
 
-  // Progress bars (relative to employee working days)
-  const pct = (v) => workingDays > 0 ? Math.min((v / workingDays) * 100, 100) : 0;
-  setWidth('statPresentBar', pct(totalPresent));
-  setWidth('statAbsentBar', pct(totalAbsent));
-  setWidth('statHoursBar', Math.min((totalHours / (workingDays * 8 || 1)) * 100, 100));
-  setWidth('statLeaveBar', Math.min(((approvedLeaves + pendingLeaves) / 15) * 100, 100));
+    // Approved leave dates for this month (used to exclude from "absent").
+    const approvedLeaveDates = new Set();
+    myLeaveRequests.filter(r => (r.status || '').toLowerCase() === 'approved').forEach(r => {
+      const startStr = r.start_date;
+      const endStr = r.end_date;
+      if (!startStr || !endStr) return;
+      const start = new Date(startStr);
+      const end = new Date(endStr);
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      const rangeStart = start < monthStart ? monthStart : start;
+      const rangeEnd = end > monthEnd ? monthEnd : end;
+      for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        approvedLeaveDates.add(key);
+      }
+    });
+
+    // Helper: does this DTR row represent a holiday?
+    // The API may send one of several shapes; we cover the common ones so
+    // this works whether the server sends `status: 'holiday'`, a boolean
+    // `is_holiday` flag, or a `holiday_name` / `holiday` field.
+    const isHolidayRow = (day) => {
+      if (!day) return false;
+      const status = String(day.status || '').toLowerCase();
+      if (status === 'holiday' || status === 'legal_holiday' || status === 'special_holiday') return true;
+      if (day.is_holiday === true) return true;
+      if (day.holiday === true) return true;
+      if (day.holiday_name) return true;
+      return false;
+    };
+
+    // Walk the DTR rows and compute everything from them.
+    let totalPresent = 0;      // days with at least one In/Out, EXCLUDING holidays
+    let totalAbsent = 0;       // past weekdays with no scan, not on leave, not holiday, not future
+    let totalHours = 0;        // hours are only added on non-holiday days with scans
+    const today = new Date();
+
+    dtr.forEach(day => {
+      const dayName = day.day || '';
+      const isWeekend = dayName === 'Sat' || dayName === 'Sun';
+      const isLeave = day.status === 'on_leave';
+      const holiday = isHolidayRow(day);
+      const dateStr = (day.date || '').slice(0, 10);
+
+      const dayDate = dateStr ? new Date(dateStr) : null;
+      const isFuture = dayDate && dayDate > today;
+
+      const hasScan = !!(day.am_in || day.am_out || day.pm_in || day.pm_out);
+
+      // --- Holidays are completely skipped from every counter ---
+      if (holiday) {
+        return;
+      }
+
+      if (hasScan) {
+        totalPresent += 1;
+      } else if (!isWeekend && !isLeave && !isFuture && dateStr && !approvedLeaveDates.has(dateStr)) {
+        totalAbsent += 1;
+      }
+
+      const hoursVal = Number.parseFloat(day.hours);
+      if (!Number.isNaN(hoursVal)) totalHours += hoursVal;
+    });
+
+    // Leave count for this month (approved + pending overlapping this month).
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const leaveCount = myLeaveRequests.filter(r => {
+      const status = (r.status || '').toLowerCase();
+      if (status !== 'approved' && status !== 'pending') return false;
+      const start = new Date(r.start_date || '');
+      const end = new Date(r.end_date || '');
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
+      return start <= monthEnd && end >= monthStart;
+    }).length;
+
+    // Working days in this month (used for bar percentages).
+    // Skip weekends, approved leaves, AND holidays so the bars stay accurate.
+    const holidayDates = new Set();
+    dtr.forEach(day => {
+      if (isHolidayRow(day)) {
+        const key = (day.date || '').slice(0, 10);
+        if (key) holidayDates.add(key);
+      }
+    });
+
+    let workingDaysInMonth = 0;
+    for (let d = new Date(monthStart); d <= monthEnd; d.setDate(d.getDate() + 1)) {
+      const wd = d.getDay();
+      if (wd === 0 || wd === 6) continue; // skip weekends
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (approvedLeaveDates.has(key)) continue; // skip approved leave
+      if (holidayDates.has(key)) continue;       // skip holidays
+      workingDaysInMonth++;
+    }
+
+    // ---- Write to the DOM ----
+    setText('statTotalPresent', String(totalPresent));
+    setText('statTotalAbsent', String(totalAbsent));
+    setText('statTotalHours', totalHours.toFixed(2));
+    setText('statLeaveCount', String(leaveCount));
+
+    const pct = (v) => workingDaysInMonth > 0 ? Math.min((v / workingDaysInMonth) * 100, 100) : 0;
+    setWidth('statPresentBar', pct(totalPresent) + '%');
+    setWidth('statAbsentBar', pct(totalAbsent) + '%');
+    setWidth('statHoursBar', Math.min((totalHours / (workingDaysInMonth * 8 || 1)) * 100, 100) + '%');
+    setWidth('statLeaveBar', Math.min((leaveCount / 15) * 100, 100) + '%');
+  } catch (err) {
+    console.error('Load monthly stats error:', err);
+    resetMonthlyStats();
+  }
+}
+
+// Zero out the stats cards when no data is available.
+function resetMonthlyStats() {
+  setText('statTotalPresent', '0');
+  setText('statTotalAbsent', '0');
+  setText('statTotalHours', '0.00');
+  setText('statLeaveCount', '0');
+  setWidth('statPresentBar', '0%');
+  setWidth('statAbsentBar', '0%');
+  setWidth('statHoursBar', '0%');
+  setWidth('statLeaveBar', '0%');
 }
 
 function setText(id, value) {
@@ -377,7 +462,7 @@ function setText(id, value) {
 
 function setWidth(id, pct) {
   const el = document.getElementById(id);
-  if (el) el.style.width = `${pct}%`;
+  if (el) el.style.width = typeof pct === 'string' ? pct : `${pct}%`;
 }
 
 /* ---------------- ACCOUNT INFO ---------------- */
@@ -511,10 +596,21 @@ async function loadMyDTR() {
     tbody.innerHTML = dtr.map(day => {
       const isWeekend = day.day === 'Sat' || day.day === 'Sun';
       const isLeave = day.status === 'on_leave';
+      const isHoliday = (String(day.status || '').toLowerCase() === 'holiday')
+        || day.is_holiday === true
+        || !!day.holiday_name;
       let rowStyle = '';
       let statusText = day.status || '';
-      if (isLeave) { rowStyle = 'background-color:#FEF3C7;'; statusText = 'ON LEAVE'; }
-      else if (isWeekend) { rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;'; statusText = 'Weekend'; }
+      if (isHoliday) {
+        rowStyle = 'background-color:#FCE7F3;';
+        statusText = 'HOLIDAY';
+      } else if (isLeave) {
+        rowStyle = 'background-color:#FEF3C7;';
+        statusText = 'ON LEAVE';
+      } else if (isWeekend) {
+        rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
+        statusText = 'Weekend';
+      }
 
       return `<tr style="${rowStyle}">
         <td>${escapeHtml(formatDTRDate(day.date))}</td>
@@ -693,6 +789,7 @@ async function submitLeaveRequest(event) {
 
     showLeaveMessage('Leave request submitted successfully!', 'success');
     await loadMyLeaveRequests();
+    await loadMyMonthlyStats();
     setTimeout(() => closeLeaveModal(), 1200);
   } catch (err) {
     console.error('Leave submit error:', err);
@@ -724,6 +821,7 @@ async function cancelLeaveRequest(index) {
     if (res.status === 401) { redirectToLogin(); return; }
     if (!res.ok) { alert('Failed to cancel request.'); return; }
     await loadMyLeaveRequests();
+    await loadMyMonthlyStats();
   } catch (err) {
     console.error('Cancel leave error:', err);
     alert('Network error.');
@@ -899,100 +997,134 @@ async function changePassword() {
 /* ---------------- DTR PRINT / PDF ---------------- */
 
 function buildMyDtrHTML(record, dtr, employee) {
-  const fullname = employee.fullname || `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown';
+    // Name is ALWAYS "LASTNAME, FIRSTNAME" format (lastname first, uppercase).
+    // We build this from lastname + firstname directly so we never fall back to
+    // a pre-formatted "Firstname Lastname" string coming from the API.
+    const rawLast = (employee.lastname || '').trim();
+    const rawFirst = (employee.firstname || '').trim();
+    let fullname;
+    if (rawLast || rawFirst) {
+        fullname = rawLast
+            ? `${rawLast}, ${rawFirst}`.replace(/,\s*$/, '')
+            : rawFirst;
+    } else {
+        // Last resort: parse an existing "Firstname Lastname" string and flip it
+        const src = (employee.fullname || 'Unknown').trim();
+        const parts = src.split(/\s+/);
+        if (parts.length >= 2) {
+            const last = parts.pop();
+            fullname = `${last}, ${parts.join(' ')}`;
+        } else {
+            fullname = src;
+        }
+    }
+    fullname = fullname.toUpperCase();
   const position = employee.position || '';
   const department = employee.department || '';
   const totalUt = record.total_ut || '0.00';
 
+  // Get the month range — formatted "M/D/YY" and derived from whatever
+  // month this record actually covers (works for any month, not just now).
   const { from: fromDate, to: toDate } = resolveDTRDateRange(record, dtr);
 
-  const workingDays = dtr.filter(d => d.status !== 'on_leave' && d.day !== 'Sat' && d.day !== 'Sun').length;
+  // Calculate total working days (A)
+  const workingDays = dtr.filter(day => day.status !== 'on_leave' && day.day !== 'Sat' && day.day !== 'Sun').length;
   const totalWorkingDays = Number(workingDays) || 0;
   const totalUndertime = totalUt;
 
-  // Full month, once — reused identically for both copies below.
-  const tableRows = dtr.map(day => {
-    const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-    const isLeave = day.status === 'on_leave';
-    const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
-    const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
-    const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
-    return `
-      <tr style="${rowStyle}">
-        <td class="c-date">${formatDTRDate(day.date)}</td>
-        <td class="c-day">${day.day || ''}</td>
-        <td class="c-time">${day.am_in || ''}</td>
-        <td class="c-time">${day.am_out || ''}</td>
-        <td class="c-time">${day.pm_in || ''}</td>
-        <td class="c-time">${day.pm_out || ''}</td>
-        <td class="c-small">${ut}</td>
-        <td class="c-small">${ot}</td>
-      </tr>`;
-  }).join('');
+  // Build the table body rows once — each copy prints the FULL date range (1..end),
+    // exactly like the two side-by-side originals on the reference form.
+    const tableRows = dtr.map(day => {
+        const isWeekend = day.day === 'Sat' || day.day === 'Sun';
+        const isLeave = day.status === 'on_leave';
+        const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
+        const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
+        const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
+
+        return `
+            <tr style="${rowStyle}">
+                <td class="c-date">${formatDTRDate(day.date)}</td>
+                <td class="c-day">${day.day || ''}</td>
+                <td class="c-time">${day.am_in || ''}</td>
+                <td class="c-time">${day.am_out || ''}</td>
+                <td class="c-time">${day.pm_in || ''}</td>
+                <td class="c-time">${day.pm_out || ''}</td>
+                <td class="c-small">${ut}</td>
+                <td class="c-small">${ot}</td>
+            </tr>`;
+    }).join('');
 
   function buildCopy(copyLabel, isPersonnelCopy) {
-    return `
-      <div class="dtr-copy">
-        <div class="dtr-title">DAILY TIME RECORD</div>
-        <div class="dtr-subtitle">DAILY TIME RECORD</div>
-        <div class="dtr-daterange">From: ${fromDate} To: ${toDate}</div>
+        return `
+        <div class="dtr-copy">
+            <div class="dtr-title">DAILY TIME RECORD</div>
+            <div class="dtr-title-space">&nbsp;</div>
+            <div class="dtr-subtitle">DAILY TIME RECORD</div>
+            <div class="dtr-daterange">From: ${fromDate} To: ${toDate}</div>
+            <div class="dtr-title-space">&nbsp;</div>
 
         <div class="dtr-info">
-          <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${escapeHtml(fullname)}</span></div>
-          <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${escapeHtml(position)}</span></div>
-          <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${escapeHtml(department)}</span></div>
-          <div class="info-row two-col">
-            <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${escapeHtml(employee.regularTime || 'DEFAULT')}</span></span>
-            <span class="info-half"><span class="info-label label-auto">Payroll No.</span><span class="info-blank"></span></span>
-          </div>
-        </div>
+                <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${fullname}</span></div>
+                <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${position}</span></div>
+                <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${department}</span></div>
+                <div class="info-row two-col">
+                    <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${employee.regularTime || 'DEFAULT'}</span></span>
+                    <span class="info-half"><span class="info-label label-auto">Payroll No. :</span><span class="info-value payroll-underline">1</span></span>
+                </div>
+            </div>
 
         <table class="dtr-table">
-          <colgroup>
-            <col class="col-date"><col class="col-day">
-            <col class="col-time"><col class="col-time">
-            <col class="col-time"><col class="col-time">
-            <col class="col-small"><col class="col-small">
-          </colgroup>
-          <thead>
-            <tr class="grp-row">
-              <th colspan="2">WORKING</th>
-              <th colspan="2">A M</th>
-              <th colspan="2">P M</th>
-              <th colspan="2">HOURS</th>
-            </tr>
-            <tr class="sub-row">
-              <th>Date</th><th>Days</th>
-              <th>In 1</th><th>Out 1</th>
-              <th>In 2</th><th>Out 2</th>
-              <th>UT</th><th>OT</th>
-            </tr>
-          </thead>
-          <tbody>${tableRows}</tbody>
-        </table>
+                <colgroup>
+                    <col class="col-date"><col class="col-day">
+                    <col class="col-time"><col class="col-time">
+                    <col class="col-time"><col class="col-time">
+                    <col class="col-small"><col class="col-small">
+                </colgroup>
+                <thead>
+                    <tr class="grp-row">
+                        <th colspan="2">WORKING</th>
+                        <th colspan="2">A M</th>
+                        <th colspan="2">P M</th>
+                        <th colspan="2">HOURS</th>
+                    </tr>
+                    <tr class="sub-row">
+                        <th>Date</th>
+                        <th>Days</th>
+                        <th>In 1</th>
+                        <th>Out 1</th>
+                        <th>In 2</th>
+                        <th>Out 2</th>
+                        <th>UT</th>
+                        <th>OT</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+            </table>
 
         <div class="dtr-summary">
-          <div class="summary-line">
-            <span class="summary-item"><label>A =</label><span class="fill">${totalWorkingDays.toFixed(2)}</span></span>
-            <span class="summary-item"><label>ROT =</label><span class="fill">0.00</span></span>
-            <span class="summary-item"><label>LOT =</label><span class="fill">&nbsp;</span></span>
-          </div>
-          <div class="summary-line">
-            <span class="summary-item"><label>U =</label><span class="fill">${totalUndertime}</span></span>
-            <span class="summary-item"><label>SOT =</label><span class="fill">&nbsp;</span></span>
-          </div>
-        </div>
+                <div class="summary-line">
+                    <span class="summary-item"><label>A =</label><span class="fill">${totalWorkingDays.toFixed(2)}</span></span>
+                    <span class="summary-item"><label>ROT =</label><span class="fill">0.00</span></span>
+                    <span class="summary-item"><label>LOT =</label><span class="fill">&nbsp;</span></span>
+                </div>
+                <div class="summary-line">
+                    <span class="summary-item"><label>U =</label><span class="fill">${totalUndertime}</span></span>
+                    <span class="summary-item"><label>SOT =</label><span class="fill">&nbsp;</span></span>
+                </div>
+            </div>
 
         <div class="dtr-cert">
-          I Certify on my honor that the above is a true and correct report of the hours work perfomed, record of which was daily at the time of arrival and departure from office.
-        </div>
+                I Certify on my honor that the above is a true and correct report of the hours work perfomed, record of which was daily at the time of arrival and departure from office.
+            </div>
 
         <div class="dtr-sig">
-          <div class="sig-line"></div>
-          <div class="sig-caption">Signature</div>
-        </div>
+                <div class="sig-line"></div>
+                <div class="sig-caption">Signature</div>
+            </div>
 
-        <div class="dtr-divider">&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;&#61;</div>
+        <div class="dtr-divider">${'&#61;'.repeat(160)}</div>
 
         <div class="dtr-verified-label">VERIFIED as to the prescribed office hours</div>
 
@@ -1005,8 +1137,8 @@ function buildMyDtrHTML(record, dtr, employee) {
 
         ${isPersonnelCopy ? `
         <div class="dtr-recorded">
-          <div class="recorded-row">RECORDED BY :<span class="recorded-line"></span></div>
-          <div class="recorded-row">DATE<span class="recorded-colon">:</span><span class="recorded-line"></span></div>
+          <div class="recorded-row"><span class="recorded-label">RECORDED BY:</span><span class="recorded-line"></span></div>
+          <div class="recorded-row"><span class="recorded-label">DATE:</span><span class="recorded-line"></span></div>
         </div>` : ''}
       </div>`;
   }
@@ -1014,61 +1146,251 @@ function buildMyDtrHTML(record, dtr, employee) {
   const employeeCopyHTML = buildCopy("EMPLOYEE'S COPY", false);
   const personnelCopyHTML = buildCopy("PERSONNEL'S COPY", true);
 
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
-  <title>DTR - ${escapeHtml(fullname)}</title>
-  <style>
-    @page { size: letter portrait; margin: 8mm 8mm; }
-    * { margin:0; padding:0; box-sizing:border-box; }
-    html, body { width:100%; height:100%; }
-    body { font-family: Arial, Helvetica, sans-serif; font-size:9px; color:#000; }
-    .dtr-page { display:flex; align-items:stretch; width:100%; }
-    .dtr-copy { flex:1 1 50%; width:50%; padding:2px 6px; }
-    .dtr-vertical-divider { width:0; border-left:1px solid #000; margin:4px 4px 4px 0; }
-    .dtr-title { text-align:center; font-size:15px; font-weight:bold; text-transform:uppercase; margin-bottom:1px; }
-    .dtr-subtitle { text-align:center; font-size:9px; font-weight:bold; text-transform:uppercase; }
-    .dtr-daterange { text-align:center; font-size:9px; font-weight:bold; margin-bottom:4px; }
-    .dtr-info { font-size:9px; margin-bottom:5px; }
-    .info-row { display:flex; gap:4px; padding:1px 0; }
-    .info-row.two-col { justify-content:space-between; }
-    .info-half { display:flex; gap:4px; }
-    .info-label { font-weight:bold; white-space:nowrap; display:inline-block; width:90px; flex-shrink:0; }
-    .info-label.label-auto { width:auto; }
-    .info-value { border-bottom:1px solid transparent; }
-    .info-value.name { font-weight:bold; text-transform:uppercase; }
-    .info-blank { display:inline-block; min-width:55px; border-bottom:1px solid #000; height:10px; margin-left:2px; }
-    .dtr-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:8px; margin-bottom:4px; }
-    .dtr-table col.col-date { width:15%; }
-    .dtr-table col.col-day { width:11%; }
-    .dtr-table col.col-time { width:13%; }
-    .dtr-table col.col-small { width:9%; }
-    .dtr-table th, .dtr-table td { border:1px solid #000; text-align:center; padding:1px 2px; overflow:hidden; white-space:nowrap; }
-    .dtr-table thead th { font-weight:bold; font-size:8px; background-color:#fff; }
-    .dtr-table tbody td { font-size:8px; height:13px; }
-    .dtr-summary { font-size:9px; margin:3px 0; }
-    .summary-line { display:flex; gap:14px; padding:1px 0; }
-    .summary-item { display:flex; align-items:flex-end; gap:3px; }
-    .summary-item label { font-weight:bold; white-space:nowrap; }
-    .summary-item .fill { border-bottom:1px solid #000; min-width:34px; display:inline-block; text-align:center; }
-    .dtr-cert { font-size:7.5px; text-align:center; line-height:1.25; margin:4px 0 2px 0; }
-    .dtr-sig { text-align:center; margin-top:16px; }
-    .dtr-sig .sig-line { border-top:1px solid #000; width:85%; margin:0 auto; }
-    .dtr-sig .sig-caption { font-size:8px; font-weight:bold; margin-top:1px; }
-    .dtr-divider { font-size:7px; line-height:1; letter-spacing:-0.5px; margin:6px 0 2px 0; overflow:hidden; white-space:nowrap; }
-    .dtr-verified-label { text-align:center; font-size:8px; font-weight:bold; margin-bottom:2px; }
-    .dtr-copy-tag { font-weight:bold; font-size:8.5px; margin-top:6px; }
-    .dtr-recorded { margin-top:4px; font-size:8px; font-weight:bold; }
-    .recorded-row { display:flex; align-items:flex-end; gap:4px; margin-top:4px; }
-    .recorded-colon { margin-left:-2px; }
-    .recorded-line { flex:1; border-bottom:1px solid #000; height:10px; }
-    @media print { .dtr-page { page-break-inside: avoid; } }
-  </style></head>
-  <body>
-    <div class="dtr-page">
-      ${employeeCopyHTML}
-      <div class="dtr-vertical-divider"></div>
-      ${personnelCopyHTML}
-    </div>
-  </body></html>`;
+  return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Daily Time Record - ${fullname}</title>
+            <style>
+                @page {
+                    size: A4 portrait;
+                    margin: 8mm 8mm;
+                }
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                html, body {
+                    width: 100%;
+                    height: 100%;
+                }
+                body {
+                    font-family: Arial, Helvetica, sans-serif;
+                    font-size: 9px;
+                    color: #000;
+                }
+                .dtr-page {
+                    display: flex;
+                    align-items: stretch;
+                    width: 100%;
+                }
+                .dtr-copy {
+                    flex: 1 1 50%;
+                    width: 50%;
+                    min-width: 0;
+                    padding: 2px 14px; /* padding left & right to center the text */
+                }
+                .dtr-vertical-divider {
+                    width: 0;
+                    border-left: 1px solid #000;
+                    margin: 4px 4px 4px 0;
+                }
+                .dtr-title {
+                    text-align: center;
+                    font-size: 15px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                /* Blank spacing line between big title and small subtitle,
+                   and between date range and employee info block */
+                .dtr-title-space {
+                    height: 8px;
+                    line-height: 8px;
+                }
+                .dtr-subtitle {
+                    text-align: center;
+                    font-size: 9px;
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                .dtr-daterange {
+                    text-align: center;
+                    font-size: 9px;
+                    font-weight: bold;
+                }
+                .dtr-info {
+                    font-size: 9px;
+                    margin-bottom: 5px;
+                }
+                .info-row {
+                    display: flex;
+                    gap: 4px;
+                    padding: 1px 0;
+                }
+                .info-row.two-col {
+                    justify-content: space-between;
+                }
+                .info-half {
+                    display: flex;
+                    gap: 4px;
+                    align-items: flex-end;
+                }
+                .info-label {
+                    font-weight: bold;
+                    white-space: nowrap;
+                    display: inline-block;
+                    width: 90px;
+                    flex-shrink: 0;
+                }
+                .info-label.label-auto {
+                    width: auto;
+                }
+                .info-value {
+                    border-bottom: 1px solid transparent;
+                }
+                .info-value.name {
+                    font-weight: bold;
+                    text-transform: uppercase;
+                }
+                /* Payroll No. value with underline under the "1" */
+                .info-value.payroll-underline {
+                    border-bottom: 1px solid #000;
+                    min-width: 24px;
+                    text-align: center;
+                    display: inline-block;
+                }
+                .dtr-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    table-layout: fixed;
+                    font-size: 8px;
+                    margin-bottom: 4px;
+                }
+                .dtr-table col.col-date { width: 15%; }
+                .dtr-table col.col-day { width: 11%; }
+                .dtr-table col.col-time { width: 13%; }
+                .dtr-table col.col-small { width: 9%; }
+                .dtr-table th,
+                .dtr-table td {
+                    border: 1px solid #000;
+                    text-align: center;
+                    padding: 1px 2px;
+                    overflow: hidden;
+                    white-space: nowrap;
+                }
+                .dtr-table thead th {
+                    font-weight: bold;
+                    font-size: 8px;
+                    background-color: #fff;
+                }
+                .dtr-table tbody td {
+                    font-size: 8px;
+                    height: 13px;
+                }
+                .dtr-summary {
+                    font-size: 9px;
+                    margin: 3px 0;
+                }
+                .summary-line {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr 1fr;
+                    column-gap: 10px;
+                    padding: 1px 0;
+                }
+                .summary-item {
+                    display: flex;
+                    align-items: flex-end;
+                    gap: 3px;
+                }
+                .summary-item label {
+                    font-weight: bold;
+                    white-space: nowrap;
+                }
+                .summary-item .fill {
+                    border-bottom: 1px solid #000;
+                    min-width: 34px;
+                    display: inline-block;
+                    text-align: center;
+                }
+                .dtr-cert {
+                    font-size: 7.5px;
+                    text-align: center;
+                    line-height: 1.35;
+                    margin: 6px 0 2px 0;
+                    padding: 0 45px;
+                }
+                .dtr-sig {
+                    text-align: center;
+                    margin-top: 16px;
+                }
+                .dtr-sig .sig-line {
+                    border-top: 1px solid #000;
+                    width: 85%;
+                    margin: 0 auto;
+                }
+                .dtr-sig .sig-caption {
+                    font-size: 8px;
+                    font-weight: bold;
+                    margin-top: 1px;
+                }
+                .dtr-divider {
+                    font-size: 7px;
+                    line-height: 1;
+                    letter-spacing: -0.5px;
+                    margin: 6px 0 2px 0;
+                    overflow: hidden;
+                    white-space: nowrap;
+                }
+                .dtr-verified-label {
+                    text-align: center;
+                    font-size: 8px;
+                    font-weight: bold;
+                    margin-bottom: 2px;
+                }
+                .dtr-copy-tag {
+                    font-weight: bold;
+                    font-size: 8.5px;
+                    margin-top: 6px;
+                }
+                .dtr-recorded {
+                    margin-top: 10px;
+                    font-size: 8.5px;
+                    font-weight: bold;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    padding: 0 45px;
+                    gap: 4px;
+                }
+                .recorded-row {
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: flex-start;
+                    width: 100%;
+                    gap: 0;
+                }
+                .recorded-row .recorded-label {
+                    font-weight: bold;
+                    white-space: nowrap;
+                    flex-shrink: 0;
+                    display: inline-block;
+                    width: 78px;
+                }
+                .recorded-row .recorded-line {
+                    flex: 1;
+                    border-bottom: 1px solid #000;
+                    height: 10px;
+                    min-width: 120px;
+                    margin-left: 2px;
+                }
+                @media print {
+                    .dtr-page {
+                        page-break-inside: avoid;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="dtr-page">
+                ${employeeCopyHTML}
+                <div class="dtr-vertical-divider"></div>
+                ${personnelCopyHTML}
+            </div>
+        </body>
+        </html>
+    `;
 }
 
 async function fetchMyDtrData() {
@@ -1150,20 +1472,196 @@ if (logoutYes) {
 /* ---------------- INIT ---------------- */
 
 window.addEventListener('pageshow', verifyEmployeeSession);
+
+/* ---------------- EMPLOYEE ACTIVITY TIMELINE ---------------- */
+async function loadMyActivityTimeline() {
+  const timeline = document.getElementById('myActivityTimeline');
+  if (!timeline) return;
+
+  try {
+    const response = await fetch(`${dashboardApiBaseUrl}/api/activity-feed?limit=20&rfid=${currentUser?.rfid || ''}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+
+    if (response.status === 401) {
+      redirectToLogin();
+      return;
+    }
+
+    if (!response.ok) {
+      console.error('Failed to load activity feed:', response.status);
+      timeline.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-exclamation-triangle"></i> Failed to load activities
+      </div>`;
+      return;
+    }
+
+    const result = await response.json();
+    if (result.status === 'success' && result.data) {
+      const activities = result.data.activities || [];
+
+      if (!activities || activities.length === 0) {
+        timeline.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+          <i class="fa-solid fa-info-circle"></i> No recent activities
+        </div>`;
+        return;
+      }
+
+      timeline.innerHTML = activities.slice(0, 15).map((activity) => {
+        const timestamp = new Date(activity.timestamp);
+        const timeStr = timestamp.toLocaleTimeString(undefined, {
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        const dateStr = timestamp.toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric'
+        });
+
+        // Determine icon and color based on activity type
+        let icon = 'fa-solid fa-circle-info';
+        let color = 'var(--primary)';
+        let bgColor = 'var(--primary-light)';
+
+        switch (activity.type) {
+          case 'attendance':
+            if (activity.action === 'attendance_time_in') {
+              icon = 'fa-solid fa-sign-in-alt';
+              color = 'var(--success)';
+              bgColor = 'var(--success-light)';
+            } else if (activity.action === 'attendance_time_out') {
+              icon = 'fa-solid fa-sign-out-alt';
+              color = 'var(--warning)';
+              bgColor = 'var(--warning-light)';
+            } else {
+              icon = 'fa-solid fa-clock';
+              color = 'var(--primary)';
+              bgColor = 'var(--primary-light)';
+            }
+            break;
+          case 'leave':
+            if (activity.action === 'leave_approved') {
+              icon = 'fa-solid fa-check-circle';
+              color = 'var(--success)';
+              bgColor = 'var(--success-light)';
+            } else if (activity.action === 'leave_rejected') {
+              icon = 'fa-solid fa-times-circle';
+              color = 'var(--danger)';
+              bgColor = 'var(--danger-light)';
+            } else {
+              icon = 'fa-solid fa-umbrella-beach';
+              color = 'var(--leave)';
+              bgColor = 'var(--leave-light)';
+            }
+            break;
+          case 'employee':
+            if (activity.action === 'employee_registered') {
+              icon = 'fa-solid fa-user-plus';
+              color = 'var(--success)';
+              bgColor = 'var(--success-light)';
+            } else {
+              icon = 'fa-solid fa-user-edit';
+              color = 'var(--primary)';
+              bgColor = 'var(--primary-light)';
+            }
+            break;
+          case 'system':
+            if (activity.action === 'user_login') {
+              icon = 'fa-solid fa-sign-in-alt';
+              color = 'var(--primary)';
+              bgColor = 'var(--primary-light)';
+            } else if (activity.action === 'user_logout') {
+              icon = 'fa-solid fa-sign-out-alt';
+              color = 'var(--warning)';
+              bgColor = 'var(--warning-light)';
+            } else {
+              icon = 'fa-solid fa-server';
+              color = 'var(--accent)';
+              bgColor = 'var(--accent-light)';
+            }
+            break;
+          default:
+            icon = 'fa-solid fa-circle-info';
+            color = 'var(--primary)';
+            bgColor = 'var(--primary-light)';
+        }
+
+        // Get user info for display
+        let userDisplay = '';
+        if (activity.user && activity.user.name) {
+          userDisplay = `<span class="timeline-user">${escapeHtml(activity.user.name)}</span>`;
+        }
+
+        return `
+          <div class="timeline-item">
+            <div class="timeline-icon" style="background:${bgColor};color:${color};">
+              <i class="${icon}"></i>
+            </div>
+            <div class="timeline-content">
+              <div class="timeline-text">${escapeHtml(activity.details)}</div>
+              <div class="timeline-meta">
+                <span>${escapeHtml(dateStr)} ${escapeHtml(timeStr)}</span>
+                ${userDisplay ? `&nbsp;·&nbsp;${userDisplay}` : ''}
+                <span class="timeline-badge" style="background:${bgColor};color:${color};">
+                  ${escapeHtml(activity.type)}
+                </span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } else {
+        timeline.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+          <i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to load activities'}
+        </div>`;
+      }
+    } catch (error) {
+      console.error('Error loading activity timeline:', error);
+      const timeline = document.getElementById('myActivityTimeline');
+      if (timeline) {
+        timeline.innerHTML = `<div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+          <i class="fa-solid fa-exclamation-triangle"></i> Error loading activities
+        </div>`;
+      }
+    }
+}
+
 /* ---------------- VERSION AUTO-PULL ---------------- */
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
 function loadAppVersion() {
   const versionEl = document.getElementById('versionNumber');
   if (!versionEl) return;
+
+  // Show loading state
+  versionEl.textContent = 'Loading...';
+
   fetch(VERSION_URL, { cache: 'no-cache' })
-    .then((res) => res.ok ? res.text() : null)
-    .then((text) => {
-      if (!text) return;
-      const version = text.trim();
-      if (version) versionEl.textContent = version;
+    .then((res) => {
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return res.text();
     })
-    .catch(() => { /* keep fallback version */ });
+    .then((text) => {
+      if (!text) {
+        throw new Error('Empty response');
+      }
+      const version = text.trim();
+      if (version) {
+        versionEl.textContent = version;
+      } else {
+        throw new Error('No version found');
+      }
+    })
+    .catch((error) => {
+      console.warn('Could not load version:', error);
+      // Fallback to showing we tried
+      versionEl.textContent = 'Version unavailable';
+    });
 }
 
 loadAppVersion();
@@ -1171,3 +1669,6 @@ loadAppVersion();
 setInterval(updateClock, 1000);
 updateClock();
 verifyEmployeeSession();
+// Load activity timeline periodically
+setInterval(loadMyActivityTimeline, 10000); // Refresh every 10 seconds
+loadMyActivityTimeline(); // Initial load

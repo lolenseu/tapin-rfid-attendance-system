@@ -14,6 +14,33 @@ const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-atten
 
 let versionData = null;
 
+// Mobile breakpoint — screens at or below this width get the mobile employee dashboard
+const MOBILE_BREAKPOINT = 768;
+const isMobileViewport = () => window.innerWidth <= MOBILE_BREAKPOINT;
+
+// Decide where to send the user based on their role + current viewport.
+// Admins / HR always go to the admin dashboard.
+// Employees get the mobile layout on small screens.
+function resolveRedirect(role, serverRedirect) {
+    const cleanRole = (role || 'employee').toLowerCase();
+    const isStaff = cleanRole === 'admin' || cleanRole === 'hr';
+
+    if (isStaff) {
+        return 'pages/dashboard.html';
+    }
+
+    // Employee on a phone → mobile employee dashboard
+    if (isMobileViewport()) {
+        return 'pages/mobile-employee-dashboard.html';
+    }
+
+    // Desktop employee → use server redirect if it points to an employee dashboard
+    if (serverRedirect && serverRedirect.includes('employee-dashboard')) {
+        return serverRedirect.startsWith('/') ? serverRedirect.substring(1) : serverRedirect;
+    }
+    return 'pages/employee-dashboard.html';
+}
+
 function createVersionNotification() {
     if (document.getElementById('versionNotification')) {
         return;
@@ -119,7 +146,7 @@ async function fetchVersion() {
         console.warn('Could not fetch version:', error);
         versionData = 'v0.1.40';
     }
-    
+
     createVersionNotification();
 }
 
@@ -128,11 +155,11 @@ async function checkAlreadyLoggedIn() {
     if (!token) {
         return;
     }
-    
+
     try {
         const response = await fetch(`${apiBaseUrl}/api/verify-token`, {
             method: 'POST',
-            headers: { 
+            headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${token}`
             },
@@ -142,9 +169,7 @@ async function checkAlreadyLoggedIn() {
             const data = await response.json();
             if (data.user) {
                 const role = data.user.role || 'employee';
-                const redirectUrl = role === 'admin' || role === 'hr' 
-                    ? 'pages/dashboard.html' 
-                    : 'pages/employee-dashboard.html';
+                const redirectUrl = resolveRedirect(role, null);
                 window.location.replace(redirectUrl);
             }
         }
@@ -196,7 +221,7 @@ if (form) {
     // Load remembered credentials
     const rememberedUsername = localStorage.getItem('tapinRememberedUsername');
     const rememberedPassword = localStorage.getItem('tapinRememberedPassword');
-    
+
     if (rememberedUsername && rememberedPassword) {
         form.username.value = rememberedUsername;
         passwordInput.value = rememberedPassword;
@@ -248,12 +273,10 @@ if (form) {
             localStorage.setItem('tapinUser', JSON.stringify(result.user));
             localStorage.setItem('tapinToken', result.token);
 
-            // Use the redirect URL from the server
-            const redirectPath = result.redirect || 'pages/dashboard.html';
-            // Remove leading slash if present
-            const cleanPath = redirectPath.startsWith('/') ? redirectPath.substring(1) : redirectPath;
-            window.location.replace(cleanPath);
-            
+            // Decide where to send the user
+            const redirectPath = resolveRedirect(result.user?.role, result.redirect);
+            window.location.replace(redirectPath);
+
         } catch (error) {
             message.textContent = error.message || 'Unable to connect to the server.';
             message.className = 'form-message error';

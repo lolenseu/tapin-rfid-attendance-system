@@ -1232,7 +1232,7 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>RFID</label>
-                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required readonly />
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required />
                             </div>
                             <div class="form-group">
                                 <label>First Name</label>
@@ -3585,3 +3585,22 @@ updateClock();
 // Remove the old employee card collapse function since we have a new one
 // The new functions handle everything
 verifyDashboardSession();
+
+/* ---------------- VERSION AUTO-PULL ---------------- */
+const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
+
+function loadAppVersion() {
+  const versionEl = document.getElementById('versionNumber');
+  if (!versionEl) return;
+  fetch(VERSION_URL, { cache: 'no-cache' })
+    .then((res) => res.ok ? res.text() : null)
+    .then((text) => {
+      if (!text) return;
+      const version = text.trim();
+      if (version) versionEl.textContent = version;
+    })
+    .catch(() => { /* keep fallback version */ });
+}
+
+loadAppVersion();
+/* ----------------------------------------------- */

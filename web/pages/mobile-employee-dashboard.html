@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#2C0A12" />
+  <title>TapIn - My Dashboard</title>
+  <link rel="icon" type="image/png" href="../assets/tapin_icon.png">
+  <link rel="stylesheet" href="../css/mobile-employee-dashboard.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<!-- ============ TOP APP BAR ============ -->
+<header class="app-topbar">
+  <div class="app-topbar-left">
+    <div class="app-avatar" id="empTopAvatar">EM</div>
+    <div class="app-topbar-info">
+      <div class="app-greeting">Hi,</div>
+      <div class="app-name" id="dashboardUserName">Loading…</div>
+    </div>
+  </div>
+  <div class="app-topbar-right">
+    <button class="app-icon-btn" title="Notifications">
+      <i class="fa-regular fa-bell"></i>
+      <span class="app-notif-dot"></span>
+    </button>
+    <button class="app-icon-btn" title="Logout" id="topLogoutBtn">
+      <i class="fa-solid fa-arrow-right-from-bracket"></i>
+    </button>
+  </div>
+</header>
+
+<!-- ============ SCROLLABLE CONTENT ============ -->
+<main class="app-content">
+
+  <!-- ======== DASHBOARD (HOME) ======== -->
+  <section class="page active" id="page-dashboard">
+
+    <div class="clock-card">
+      <div class="clock-date" id="dashboardDate">Loading date…</div>
+      <div class="clock-time" id="dashboardTime">Loading time…</div>
+    </div>
+
+    <div class="stats-grid">
+      <div class="mini-stat stat-blue">
+        <div class="mini-icon"><i class="fa-solid fa-user-check"></i></div>
+        <div class="mini-label">Present</div>
+        <div class="mini-value" id="statTotalPresent">0</div>
+      </div>
+      <div class="mini-stat stat-red">
+        <div class="mini-icon"><i class="fa-solid fa-user-xmark"></i></div>
+        <div class="mini-label">Absent</div>
+        <div class="mini-value" id="statTotalAbsent">0</div>
+      </div>
+      <div class="mini-stat stat-cyan">
+        <div class="mini-icon"><i class="fa-solid fa-clock"></i></div>
+        <div class="mini-label">Hours</div>
+        <div class="mini-value" id="statTotalHours">0.00</div>
+      </div>
+      <div class="mini-stat stat-purple">
+        <div class="mini-icon"><i class="fa-solid fa-house"></i></div>
+        <div class="mini-label">Leaves</div>
+        <div class="mini-value" id="statLeaveCount">0</div>
+      </div>
+    </div>
+
+    <div class="quick-grid">
+      <a href="#page-dtr" class="quick-tile" data-nav="page-dtr">
+        <i class="fa-solid fa-file-signature"></i>
+        <span>My DTR</span>
+      </a>
+      <a href="#page-attendance" class="quick-tile" data-nav="page-attendance">
+        <i class="fa-solid fa-calendar-check"></i>
+        <span>Attendance</span>
+      </a>
+      <a href="#page-leave" class="quick-tile" data-nav="page-leave">
+        <i class="fa-solid fa-envelope-open-text"></i>
+        <span>Leave</span>
+      </a>
+      <a href="#page-profile" class="quick-tile" data-nav="page-profile">
+        <i class="fa-solid fa-circle-user"></i>
+        <span>Profile</span>
+      </a>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title"><i class="fa-solid fa-user"></i> My Account</div>
+      <div class="info-list">
+        <div class="info-row"><i class="fa-solid fa-id-badge"></i><span class="info-label">Employee ID</span><span class="info-val" id="employeeId">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-user"></i><span class="info-label">Full Name</span><span class="info-val" id="employeeFullname">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-building"></i><span class="info-label">Department</span><span class="info-val" id="employeeDepartment">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-wifi"></i><span class="info-label">RFID</span><span class="info-val" id="employeeRfid">--</span></div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title"><i class="fa-solid fa-signal"></i> Latest Activity</div>
+      <div class="info-list">
+        <div class="info-row"><i class="fa-solid fa-clock"></i><span class="info-label">Last Scan</span><span class="info-val" id="employeeLatestScan">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-circle-check"></i><span class="info-label">Status</span><span class="info-val" id="employeeStatus">Waiting</span></div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- ======== DTR ======== -->
+  <section class="page" id="page-dtr">
+    <div class="page-header">
+      <h1>My DTR</h1>
+      <p>Daily Time Record — CSC Form 48</p>
+    </div>
+
+    <div class="section-card">
+      <div class="form-row">
+        <label>Month</label>
+        <select class="form-control" id="mobileDtrMonthSelect" onchange="loadMyDTR()">
+          <option value="">-- Select month --</option>
+        </select>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-outline" onclick="printMyDTR()"><i class="fa-solid fa-print"></i> Print</button>
+        <button class="btn btn-primary" onclick="generateMyDTRPDF()"><i class="fa-solid fa-file-pdf"></i> Export</button>
+      </div>
+      <p id="myDtrMessage" class="msg" style="display:none;"></p>
+    </div>
+
+    <div class="section-card">
+      <div class="dtr-table-wrap">
+        <table class="mobile-dtr-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>AM In</th>
+              <th>AM Out</th>
+              <th>PM In</th>
+              <th>PM Out</th>
+              <th>Hrs</th>
+              <th>UT</th>
+              <th>OT</th>
+            </tr>
+          </thead>
+          <tbody id="myDtrTableBody">
+            <tr>
+              <td colspan="8" class="empty-cell">Select a month to view your DTR</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="dtr-totals-row">
+        <div class="tot"><span>Total Hours</span><b id="myDtrTotalHours">0.00</b></div>
+        <div class="tot"><span>Overtime</span><b id="myDtrTotalOt">0.00</b></div>
+        <div class="tot"><span>Undertime</span><b id="myDtrTotalUt">0.00</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======== ATTENDANCE ======== -->
+  <section class="page" id="page-attendance">
+    <div class="page-header">
+      <h1>My Attendance</h1>
+      <p>Your latest RFID scans</p>
+    </div>
+
+    <div class="section-card" style="padding:0;">
+      <div class="list-item-empty" id="myAttendanceEmpty" style="display:none;">
+        <i class="fa-solid fa-inbox"></i>
+        <p>No attendance records yet</p>
+      </div>
+      <div class="attendance-list" id="myAttendanceList"></div>
+    </div>
+  </section>
+
+  <!-- ======== LEAVE ======== -->
+  <section class="page" id="page-leave">
+    <div class="page-header">
+      <h1>Leave Requests</h1>
+      <p>Submit and track your leave applications</p>
+    </div>
+
+    <button class="btn btn-primary w-full" onclick="openLeaveModal()" style="margin-bottom:12px;">
+      <i class="fa-solid fa-plus"></i> Request Leave
+    </button>
+
+    <div class="section-card" style="padding:0;">
+      <div class="list-item-empty" id="leaveEmpty" style="display:none;">
+        <i class="fa-solid fa-inbox"></i>
+        <p>No leave requests yet</p>
+      </div>
+      <div class="leave-list" id="leaveList"></div>
+    </div>
+  </section>
+
+  <!-- ======== PROFILE ======== -->
+  <section class="page" id="page-profile">
+    <div class="page-header">
+      <h1>My Profile</h1>
+      <p>View and edit your account</p>
+    </div>
+
+    <div class="profile-hero">
+      <div class="profile-hero-avatar" id="mobileProfileAvatar">EM</div>
+      <div class="profile-hero-name" id="mobileProfileName">Loading…</div>
+      <div class="profile-hero-role" id="mobileProfileRole">Employee</div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title"><i class="fa-solid fa-id-card"></i> Account Information</div>
+      <div class="info-list">
+        <div class="info-row"><i class="fa-solid fa-id-badge"></i><span class="info-label">Employee ID</span><span class="info-val" id="profileEmpId">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-envelope"></i><span class="info-label">Email</span><span class="info-val" id="profileEmail">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-phone"></i><span class="info-label">Phone</span><span class="info-val" id="profilePhone">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-building"></i><span class="info-label">Department</span><span class="info-val" id="profileDept">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-briefcase"></i><span class="info-label">Position</span><span class="info-val" id="profilePosition">--</span></div>
+        <div class="info-row"><i class="fa-solid fa-home"></i><span class="info-label">Address</span><span class="info-val" id="profileAddress">--</span></div>
+      </div>
+      <button class="btn btn-primary w-full" style="margin-top:10px;" onclick="openEditProfileModal()">
+        <i class="fa-solid fa-pen-to-square"></i> Edit Profile
+      </button>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title"><i class="fa-solid fa-key"></i> Change Password</div>
+      <div class="form-row"><label>Current Password</label><input type="password" class="form-control" id="currentPassword" /></div>
+      <div class="form-row"><label>New Password</label><input type="password" class="form-control" id="newPassword" /></div>
+      <div class="form-row"><label>Confirm Password</label><input type="password" class="form-control" id="confirmPassword" /></div>
+      <button class="btn btn-primary w-full" onclick="changePassword()"><i class="fa-solid fa-save"></i> Update Password</button>
+      <p id="passwordMessage" class="msg" style="display:none;"></p>
+    </div>
+
+    <p class="version-line">Version: <span id="versionNumber">--</span></p>
+  </section>
+
+</main>
+
+<!-- ============ BOTTOM NAVIGATION ============ -->
+<nav class="bottom-nav">
+  <a href="#page-dashboard" class="bottom-nav-item active" data-nav="page-dashboard">
+    <i class="fa-solid fa-gauge-high"></i>
+    <span>Home</span>
+  </a>
+  <a href="#page-dtr" class="bottom-nav-item" data-nav="page-dtr">
+    <i class="fa-solid fa-file-lines"></i>
+    <span>DTR</span>
+  </a>
+  <a href="#page-attendance" class="bottom-nav-item" data-nav="page-attendance">
+    <i class="fa-solid fa-calendar-check"></i>
+    <span>Attendance</span>
+  </a>
+  <a href="#page-leave" class="bottom-nav-item" data-nav="page-leave">
+    <i class="fa-solid fa-envelope-open-text"></i>
+    <span>Leave</span>
+  </a>
+  <a href="#page-profile" class="bottom-nav-item" data-nav="page-profile">
+    <i class="fa-solid fa-circle-user"></i>
+    <span>Profile</span>
+  </a>
+</nav>
+
+<!-- ============ EDIT PROFILE MODAL (bottom sheet) ============ -->
+<div class="sheet-backdrop" id="editProfileModal">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Edit Profile</h2>
+      <button class="sheet-close" onclick="closeEditProfileModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="editProfileForm" onsubmit="return submitEditProfile(event)" style="padding: 4px 18px 18px;">
+      <div class="form-row"><label>First Name</label><input class="form-control" type="text" id="editFirstname" required /></div>
+      <div class="form-row"><label>Last Name</label><input class="form-control" type="text" id="editLastname" required /></div>
+      <div class="form-row"><label>Email</label><input class="form-control" type="email" id="editEmail" required /></div>
+      <div class="form-row"><label>Contact Number</label><input class="form-control" type="text" id="editCpnumber" /></div>
+      <div class="form-row"><label>Birth Date</label><input class="form-control" type="date" id="editBdate" /></div>
+      <div class="form-row"><label>Address</label><input class="form-control" type="text" id="editAddress" /></div>
+      <div class="form-row"><label>Position</label><input class="form-control" type="text" id="editPosition" /></div>
+      <div class="form-row"><label>Username</label><input class="form-control" type="text" id="editUsername" /></div>
+      <div class="form-row"><label>Profile Image</label><input class="form-control" type="file" id="editProfileImage" accept="image/*" /></div>
+      <div id="editProfileMessage" class="msg" style="display:none;"></div>
+      <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Save Changes</button>
+    </form>
+  </div>
+</div>
+
+<!-- ============ LEAVE REQUEST MODAL (bottom sheet) ============ -->
+<div class="sheet-backdrop" id="leaveModal">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Request Leave</h2>
+      <button class="sheet-close" onclick="closeLeaveModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="leaveRequestForm" onsubmit="return submitLeaveRequest(event)" style="padding: 4px 18px 18px;">
+      <div class="form-row">
+        <label>Leave Type</label>
+        <select class="form-control" id="leaveType" required>
+          <option value="vacation">Vacation Leave</option>
+          <option value="sick">Sick Leave</option>
+          <option value="emergency">Emergency Leave</option>
+          <option value="maternity">Maternity Leave</option>
+          <option value="paternity">Paternity Leave</option>
+          <option value="others">Others</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Start Date</label><input class="form-control" type="date" id="leaveStart" required /></div>
+      <div class="form-row"><label>End Date</label><input class="form-control" type="date" id="leaveEnd" required /></div>
+      <div class="form-row"><label>Reason</label><textarea class="form-control" id="leaveReason" rows="3" required></textarea></div>
+      <div id="leaveMessage" class="msg" style="display:none;"></div>
+      <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-paper-plane"></i> Submit</button>
+    </form>
+  </div>
+</div>
+
+<!-- ============ LOGOUT CONFIRM ============ -->
+<div class="logout-backdrop" id="logoutConfirmModal" style="display:none;">
+  <div class="logout-card">
+    <div class="logout-icon"><i class="fa-solid fa-right-from-bracket"></i></div>
+    <h3>Logout?</h3>
+    <p>Are you sure you want to log out of TAPIN?</p>
+    <div class="logout-actions">
+      <button class="btn btn-outline" id="logoutConfirmCancel">Cancel</button>
+      <button class="btn btn-primary" id="logoutConfirmYes">Logout</button>
+    </div>
+  </div>
+</div>
+
+<script src="../config.js"></script>
+<script src="../js/mobile-employee-dashboard.js"></script>
+</body>
+</html>

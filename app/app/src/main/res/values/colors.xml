@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tapin_maroon_dark">#2C0A12</color>
+    <color name="tapin_maroon">#800020</color>
+    <color name="tapin_gold">#D4AF37</color>
+    <color name="white">#FFFFFF</color>
+    <color name="tapin_navy">#002855</color>
+    <color name="tapin_teal">#00C2B2</color>
+</resources>

@@ -1,0 +1,31 @@
+{
+  "name": "TapIn - RFID Attendance System",
+  "short_name": "TapIn",
+  "description": "TapIn RFID Attendance System - ISPSC Tagudin Campus",
+  "start_url": "/login.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2C0A12",
+  "theme_color": "#2C0A12",
+  "icons": [
+    {
+      "src": "/assets/tapin_icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/tapin_icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/tapin_icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

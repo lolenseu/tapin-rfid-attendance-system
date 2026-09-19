@@ -224,7 +224,7 @@
           </div>
         </div>
 
-        <div class="dtr-wrap">
+        <div class="dtr-wrap" id="myDtrPrintArea">
           <div class="dtr-form">
             <div class="dtr-header">
               <div class="dtr-logo"><i class="fa-solid fa-landmark"></i></div>
@@ -367,54 +367,72 @@
         </div>
       </section>
 
-      <!-- ================= MY PROFILE SECTION ================= -->
-      <section class="page-section" id="my-profile">
+      <!-- ================= MY ACTIVITY TIMELINE ================= -->
+      <section class="page-section" id="my-activity">
         <div class="section-actions">
           <div>
-            <h1 class="section-title">My Profile</h1>
-            <p class="section-subtitle">View and edit your account information.</p>
+            <h1 class="section-title">My Activity Timeline</h1>
+            <p class="section-subtitle">Your recent activities and system updates.</p>
           </div>
-          <button class="btn btn-primary" onclick="openEditProfileModal()"><i class="fa-solid fa-pen-to-square"></i> Edit Profile</button>
         </div>
 
-        <div class="grid-2">
-          <div class="card">
-            <div class="profile-header">
-              <div class="profile-avatar" id="profileAvatar">EM</div>
-              <div class="profile-name" id="profileName">Loading...</div>
-              <div class="profile-role" id="profileRoleLabel">Employee</div>
-            </div>
-            <div class="card-body">
-              <div class="emp-card-info">
-                <div class="emp-info-row"><i class="fa-solid fa-id-badge"></i> <span class="emp-info-val" id="profileEmpId">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-envelope"></i> <span class="emp-info-val" id="profileEmail">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-phone"></i> <span class="emp-info-val" id="profilePhone">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-building"></i> <span class="emp-info-val" id="profileDept">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-briefcase"></i> <span class="emp-info-val" id="profilePosition">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-home"></i> <span class="emp-info-val" id="profileAddress">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-calendar"></i> <span class="emp-info-val" id="profileBdate">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-wifi"></i> <span class="emp-info-val" id="profileRfid">--</span></div>
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Activity Timeline</div>
+          </div>
+          <div class="card-body" style="padding:0;max-height:340px;overflow-y:auto;scrollbar-width:thin;">
+            <div class="timeline" id="myActivityTimeline" style="padding:12px 16px 12px 40px;">
+              <!-- Filled dynamically from employee activity API -->
+              <div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
+                <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading activities...
               </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div class="card">
-            <div class="card-header"><div class="card-title"><i class="fa-solid fa-key"></i> Change Password</div></div>
-            <div class="card-body">
-              <div class="form-group mb-4">
+      <!-- ================= MY PROFILE SECTION ================= -->
+      <section class="page-section" id="my-profile">
+        <div class="section-actions" style="background:linear-gradient(135deg,var(--primary),var(--accent));padding:20px;border-radius:var(--radius);margin-bottom:20px;">
+          <div>
+            <h2 class="section-title" style="color:white;margin:0 0 8px 0;font-size:22px;">My Profile</h2>
+            <p class="section-subtitle" style="color:rgba(255,255,255,0.9);margin:0;font-size:14px;">View and edit your account information.</p>
+          </div>
+          <button class="btn btn-primary" onclick="openEditProfileModal()">Edit Profile</button>
+        </div>
+
+        <div class="profile-grid">
+          <div class="profile-block">
+            <div class="profile-block-header">
+              <i class="fa-solid fa-id-card"></i>
+              <span>Account Information</span>
+            </div>
+            <div class="profile-block-body">
+              <div class="emp-info-row"><i class="fa-solid fa-envelope"></i> <span class="emp-info-val" id="profileEmail">--</span></div>
+              <div class="emp-info-row"><i class="fa-solid fa-phone"></i> <span class="emp-info-val" id="profilePhone">--</span></div>
+              <div class="emp-info-row"><i class="fa-solid fa-building"></i> <span class="emp-info-val" id="profileDept">--</span></div>
+              <div class="emp-info-row"><i class="fa-solid fa-id-badge"></i> <span class="emp-info-val" id="profileEmpId">--</span></div>
+              <div class="emp-info-row"><i class="fa-solid fa-shield-halved"></i> <span class="emp-info-val" id="profileRole">--</span></div>
+            </div>
+          </div>
+          <div class="profile-block">
+            <div class="profile-block-header">
+              <i class="fa-solid fa-key"></i>
+              <span>Change Password</span>
+            </div>
+            <div class="profile-block-body">
+              <div class="form-group">
                 <label>Current Password</label>
                 <input class="form-control" type="password" id="currentPassword" placeholder="Enter current password" />
               </div>
-              <div class="form-group mb-4">
+              <div class="form-group">
                 <label>New Password</label>
                 <input class="form-control" type="password" id="newPassword" placeholder="Enter new password" />
               </div>
-              <div class="form-group mb-6">
+              <div class="form-group" style="margin-bottom:0;">
                 <label>Confirm New Password</label>
                 <input class="form-control" type="password" id="confirmPassword" placeholder="Confirm new password" />
               </div>
-              <button class="btn btn-primary w-full" onclick="changePassword()"><i class="fa-solid fa-save"></i> Update Password</button>
-              <p id="passwordMessage" style="margin-top:10px;font-size:13px;display:none;"></p>
             </div>
           </div>
         </div>
@@ -429,7 +447,7 @@
           <div class="footer-sub" style="font-size:11px;margin-top:2px;">ISPSC Tagudin Campus · Employee Portal</div>
         </div>
         <div class="footer-info">
-          <p>Version <span id="versionNumber">1.0</span> · &copy; 2026 ISPSC Tagudin Campus</p>
+          <p>Version: <span id="versionNumber"></span> · &copy; 2026 ISPSC Tagudin Campus</p>
         </div>
       </div>
     </footer>
