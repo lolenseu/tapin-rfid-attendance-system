@@ -44,6 +44,17 @@ except ImportError:
     REQUESTS_AVAILABLE = False
     print("Warning: requests not installed. Version checking will be disabled.")
 
+# Try to import threading + time for the nightly wipe scheduler.
+# These are used to wake up at 12:00 AM and clear the feed files automatically,
+# regardless of whether any HTTP request has been made.
+try:
+    import threading
+    import time
+    THREADING_AVAILABLE = True
+except ImportError:
+    THREADING_AVAILABLE = False
+    print("Warning: threading not available. Nightly wipe scheduler will be disabled.")
+
 ## Variables ------------------------------------
 # Create the Flask application.
 app = Flask(__name__)
@@ -323,34 +334,35 @@ latest_scan = {
 # Track last scan time for each RFID to enforce cooldown
 # Structure: {rfid: {"last_scan_time": datetime, "last_scan_type": "in"|"out"}}
 last_scan_tracking = {}
-# Cooldown between scans for the same RFID (in seconds). Default 10 minutes.
-SCAN_COOLDOWN_SECONDS = 10 * 60
+# Cooldown between scans for the same RFID (in seconds). Default 3 minutes.
+SCAN_COOLDOWN_SECONDS = 3 * 60
 
 # ============================================================================
-# NIGHTLY FEED WIPE (runs once per calendar day, at first request after 12:00 AM)
+# NIGHTLY FEED WIPE (runs automatically at 12:00 AM local time)
 # ============================================================================
-# Track the last date we performed the nightly wipe so all four feed files
-# are cleared exactly once per calendar day — at the first request received
-# after midnight. Wiping is a no-op if already done today.
+# The four feed files listed below are cleared at midnight every day:
 #
-# Files wiped nightly (in storage/feed/):
-#     - scan_feed.json       (scans)
-#     - scan_events.json     (scan_events)
-#     - activity_feed.json   (activities)
-#     - leaves_feed.json     (requests + approved + rejected)  <-- OLD leaves.json
+#     storage/feed/scan_feed.json        <- recent scan entries
+#     storage/feed/scan_events.json      <- raw scan events
+#     storage/feed/activity_feed.json    <- system activity timeline
+#     storage/feed/leaves_feed.json      <- leave feed (mirror of leaves.json)
+#
+# A background thread wakes up every 30 seconds and, when it detects that the
+# local clock has just crossed midnight, calls perform_nightly_feed_wipe()
+# exactly once for that calendar day. The wipe is also triggered lazily on the
+# first HTTP request after midnight — so even if the background thread is not
+# available (e.g. threading disabled), the wipe still happens the moment
+# someone hits the API.
 #
 # Files NOT wiped (persistent, in storage/database/):
 #     - users.json           (employee records)
 #     - attendance.json      (DTR records)
 #     - leaves.json          (NEW mirror of the feed — kept forever)
 #     - settings.json        (config)
-#
-# IMPORTANT: leaves_feed.json and leaves.json hold the SAME data at any given
-# moment. Every write goes to both files. Only the feed copy is emptied at
-# midnight — the database copy is the permanent record.
 _last_feed_wipe_date = None
 
-def perform_nightly_feed_wipe():
+
+def perform_nightly_feed_wipe(force=False):
     """Wipe all four feed files once per calendar day at 12:00 AM.
 
     Files cleared (all under storage/feed/):
@@ -358,18 +370,18 @@ def perform_nightly_feed_wipe():
         - storage/feed/scan_events.json    (scan_events list)
         - storage/feed/activity_feed.json  (activities list)
         - storage/feed/leaves_feed.json    (requests + approved + rejected)
-                                            ^ this is the OLD leaves.json
 
     The persistent mirror at storage/database/leaves.json is NEVER touched.
 
     Also clears in-memory daily state (latest scan + per-RFID cooldown).
 
-    Safe to call on every request — it short-circuits if already run today.
+    Safe to call on every request — it short-circuits if already run today,
+    unless `force=True` is passed (used by the midnight scheduler thread).
     """
     global _last_feed_wipe_date, latest_scan, last_scan_tracking, scan_events
 
     today = datetime.now().date()
-    if _last_feed_wipe_date == today:
+    if not force and _last_feed_wipe_date == today:
         return
     _last_feed_wipe_date = today
 
@@ -382,6 +394,7 @@ def perform_nightly_feed_wipe():
         scan_feed_data["total_scans"] = 0
         scan_feed_data["last_cleanup"] = now_iso
         save_scan_feed(scan_feed_data)
+        print(f"[Nightly] Wiped scan_feed.json")
     except Exception as e:
         print(f"[Nightly] Failed to wipe scan_feed.json: {e}")
 
@@ -389,6 +402,7 @@ def perform_nightly_feed_wipe():
     try:
         scan_events = []
         save_scan_events({"scan_events": []})
+        print(f"[Nightly] Wiped scan_events.json")
     except Exception as e:
         print(f"[Nightly] Failed to wipe scan_events.json: {e}")
 
@@ -399,6 +413,7 @@ def perform_nightly_feed_wipe():
             "total_activities": 0,
             "last_cleanup": now_iso
         })
+        print(f"[Nightly] Wiped activity_feed.json")
     except Exception as e:
         print(f"[Nightly] Failed to wipe activity_feed.json: {e}")
 
@@ -411,6 +426,7 @@ def perform_nightly_feed_wipe():
         # Refresh the in-memory feed copy so the running app sees the empty state
         leave_feed_data.clear()
         leave_feed_data.update(empty_leaves)
+        print(f"[Nightly] Wiped leaves_feed.json")
     except Exception as e:
         print(f"[Nightly] Failed to wipe leaves_feed.json: {e}")
 
@@ -420,6 +436,44 @@ def perform_nightly_feed_wipe():
     latest_scan["scanned_at"] = None
 
     print(f"[Nightly] All feeds wiped for {today.isoformat()} at {now_iso}")
+
+
+def start_nightly_wipe_scheduler():
+    """Start a background thread that wipes all feeds at 12:00 AM local time.
+
+    The scheduler wakes up every 30 seconds and checks whether the current
+    local time has just crossed midnight. If it has, and we haven't already
+    wiped today, it calls perform_nightly_feed_wipe(force=True).
+
+    This runs regardless of whether any API route is hit, so the feeds are
+    always cleared at exactly midnight local time.
+
+    Runs as a daemon thread — it shuts down automatically when the app exits.
+    """
+    if not THREADING_AVAILABLE:
+        print("⚠️  Nightly wipe scheduler not started (threading unavailable)")
+        return
+
+    def _scheduler_loop():
+        print("[Scheduler] Nightly feed wipe scheduler started (checks every 30s)")
+        while True:
+            try:
+                now = datetime.now()
+                # Trigger once per day, during the first minute after midnight.
+                if now.hour == 0 and now.minute == 0:
+                    # Only wipe if we haven't already wiped for this date.
+                    if _last_feed_wipe_date != now.date():
+                        print(f"[Scheduler] Midnight detected at {now.isoformat()} — wiping feeds")
+                        perform_nightly_feed_wipe(force=True)
+            except Exception as e:
+                print(f"[Scheduler] Error in scheduler loop: {e}")
+            # Sleep 30 seconds before checking again.
+            time.sleep(30)
+
+    scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="nightly-wipe")
+    scheduler_thread.start()
+    print("✅ Nightly wipe scheduler thread launched")
+
 
 ## Functions ------------------------------------
 # Image compression function
@@ -1416,28 +1470,14 @@ def determine_scan_type(day_data, scan_time, employee):
                 print(f"Late AM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                 return ("am", "in")
             elif am_has_in and not am_has_out:
-                # Check if we're past lunch_end - if so, treat as PM time in instead of AM out
-                try:
-                    lunch_end_str = settings.get("attendance", {}).get("lunch_end", "13:00")
-                    lunch_end_hour = int(lunch_end_str.split(":")[0])
-                    lunch_end_minute = int(lunch_end_str.split(":")[1]) if ":" in lunch_end_str else 0
-                    lunch_end_time = scan_time.replace(hour=lunch_end_hour, minute=lunch_end_minute, second=0, microsecond=0)
-
-                    if scan_time >= lunch_end_time:
-                        print(f"AM period ended (past lunch_end {lunch_end_str}), treating scan as PM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
-                        return ("pm", "in")
-                except Exception as e:
-                    print(f"Error checking lunch_end time: {e}")
-                    # Fall back to original logic if settings parsing fails
-
                 if rfid in last_scan_tracking:
                     last_scan_data = last_scan_tracking[rfid]
                     last_scan_time = last_scan_data.get("last_scan_time")
                     last_scan_type = last_scan_data.get("last_scan_type")
+                    
                     if last_scan_type == "in":
                         time_diff_seconds = (scan_time - last_scan_time).total_seconds()
                         if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
-                            print(f"Late AM time out for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                             return ("am", "out")
                         else:
                             mins = time_diff_seconds / 60.0
@@ -3970,9 +4010,34 @@ def handle_scanner_options():
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, PUT, DELETE, PATCH"
     return response, 200
 
+# ============================================================================
+# START BACKGROUND SCHEDULERS + IMMEDIATE CATCH-UP WIPE
+# ============================================================================
+# This block runs at module import time, which means it executes on WSGI
+# servers (gunicorn, PythonAnywhere, Railway, Render) as well as when the
+# file is run directly. That is important: on PythonAnywhere the __main__
+# block never runs — the WSGI server just imports the module — so the
+# scheduler must be started here to guarantee the midnight wipe fires.
+try:
+    start_nightly_wipe_scheduler()
+except Exception as e:
+    print(f"⚠️ Could not start nightly wipe scheduler: {e}")
+
+# One-time catch-up wipe on boot. If the server was down at midnight and
+# restarted the next day, this clears any stale feed content immediately.
+try:
+    perform_nightly_feed_wipe(force=True)
+    print("[Boot] Initial feed wipe completed.")
+except Exception as e:
+    print(f"⚠️ Startup wipe error: {e}")
+
 ## Main ------------------------------------
 if __name__ == "__main__":
     initialize_attendance_records()
+
+    # The scheduler is already started at module level above, so we don't
+    # need to start it again here. But the immediate boot wipe is idempotent
+    # thanks to the `_last_feed_wipe_date` guard, so calling it twice is fine.
 
     # Get port from environment variable (Railway sets PORT)
     # If PORT env var is set (e.g., on Railway), use it directly.

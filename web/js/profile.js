@@ -1,5 +1,6 @@
 const API_BASE_URL = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 const API_URL = `${API_BASE_URL}/api/get-latest-rfid`;
+const SCAN_FEED_URL = `${API_BASE_URL}/api/scan-feed`;
 const POLL_INTERVAL = 2000;
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
@@ -19,6 +20,10 @@ let isFirstLoad = true;
 let currentRfid = null;
 let lastAttendanceSignature = '';
 let versionData = null;
+
+// Cache of the most recent scan feed payload so we don't have to fetch it on
+// every single render — we only refetch when the feed route is polled.
+let scanFeedCache = [];
 
 function loadLogo() {
     const logoPaths = [
@@ -212,7 +217,10 @@ function formatTimeFromISO(isoString) {
     }
 }
 
-// Format DTR time (stored as 12-hour without AM/PM) for display with correct AM/PM based on field context
+// Format DTR time (stored as 12-hour without AM/PM) for display with correct
+// AM/PM based on the field's own period context ("am"/"pm"). Used as a
+// fallback only — the primary display path now derives AM/PM directly from
+// the feed's scanned_at timestamp so it never lies about the actual time.
 function formatDtrTimeForDisplay(timeStr, period) {
     if (!timeStr) return '--';
     if (timeStr.includes(':')) {
@@ -256,6 +264,99 @@ function getImageUrl(imagePath) {
     return `${API_BASE_URL}/${imagePath}`;
 }
 
+/* ============================================================
+   SCAN FEED HELPERS
+   The profile screen pulls its AM/PM time-in and time-out values
+   from the scan feed (via /api/scan-feed) instead of relying on
+   the DTR row. That way each time is displayed with the true
+   AM/PM of the moment it was actually recorded.
+   ============================================================ */
+
+// Fetch the scan feed once and cache it.
+async function fetchScanFeed() {
+    try {
+        const res = await fetch(SCAN_FEED_URL, {
+            headers: { 'Accept': 'application/json' },
+            cache: 'no-store'
+        });
+        if (!res.ok) {
+            console.warn('scan-feed fetch failed:', res.status);
+            return;
+        }
+        const payload = await res.json();
+        if (payload && payload.status === 'success' && payload.data && Array.isArray(payload.data.scans)) {
+            scanFeedCache = payload.data.scans;
+        }
+    } catch (err) {
+        console.warn('scan-feed fetch error:', err);
+    }
+}
+
+// Build a display string "H:MM AM/PM" from a scanned_at timestamp like
+// "2026-09-20 01:26:32". This is what makes the displayed AM/PM always
+// match the physical moment the tap happened.
+function labelFromScannedAt(scannedAt) {
+    if (!scannedAt) return '';
+    try {
+        // Turn "YYYY-MM-DD HH:MM:SS" into an ISO string the Date parser likes.
+        const iso = String(scannedAt).replace(' ', 'T');
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleTimeString('en-PH', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+    } catch {
+        return '';
+    }
+}
+
+// Given an RFID, walk the scan feed (today only), keep the FIRST tap of each
+// scan_type, and return { am_in, am_out, pm_in, pm_out } strings ready to be
+// dropped straight into the profile cards.
+function extractTimesFromFeed(rfid, todayLocalDate) {
+    const result = { am_in: '', am_out: '', pm_in: '', pm_out: '' };
+    if (!rfid || !Array.isArray(scanFeedCache) || scanFeedCache.length === 0) {
+        return result;
+    }
+
+    // The feed is newest-first (inserted at index 0), so reverse to process
+    // chronologically and grab the earliest tap of each type.
+    const chronological = [...scanFeedCache].reverse();
+
+    for (const entry of chronological) {
+        if (!entry) continue;
+        if (String(entry.rfid || '').toUpperCase() !== String(rfid).toUpperCase()) continue;
+
+        // Only consider taps that belong to today (compare on the calendar
+        // date portion of scanned_at, falling back to scanned_on).
+        const scannedAt = entry.scanned_at || '';
+        const datePart = scannedAt ? String(scannedAt).slice(0, 10) : (entry.scanned_on || '');
+        if (todayLocalDate && datePart && datePart !== todayLocalDate) continue;
+
+        const type = String(entry.scan_type || '').toLowerCase();
+        if (!type) continue;
+
+        // Keep the first tap of each type only.
+        if (type === 'am_in'  && !result.am_in)  result.am_in  = labelFromScannedAt(scannedAt);
+        if (type === 'am_out' && !result.am_out) result.am_out = labelFromScannedAt(scannedAt);
+        if (type === 'pm_in'  && !result.pm_in)  result.pm_in  = labelFromScannedAt(scannedAt);
+        if (type === 'pm_out' && !result.pm_out) result.pm_out = labelFromScannedAt(scannedAt);
+    }
+
+    return result;
+}
+
+// Return today's date as "YYYY-MM-DD" in the user's local timezone.
+function getLocalTodayString() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
 function render(data) {
     currentData = data;
     const isFound = data.found === true;
@@ -279,7 +380,10 @@ function render(data) {
         lastAttendanceSignature = attendanceSignature;
 
         if (isFound && hasEmployee) {
-            renderEmployee(data.employee, data.attendance);
+            // Pull AM/PM times from the scan feed for this employee's card.
+            const today = getLocalTodayString();
+            const feedTimes = extractTimesFromFeed(data.employee.rfid, today);
+            renderEmployee(data.employee, data.attendance, feedTimes);
             employeeCard.classList.add('visible');
             noData.style.display = 'none';
         } else if (data.rfid && !isFound) {
@@ -306,7 +410,7 @@ function render(data) {
     }
 }
 
-function renderEmployee(emp, attendance) {
+function renderEmployee(emp, attendance, feedTimes) {
     const fullname = (emp.firstname || '') + ' ' + (emp.lastname || '');
     const initials = getInitials(emp.firstname, emp.lastname);
     const role = emp.role || 'employee';
@@ -314,16 +418,24 @@ function renderEmployee(emp, attendance) {
     const scannedTime = currentData.scanned_at ? formatTimeFromISO(currentData.scanned_at) : '--';
     const currentTime = getCurrentTime();
     const imageUrl = getImageUrl(emp.image);
-    
-    // Debug: log attendance data
-    console.log('Attendance data:', attendance);
-    
-    // Get attendance times - format them properly with correct AM/PM based on field context
-    const amIn = attendance && attendance.am_in ? `${formatDtrTimeForDisplay(attendance.am_in, 'am')}` : '--';
-    const amOut = attendance && attendance.am_out ? `${formatDtrTimeForDisplay(attendance.am_out, 'am')}` : '--';
-    const pmIn = attendance && attendance.pm_in ? `${formatDtrTimeForDisplay(attendance.pm_in, 'pm')}` : '--';
-    const pmOut = attendance && attendance.pm_out ? `${formatDtrTimeForDisplay(attendance.pm_out, 'pm')}` : '--';
+
+    // Prefer the AM/PM time-in and time-out values that came straight from
+    // the scan feed (labels built from the actual scanned_at timestamps).
+    // If the feed has nothing for a slot yet, fall back to the DTR value
+    // formatted with the field's own period context.
+    feedTimes = feedTimes || {};
+
+    const amIn  = feedTimes.am_in  || (attendance && attendance.am_in  ? formatDtrTimeForDisplay(attendance.am_in,  'am') : '--');
+    const amOut = feedTimes.am_out || (attendance && attendance.am_out ? formatDtrTimeForDisplay(attendance.am_out, 'am') : '--');
+    const pmIn  = feedTimes.pm_in  || (attendance && attendance.pm_in  ? formatDtrTimeForDisplay(attendance.pm_in,  'pm') : '--');
+    const pmOut = feedTimes.pm_out || (attendance && attendance.pm_out ? formatDtrTimeForDisplay(attendance.pm_out, 'pm') : '--');
     const status = attendance && attendance.status ? attendance.status : '';
+
+    // Ensure empty feed slots show the placeholder instead of an empty string.
+    const amInDisplay  = amIn  || '--';
+    const amOutDisplay = amOut || '--';
+    const pmInDisplay  = pmIn  || '--';
+    const pmOutDisplay = pmOut || '--';
 
     // Build status badge if on leave
     let statusBadge = '';
@@ -357,21 +469,21 @@ function renderEmployee(emp, attendance) {
             <div class="time-row">
                 <div class="time-item">
                     <div class="label">AM Time In</div>
-                    <div class="value clock-in" id="amTimeIn">${amIn}</div>
+                    <div class="value clock-in" id="amTimeIn">${amInDisplay}</div>
                 </div>
                 <div class="time-item">
                     <div class="label">AM Time Out</div>
-                    <div class="value clock-out" id="amTimeOut">${amOut}</div>
+                    <div class="value clock-out" id="amTimeOut">${amOutDisplay}</div>
                 </div>
             </div>
             <div class="time-row">
                 <div class="time-item">
                     <div class="label">PM Time In</div>
-                    <div class="value clock-in" id="pmTimeIn">${pmIn}</div>
+                    <div class="value clock-in" id="pmTimeIn">${pmInDisplay}</div>
                 </div>
                 <div class="time-item">
                     <div class="label">PM Time Out</div>
-                    <div class="value clock-out" id="pmTimeOut">${pmOut}</div>
+                    <div class="value clock-out" id="pmTimeOut">${pmOutDisplay}</div>
                 </div>
             </div>
             <div class="time-row">
@@ -397,11 +509,11 @@ function renderEmployee(emp, attendance) {
         const pmOutElem = document.getElementById('pmTimeOut');
         const currentTimeElem = document.getElementById('currentTimeDisplay');
         const lastScanElem = document.getElementById('lastScanTime');
-        
-        if (amInElem) amInElem.textContent = amIn;
-        if (amOutElem) amOutElem.textContent = amOut;
-        if (pmInElem) pmInElem.textContent = pmIn;
-        if (pmOutElem) pmOutElem.textContent = pmOut;
+
+        if (amInElem) amInElem.textContent = amInDisplay;
+        if (amOutElem) amOutElem.textContent = amOutDisplay;
+        if (pmInElem) pmInElem.textContent = pmInDisplay;
+        if (pmOutElem) pmOutElem.textContent = pmOutDisplay;
         if (lastScanElem) lastScanElem.textContent = scannedTime;
         if (currentTimeElem) currentTimeElem.textContent = currentTime;
     }
@@ -501,6 +613,10 @@ function renderUnknownEmployee(rfid, scannedAtTime) {
 
 async function fetchData() {
     try {
+        // Refresh the scan feed cache alongside the profile data so the
+        // AM/PM times are always in sync with the latest taps.
+        await fetchScanFeed();
+
         const response = await fetch(API_URL, {
             headers: { 'Accept': 'application/json' }
         });
@@ -575,33 +691,6 @@ function startPolling() {
 }
 
 document.addEventListener('DOMContentLoaded', startPolling);
-
-// Format DTR time (stored as 12-hour without AM/PM) for display with correct AM/PM based on field context
-function formatDtrTimeForDisplay(timeStr, period) {
-    if (!timeStr) return '--';
-    if (timeStr.includes(':')) {
-        try {
-            const parts = timeStr.split(':');
-            if (parts.length >= 2) {
-                let hour = parseInt(parts[0]);
-                const minute = parts[1];
-
-                // For DTR times, we know the context (AM/PM field) so we can display correctly
-                // Convert to 12-hour format for display
-                hour = hour % 12;
-                if (hour === 0) hour = 12;
-
-                // Determine AM/PM based on the field context, not the hour value
-                const ampm = period === 'pm' ? 'PM' : 'AM';
-                return `${hour}:${minute} ${ampm}`;
-            }
-            return timeStr;
-        } catch {
-            return timeStr;
-        }
-    }
-    return timeStr;
-}
 
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
