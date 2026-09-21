@@ -261,6 +261,14 @@ if (form) {
                 throw new Error(result.message || 'Username or password is incorrect.');
             }
 
+            // Prevent admin/hr from logging in on mobile
+            const userRole = result.user?.role || '';
+            const cleanRole = (userRole || 'employee').toLowerCase();
+            const isStaff = cleanRole === 'admin' || cleanRole === 'hr';
+            if (isStaff && isMobileViewport()) {
+                throw new Error('Admin and HR login is not available on mobile devices. Please use a desktop computer.');
+            }
+
             // Save to localStorage based on remember me checkbox
             if (rememberInput && rememberInput.checked) {
                 localStorage.setItem('tapinRememberedUsername', username);

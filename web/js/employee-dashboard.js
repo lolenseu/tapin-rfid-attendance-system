@@ -692,14 +692,22 @@ async function loadMyLeaveRequests() {
 
   try {
     const rfid = currentUser.rfid || '';
-    const res = await fetch(`${dashboardApiBaseUrl}/api/leave-requests?rfid=${encodeURIComponent(rfid)}`, {
+    // FIXED: use the per-employee route /api/leave-requests/<rfid>,
+    // which filters by the employee's UID on the backend and returns
+    // { requests, approved, rejected } for that employee only.
+    const res = await fetch(`${dashboardApiBaseUrl}/api/leave-requests/${encodeURIComponent(rfid)}`, {
       method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
     });
     if (res.status === 401) { redirectToLogin(); return; }
 
     if (res.ok) {
       const result = await res.json();
-      myLeaveRequests = result.data?.requests || [];
+      // Combine all three statuses so the "My Requests" table shows every
+      // request regardless of whether it's still pending, approved, or rejected.
+      const pending = result.data?.requests || [];
+      const approved = result.data?.approved || [];
+      const rejected = result.data?.rejected || [];
+      myLeaveRequests = [...pending, ...approved, ...rejected];
     } else {
       myLeaveRequests = [];
     }
@@ -722,7 +730,7 @@ async function loadMyLeaveRequests() {
                : 'badge-pending';
     const canCancel = status === 'pending';
     return `<tr>
-      <td>${escapeHtml(r.filed_at || '--')}</td>
+      <td>${escapeHtml(r.filed_at || r.requested_at || '--')}</td>
       <td>${escapeHtml((r.leave_type || '').toUpperCase())}</td>
       <td>${escapeHtml(r.start_date || '--')}</td>
       <td>${escapeHtml(r.end_date || '--')}</td>
@@ -751,20 +759,25 @@ async function submitLeaveRequest(event) {
   event.preventDefault();
   if (!currentUser) return false;
 
-  const payload = {
-    rfid: currentUser.rfid,
-    employeeid: currentUser.employeeid || '',
-    leave_type: document.getElementById('leaveType').value,
-    start_date: document.getElementById('leaveStart').value,
-    end_date: document.getElementById('leaveEnd').value,
-    reason: document.getElementById('leaveReason').value.trim()
-  };
+  const formData = new FormData();
+  formData.append('rfid', currentUser.rfid);
+  formData.append('employeeid', currentUser.employeeid || '');
+  formData.append('leave_type', document.getElementById('leaveType').value);
+  formData.append('start_date', document.getElementById('leaveStart').value);
+  formData.append('end_date', document.getElementById('leaveEnd').value);
+  formData.append('reason', document.getElementById('leaveReason').value.trim());
 
-  if (!payload.start_date || !payload.end_date || !payload.reason) {
+  // Handle file upload
+  const attachmentInput = document.getElementById('leaveAttachment');
+  if (attachmentInput.files && attachmentInput.files[0]) {
+    formData.append('attachment', attachmentInput.files[0]);
+  }
+
+  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('reason')) {
     showLeaveMessage('Please fill in all required fields.', 'warning');
     return false;
   }
-  if (new Date(payload.start_date) > new Date(payload.end_date)) {
+  if (new Date(formData.get('start_date')) > new Date(formData.get('end_date'))) {
     showLeaveMessage('Start date cannot be after end date.', 'warning');
     return false;
   }
@@ -772,10 +785,14 @@ async function submitLeaveRequest(event) {
   showLeaveMessage('<i class="fa-solid fa-spinner fa-spin"></i> Submitting...', 'info');
 
   try {
-    const res = await fetch(`${dashboardApiBaseUrl}/api/leave-requests`, {
+    // FIXED: the backend POST route is /api/request-leave, not /api/leave-requests.
+    // Also — for FormData we MUST NOT set Content-Type: application/json,
+    // because the browser needs to add its own multipart boundary. So we
+    // only send the Authorization header here, not getAuthHeaders().
+    const res = await fetch(`${dashboardApiBaseUrl}/api/request-leave`, {
       method: 'POST',
-      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('tapinToken')}` },
+      body: formData,
       credentials: 'include'
     });
 
@@ -1669,6 +1686,5 @@ loadAppVersion();
 setInterval(updateClock, 1000);
 updateClock();
 verifyEmployeeSession();
-// Load activity timeline periodically
-setInterval(loadMyActivityTimeline, 10000); // Refresh every 10 seconds
+// Load activity timeline periodicallysetInterval(loadMyActivityTimeline, 10000); // Refresh every 10 seconds
 loadMyActivityTimeline(); // Initial load

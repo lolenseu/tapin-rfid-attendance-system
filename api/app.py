@@ -215,6 +215,9 @@ SCAN_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_events.json")
 # It lives in storage/feed/ and IS wiped nightly at 12:00 AM.
 LEAVE_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves_feed.json")
 
+# Leave request storage - stores uploaded files for leave requests
+LEAVE_REQUEST_STORAGE = os.path.join(BASE_DIR, "storage", "leave-request")
+
 # Activity feed storage - keeps all system activities for timeline
 ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.json")
 
@@ -245,6 +248,7 @@ os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
 os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
+os.makedirs(LEAVE_REQUEST_STORAGE, exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
@@ -361,7 +365,6 @@ SCAN_COOLDOWN_SECONDS = 3 * 60
 #     - settings.json        (config)
 _last_feed_wipe_date = None
 
-
 def perform_nightly_feed_wipe(force=False):
     """Wipe all four feed files once per calendar day at 12:00 AM.
 
@@ -437,7 +440,6 @@ def perform_nightly_feed_wipe(force=False):
 
     print(f"[Nightly] All feeds wiped for {today.isoformat()} at {now_iso}")
 
-
 def start_nightly_wipe_scheduler():
     """Start a background thread that wipes all feeds at 12:00 AM local time.
 
@@ -473,7 +475,6 @@ def start_nightly_wipe_scheduler():
     scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="nightly-wipe")
     scheduler_thread.start()
     print("✅ Nightly wipe scheduler thread launched")
-
 
 ## Functions ------------------------------------
 # Image compression function
@@ -1343,7 +1344,14 @@ def build_dtr_dict(year, month):
             "hours": "0.00",
             "ut": "0.00",
             "ot": "0.00",
-            "status": ""
+            "status": "",
+            # Hidden 24-hour copies of the four timestamps above. These are
+            # what calculate_hours() actually uses so the AM/PM distinction
+            # is never lost when we store the 12-hour display value.
+            "_am_in_24": "",
+            "_am_out_24": "",
+            "_pm_in_24": "",
+            "_pm_out_24": ""
         }
     return dtr
 
@@ -1419,98 +1427,165 @@ def is_on_leave(day_data):
 def determine_scan_type(day_data, scan_time, employee):
     """
     Determine whether this scan should be a time in or time out.
-    Returns: ("am", "in") or ("am", "out") or ("pm", "in") or ("pm", "out") or None (skip)
+
+    Returns one of:
+        ("am", "in")   -> record am_in
+        ("am", "out")  -> record am_out
+        ("pm", "in")   -> record pm_in
+        ("pm", "out")  -> record pm_out
+        None           -> skip this tap entirely
+
+    Rules (in priority order):
+
+    1. If the day is marked on_leave, skip.
+
+    2. If AM is incomplete and the current period is AM:
+         - am_in missing                     -> ("am", "in")
+         - am_in present, am_out missing     -> ("am", "out")
+         - am_in and am_out both present     -> skip (AM already complete)
+
+    3. If AM is incomplete and the current period is PM:
+         - am_in missing
+             * tap is at/after lunch_end     -> ("pm", "in")   (late arrival —
+                                                                 first tap of the
+                                                                 day is PM in)
+             * tap is before lunch_end       -> ("am", "in")   (very late AM in)
+         - am_in present, am_out missing
+             * tap is at/after lunch_end     -> ("pm", "in")   (forgot AM out;
+                                                                 leave am_out blank)
+             * tap is before lunch_end       -> ("am", "out")  (late AM out)
+
+    4. If AM is complete and PM has not started:
+         - pm_in missing                     -> ("pm", "in")
+
+    5. If PM is in progress:
+         - pm_out missing                    -> ("pm", "out")
+
+    6. If PM is complete                     -> skip.
+
+    The `last_scan_tracking` map is used ONLY to avoid double-recording the
+    same direction back-to-back inside the cooldown window. It never blocks
+    an in/out transition on the DTR itself.
     """
     rfid = employee.get("rfid")
     period = get_period(scan_time)
 
-    # Check if day is on leave - skip scanning
     if is_on_leave(day_data):
         print(f"Day marked as ON LEAVE for {rfid} - scan skipped")
         return None
 
-    # Check AM status from the day record
     am_has_in = has_time_in_for_period(day_data, "am")
     am_has_out = has_time_out_for_period(day_data, "am")
     am_complete = am_has_in and am_has_out
 
-    # Check PM status from the day record
     pm_has_in = has_time_in_for_period(day_data, "pm")
     pm_has_out = has_time_out_for_period(day_data, "pm")
     pm_complete = pm_has_in and pm_has_out
 
-    # AM period handling
+    # Helper: returns True if the last recorded tap for this RFID was the
+    # same direction we're about to record, within the cooldown window.
+    def same_direction_within_cooldown(direction):
+        if rfid not in last_scan_tracking:
+            return False
+        last = last_scan_tracking[rfid]
+        if last.get("last_scan_type") != direction:
+            return False
+        last_time = last.get("last_scan_time")
+        if last_time is None:
+            return False
+        return (scan_time - last_time).total_seconds() < SCAN_COOLDOWN_SECONDS
+
+    # Helper: returns True if the tap happened at or after the configured
+    # lunch_end time. Falls back to 13:00 if settings are unreadable.
+    def is_at_or_after_lunch_end():
+        try:
+            lunch_end_str = settings.get("attendance", {}).get("lunch_end", "13:00")
+            lunch_end_hour = int(lunch_end_str.split(":")[0])
+            lunch_end_minute = int(lunch_end_str.split(":")[1]) if ":" in lunch_end_str else 0
+            lunch_end_time = scan_time.replace(
+                hour=lunch_end_hour, minute=lunch_end_minute,
+                second=0, microsecond=0
+            )
+            return scan_time >= lunch_end_time
+        except Exception as e:
+            print(f"Error checking lunch_end time: {e}")
+            return False
+
+    # --- 1) AM period ----------------------------------------------------
     if period == "am":
         if not am_has_in:
+            if same_direction_within_cooldown("in"):
+                print(f"AM in cooldown not met for {rfid}")
+                return None
             return ("am", "in")
 
         if am_has_in and not am_has_out:
-            if rfid in last_scan_tracking:
-                last_scan_data = last_scan_tracking[rfid]
-                last_scan_time = last_scan_data.get("last_scan_time")
-                last_scan_type = last_scan_data.get("last_scan_type")
-
-                if last_scan_type == "in":
-                    time_diff_seconds = (scan_time - last_scan_time).total_seconds()
-                    if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
-                        return ("am", "out")
-                    else:
-                        mins = time_diff_seconds / 60.0
-                        print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
-                        return None
+            if same_direction_within_cooldown("out"):
+                print(f"AM out cooldown not met for {rfid}")
+                return None
+            return ("am", "out")
 
         if am_complete:
             print(f"AM already complete for {rfid}")
             return None
 
-    # PM period handling
+    # --- 2) PM period ----------------------------------------------------
     elif period == "pm":
         if not am_complete:
+            # AM still unfinished — figure out what this PM tap means.
             if not am_has_in:
+                # No morning tap at all. Is this a late arrival (after lunch)
+                # or a very-late morning arrival (still before lunch_end)?
+                if is_at_or_after_lunch_end():
+                    print(f"Late arrival after lunch for {rfid} — recording as PM time in "
+                          f"at {scan_time.strftime('%H:%M:%S')}")
+                    if same_direction_within_cooldown("in"):
+                        print(f"PM in cooldown not met for {rfid}")
+                        return None
+                    return ("pm", "in")
+
+                if same_direction_within_cooldown("in"):
+                    print(f"Late AM in cooldown not met for {rfid}")
+                    return None
                 print(f"Late AM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                 return ("am", "in")
-            elif am_has_in and not am_has_out:
-                if rfid in last_scan_tracking:
-                    last_scan_data = last_scan_tracking[rfid]
-                    last_scan_time = last_scan_data.get("last_scan_time")
-                    last_scan_type = last_scan_data.get("last_scan_type")
-                    
-                    if last_scan_type == "in":
-                        time_diff_seconds = (scan_time - last_scan_time).total_seconds()
-                        if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
-                            return ("am", "out")
-                        else:
-                            mins = time_diff_seconds / 60.0
-                            print(f"AM cooldown not met for {rfid} - {mins:.2f} minutes")
-                            return None
+
+            if am_has_in and not am_has_out:
+                # Employee tapped in the morning but forgot to tap out. If
+                # it's already past lunch, treat this as a fresh PM time in
+                # and leave am_out blank. Otherwise it's a late AM out.
+                if is_at_or_after_lunch_end():
+                    print(f"AM period ended (past lunch_end), treating scan as "
+                          f"PM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
+                    if same_direction_within_cooldown("in"):
+                        print(f"PM in cooldown not met for {rfid}")
+                        return None
+                    return ("pm", "in")
+
+                if same_direction_within_cooldown("out"):
+                    print(f"Late AM out cooldown not met for {rfid}")
+                    return None
+                print(f"Late AM time out for {rfid} at {scan_time.strftime('%H:%M:%S')}")
                 return ("am", "out")
 
+        # AM is complete — normal PM flow.
         if not pm_has_in:
+            if same_direction_within_cooldown("in"):
+                print(f"PM in cooldown not met for {rfid}")
+                return None
             return ("pm", "in")
 
         if pm_has_in and not pm_has_out:
-            if rfid in last_scan_tracking:
-                last_scan_data = last_scan_tracking[rfid]
-                last_scan_time = last_scan_data.get("last_scan_time")
-                last_scan_type = last_scan_data.get("last_scan_type")
-
-                if last_scan_type == "in":
-                    time_diff_seconds = (scan_time - last_scan_time).total_seconds()
-                    if time_diff_seconds >= SCAN_COOLDOWN_SECONDS:
-                        return ("pm", "out")
-                    else:
-                        mins = time_diff_seconds / 60.0
-                        print(f"PM cooldown not met for {rfid} - {mins:.2f} minutes")
-                        return None
+            if same_direction_within_cooldown("out"):
+                print(f"PM out cooldown not met for {rfid}")
+                return None
+            return ("pm", "out")
 
         if pm_complete:
             print(f"PM already complete for {rfid}")
             return None
 
-    if not has_time_in_for_period(day_data, period):
-        return (period, "in")
-    else:
-        return None
+    return None
 
 # Format a datetime as 12-hour time (no AM/PM suffix) for DTR storage.
 def format_dtr_time(scan_time):
@@ -1521,6 +1596,12 @@ def format_dtr_time(scan_time):
     if hour == 0:
         hour = 12
     return f"{hour:02d}:{scan_time.minute:02d}:{scan_time.second:02d}"
+
+# Format a datetime as a 24-hour time string for hidden DTR storage.
+# This is what calculate_hours() consumes so AM/PM is never ambiguous.
+def format_dtr_time_24h(scan_time):
+    """Return HH:MM:SS in 24-hour format (00:00:00 – 23:59:59)."""
+    return scan_time.strftime("%H:%M:%S")
 
 # Add a device timestamp to the correct AM or PM DTR slot.
 def record_attendance_scan(employee, scanned_at):
@@ -1554,11 +1635,16 @@ def record_attendance_scan(employee, scanned_at):
             "hours": "0.00",
             "ut": "0.00",
             "ot": "0.00",
-            "status": ""
+            "status": "",
+            "_am_in_24": "",
+            "_am_out_24": "",
+            "_pm_in_24": "",
+            "_pm_out_24": ""
         }
         record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
 
     time_value = format_dtr_time(scan_time)
+    time_value_24h = format_dtr_time_24h(scan_time)
 
     # Determine the scan type (time in or time out)
     scan_result = determine_scan_type(day_data, scan_time, employee)
@@ -1570,11 +1656,13 @@ def record_attendance_scan(employee, scanned_at):
     period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
+    hidden_key = f"_{period}_{scan_type}_24"
 
     if scan_type == "in":
         if not day_data[in_key]:
             day_data[in_key] = time_value
-            print(f"Recorded {period.upper()} TIME IN for {rfid} at {time_value}")
+            day_data[hidden_key] = time_value_24h
+            print(f"Recorded {period.upper()} TIME IN for {rfid} at {time_value} ({time_value_24h})")
             last_scan_tracking[rfid] = {
                 "last_scan_time": scan_time,
                 "last_scan_type": "in"
@@ -1612,7 +1700,8 @@ def record_attendance_scan(employee, scanned_at):
     elif scan_type == "out":
         if not day_data[out_key]:
             day_data[out_key] = time_value
-            print(f"Recorded {period.upper()} TIME OUT for {rfid} at {time_value}")
+            day_data[hidden_key] = time_value_24h
+            print(f"Recorded {period.upper()} TIME OUT for {rfid} at {time_value} ({time_value_24h})")
             last_scan_tracking[rfid] = {
                 "last_scan_time": scan_time,
                 "last_scan_type": "out"
@@ -1648,18 +1737,35 @@ def record_attendance_scan(employee, scanned_at):
             print(f"{period.upper()} TIME OUT already exists for {rfid}")
             return record, "already_exists"
 
-    # Calculate hours after each update.
-    # Pass the period so 12-hour stored times are interpreted correctly.
-    am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""), period="am")
-    pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""), period="pm")
+    # ------------------------------------------------------------------
+    # Recalculate day totals.
+    #
+    # Hours are ALWAYS computed from the hidden 24-hour timestamps when
+    # they are present. When they are absent (legacy records written
+    # before this fix), we fall back to the period-aware heuristic so
+    # old DTR entries still produce a sensible number.
+    #
+    # UT / OT are only charged when the day is FULLY complete — all four
+    # of am_in, am_out, pm_in, pm_out are present. A partial day is
+    # treated as "no hours counted yet" so an unfinished morning does
+    # not generate phantom undertime against the full 8-hour target.
+    # ------------------------------------------------------------------
+    am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""),
+                               period="am",
+                               start_24=day_data.get("_am_in_24", ""),
+                               end_24=day_data.get("_am_out_24", ""))
+    pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""),
+                               period="pm",
+                               start_24=day_data.get("_pm_in_24", ""),
+                               end_24=day_data.get("_pm_out_24", ""))
     total_hours = am_hours + pm_hours
 
-    # Only charge UT / OT when the employee has at least one complete
-    # in/out pair for the day. A lone time-in (no matching time-out) is
-    # treated as "no hours recorded yet" rather than 8 hours of undertime.
-    am_complete = bool(day_data.get("am_in")) and bool(day_data.get("am_out"))
-    pm_complete = bool(day_data.get("pm_in")) and bool(day_data.get("pm_out"))
-    has_complete_pair = am_complete or pm_complete
+    # A day is only "fully complete" once every one of the four slots is
+    # filled. Until then, UT / OT stay at 0.00.
+    all_four_present = bool(
+        day_data.get("am_in") and day_data.get("am_out") and
+        day_data.get("pm_in") and day_data.get("pm_out")
+    )
 
     # Required daily hours now come from settings.json (work_start,
     # work_end, lunch_start, lunch_end) instead of a hardcoded 8.
@@ -1667,7 +1773,7 @@ def record_attendance_scan(employee, scanned_at):
 
     day_data["hours"] = f"{total_hours:.2f}"
 
-    if has_complete_pair:
+    if all_four_present:
         day_data["ut"] = f"{max(0, required_hours - total_hours):.2f}"
         day_data["ot"] = f"{max(0, total_hours - required_hours):.2f}"
     else:
@@ -1700,10 +1806,30 @@ def parse_scan_time(scanned_at):
         return datetime.now()
 
 # Calculate completed hours between an in and out time.
-# Accepts 12-hour formatted times (e.g. "08:30:00" or "01:45:00").
-# The `period` argument ("am" or "pm") tells us whether an hour < 12
-# should be interpreted as morning or afternoon.
-def calculate_hours(start_time, end_time, period=None):
+#
+# Primary path (preferred): when both start_24 and end_24 are supplied they
+# are parsed as real 24-hour times and subtracted directly. This is
+# unambiguous — 11:30 → 12:30 correctly yields 1 hour.
+#
+# Fallback path (legacy records written before the 24-hour fields existed):
+# the 12-hour display string is parsed and the `period` argument decides
+# whether an hour < 12 means morning or afternoon. This is the same
+# heuristic the old code used, kept only for backwards compatibility.
+def calculate_hours(start_time, end_time, period=None, start_24=None, end_24=None):
+    # ---- Preferred: use the hidden 24-hour values ----------------------
+    if start_24 and end_24:
+        try:
+            start = datetime.strptime(start_24, "%H:%M:%S")
+            end = datetime.strptime(end_24, "%H:%M:%S")
+            # Cross-midnight guard: if the end is somehow before the
+            # start (e.g. device clock skew), treat it as zero rather
+            # than a negative span.
+            delta = (end - start).total_seconds() / 3600
+            return max(0, delta)
+        except Exception:
+            pass  # fall through to the legacy path
+
+    # ---- Legacy fallback: parse the 12-hour display string -------------
     if not start_time or not end_time:
         return 0
     try:
@@ -1713,19 +1839,21 @@ def calculate_hours(start_time, end_time, period=None):
         # If a period was supplied and the parsed hour is less than 12,
         # add 12 hours so afternoon times are computed correctly.
         if period == "pm":
+            # PM slot: an hour < 12 means 12:xx–11:xx in the afternoon.
             if start.hour < 12:
                 start = start.replace(hour=start.hour + 12)
             if end.hour < 12:
                 end = end.replace(hour=end.hour + 12)
         elif period == "am":
-            # 12:xx in the AM slot should actually be 00:xx (midnight hour)
+            # AM slot: 12:xx is midnight, so shift it to 00:xx. Any other
+            # hour is already correct as a morning time.
             if start.hour == 12:
                 start = start.replace(hour=0)
             if end.hour == 12:
                 end = end.replace(hour=0)
 
         return max(0, (end - start).total_seconds() / 3600)
-    except:
+    except Exception:
         return 0
 
 # Ensure every registered user has a DTR record for the current month.
@@ -2531,7 +2659,12 @@ def get_dtr_months():
 @app.route("/api/request-leave", methods=["POST"])
 def request_leave():
     try:
-        data = request.get_json()
+        # Handle both JSON and form data (for file uploads)
+        if request.content_type and 'application/json' in request.content_type:
+            data = request.get_json()
+        else:
+            data = request.form.to_dict()
+
         if not data:
             return jsonify({"status": "error", "message": "Missing data"}), 400
 
@@ -2555,6 +2688,36 @@ def request_leave():
         if not employee:
             return jsonify({"status": "error", "message": "Employee not found"}), 404
 
+        # Handle file upload
+        attachment_path = None
+        if 'attachment' in request.files:
+            attachment_file = request.files['attachment']
+            if attachment_file and attachment_file.filename:
+                # Validate file extension
+                allowed_extensions = {'.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.txt'}
+                extension = os.path.splitext(attachment_file.filename)[1].lower()
+                if extension not in allowed_extensions:
+                    return jsonify({
+                        "status": "error",
+                        "message": "File must be PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, or TXT"
+                    }), 400
+
+                # Create employee-specific directory
+                employee_leave_dir = os.path.join(LEAVE_REQUEST_STORAGE, rfid)
+                os.makedirs(employee_leave_dir, exist_ok=True)
+
+                # Generate filename with date and RFID
+                date_today = datetime.now().strftime("%Y%m%d")
+                secure_filename_base = secure_filename(rfid)
+                filename = f"{date_today}_{secure_filename_base}{extension}"
+                file_path = os.path.join(employee_leave_dir, filename)
+
+                # Save the file
+                attachment_file.save(file_path)
+
+                # Store relative path for web access
+                attachment_path = os.path.join("storage", "leave-request", rfid, filename).replace(os.sep, "/")
+
         # Build a request ID that won't collide with existing entries.
         existing_ids = []
         for req in leave_data.get("requests", []) + leave_data.get("approved", []) + leave_data.get("rejected", []):
@@ -2575,6 +2738,7 @@ def request_leave():
             "start_date": data["start_date"],
             "end_date": data["end_date"],
             "reason": data.get("reason", ""),
+            "attachment_path": attachment_path,
             "status": "pending",
             "requested_at": datetime.now().isoformat(),
             "processed_at": None,
@@ -2692,6 +2856,106 @@ def get_employee_leave_requests(rfid):
         }
     }), 200
 
+# ============================================================================
+# LEAVE ATTACHMENT PREVIEW / METADATA
+# ============================================================================
+# These two routes power the front-end "View Attachment" modal.
+#
+#   GET /api/leave-attachment/meta/<rfid>/<filename>
+#       Returns JSON metadata about a single uploaded leave file:
+#       filename, size in bytes, size_human, extension, content_type,
+#       and a `previewable` flag that tells the UI whether an inline
+#       preview is possible in the browser (images + PDFs).
+#
+#   GET /storage/leave-request/<rfid>/<filename>?inline=1
+#       Streams the file with Content-Disposition: inline so the browser
+#       renders images/PDFs directly instead of downloading them.
+#       Without ?inline=1 the same route falls back to an attachment
+#       download so existing links keep working.
+
+# Map of file extensions to MIME types used by the metadata route.
+_LEAVE_FILE_MIME_MAP = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".txt": "text/plain",
+}
+
+# Extensions the browser can render inline.
+_LEAVE_PREVIEWABLE_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt"}
+
+def _human_size(num_bytes):
+    """Return a compact human-readable size string (e.g. "128 KB")."""
+    try:
+        num_bytes = int(num_bytes)
+    except Exception:
+        return "0 B"
+    for unit in ["B", "KB", "MB", "GB"]:
+        if num_bytes < 1024.0:
+            return f"{num_bytes:.0f} {unit}" if unit == "B" else f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024.0
+    return f"{num_bytes:.1f} TB"
+
+@app.route("/api/leave-attachment/meta/<rfid>/<filename>", methods=["GET"])
+def get_leave_attachment_meta(rfid, filename):
+    """Return JSON metadata for a single uploaded leave file.
+
+    Response shape:
+        {
+            "status": "success",
+            "data": {
+                "filename": "20260922_FB822A54.pdf",
+                "size": 34812,
+                "size_human": "34.0 KB",
+                "extension": ".pdf",
+                "content_type": "application/pdf",
+                "previewable": true,
+                "url": "/storage/leave-request/FB822A54/20260922_FB822A54.pdf",
+                "inline_url": "/storage/leave-request/FB822A54/20260922_FB822A54.pdf?inline=1"
+            }
+        }
+    """
+    safe_rfid = _sanitize_rfid(rfid)
+    safe_filename = secure_filename(filename)
+
+    if not safe_rfid or not safe_filename:
+        return jsonify({"status": "error", "message": "Invalid path"}), 400
+
+    file_path = os.path.join(LEAVE_REQUEST_STORAGE, safe_rfid, safe_filename)
+
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        return jsonify({"status": "error", "message": "File not found"}), 404
+
+    try:
+        size = os.path.getsize(file_path)
+    except Exception:
+        size = 0
+
+    extension = os.path.splitext(safe_filename)[1].lower()
+    content_type = _LEAVE_FILE_MIME_MAP.get(extension, "application/octet-stream")
+    previewable = extension in _LEAVE_PREVIEWABLE_EXTS
+
+    rel_url = f"/storage/leave-request/{safe_rfid}/{safe_filename}"
+
+    return jsonify({
+        "status": "success",
+        "data": {
+            "filename": safe_filename,
+            "size": size,
+            "size_human": _human_size(size),
+            "extension": extension,
+            "content_type": content_type,
+            "previewable": previewable,
+            "url": rel_url,
+            "inline_url": f"{rel_url}?inline=1",
+        }
+    }), 200
+
 # Approve leave request
 @app.route("/api/approve-leave/<request_id>", methods=["POST"])
 def approve_leave(request_id):
@@ -2745,6 +3009,13 @@ def approve_leave(request_id):
                             day["hours"] = "0.00"
                             day["ut"] = "0.00"
                             day["ot"] = "0.00"
+                            # Also clear the hidden 24-hour copies so a
+                            # stale value can't leak into calculate_hours()
+                            # if the record is ever re-evaluated.
+                            day["_am_in_24"] = ""
+                            day["_am_out_24"] = ""
+                            day["_pm_in_24"] = ""
+                            day["_pm_out_24"] = ""
                             print(f"Marked {date_str} as ON LEAVE for {request_to_approve.get('fullname')}")
                             break
                     break
@@ -3082,6 +3353,32 @@ def serve_profile_image(filename):
 def serve_asset(filename):
     assets_dir = os.path.join(BASE_DIR, "storage", "assets")
     return send_from_directory(assets_dir, filename)
+
+# Serve leave request attachments from storage folder.
+#
+# By default the browser downloads the file (Content-Disposition: attachment).
+# Adding ?inline=1 streams the file with Content-Disposition: inline so
+# images and PDFs render directly inside an <iframe> / <img> — this is what
+# the front-end "View Attachment" modal uses to build its preview.
+@app.route("/storage/leave-request/<path:filename>")
+def serve_leave_request_attachment(filename):
+    inline = request.args.get("inline") in ("1", "true", "yes")
+
+    # send_from_directory handles path traversal safely and returns the
+    # correct Content-Type based on the file extension.
+    response = send_from_directory(LEAVE_REQUEST_STORAGE, filename)
+
+    # Set explicit Content-Disposition so the caller controls download vs
+    # preview. We keep the original filename so a "Save as…" still works.
+    base_name = os.path.basename(filename)
+    disposition = "inline" if inline else "attachment"
+    response.headers["Content-Disposition"] = f'{disposition}; filename="{base_name}"'
+
+    # Browsers cache inline previews aggressively; disable caching so a
+    # freshly uploaded file always shows the latest content.
+    response.headers["Cache-Control"] = "no-store"
+
+    return response
 
 ## Authentication Routes ------------------------------------
 # FIXED: Authenticate all roles and create a three-hour session.
@@ -3979,6 +4276,7 @@ def page_not_found(e):
 @app.route("/api/notifications/<rfid>/clear", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/<notification_id>", methods=["OPTIONS"])
+@app.route("/api/leave-attachment/meta/<rfid>/<filename>", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")

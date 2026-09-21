@@ -38,6 +38,10 @@
         <span class="nav-icon"><i class="fa-solid fa-gauge-high"></i></span>
         Dashboard
       </a>
+      <a href="#leave-requests" class="nav-item">
+        <span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span>
+        Leave Requests
+      </a>
       <a href="#dtr" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
         DTR CSC Form
@@ -140,6 +144,11 @@
             <div class="stat-label">Absent Today</div>
             <div class="stat-value" id="statAbsentToday">0</div>
           </div>
+          <div class="stat-card stat-orange">
+            <div class="stat-icon-wrap"><i class="fa-solid fa-calendar-check"></i></div>
+            <div class="stat-label">Leave Requests</div>
+            <div class="stat-value" id="statLeaveRequests">0</div>
+          </div>
           <div class="stat-card stat-purple">
             <div class="stat-icon-wrap"><i class="fa-solid fa-house"></i></div>
             <div class="stat-label">On Leave</div>
@@ -153,6 +162,7 @@
           </div>
         </div>
 
+        
         
         <!-- Bottom: Realtime RFID Table + Activity Timeline -->
         <div class="grid-2">
@@ -200,6 +210,30 @@
           </div>
 
         </div><!-- /grid-2 -->
+      </section>
+
+      <!-- Leave Requests Section -->
+      <section class="page-section" id="leave-requests">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">Leave Requests</h1>
+            <p class="section-subtitle">Manage employee leave requests and approvals.</p>
+          </div>
+          <div class="flex gap-2">
+            <!-- This will be populated dynamically based on user role -->
+            <div id="leaveRequestActions"></div>
+          </div>
+        </div>
+
+        <!-- Leave Request Form (for employees) -->
+        <div id="leaveRequestFormSection">
+          <!-- Leave request form will be loaded here -->
+        </div>
+
+        <!-- Leave Requests Table (for HR/Admin) -->
+        <div id="leaveRequestTableSection">
+          <!-- Leave requests table will be loaded here -->
+        </div>
       </section>
 
       <!-- DTR Section - Updated with simplified display -->
@@ -847,6 +881,146 @@
     <div class="modal-footer">
       <button type="button" class="btn btn-outline" onclick="closeProfileModal()"><i class="fa-solid fa-times"></i> Close</button>
       <button type="button" class="btn btn-primary"><i class="fa-solid fa-key"></i> Update Password</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LEAVE REQUEST MODAL ============ -->
+<div class="modal-overlay hidden" id="leaveRequestModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeLeaveRequestModal()">
+  <div class="modal-content">
+    <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
+      <div class="modal-avatar"><i class="fa-solid fa-calendar-plus"></i></div>
+      <div class="modal-user-info">
+        <h2>Submit Leave Request</h2>
+        <span style="font-size:13px;opacity:0.85;">Request time off for approval</span>
+      </div>
+      <button class="modal-close" onclick="closeLeaveRequestModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="leaveRequestForm" onsubmit="return handleLeaveRequestFormSubmit(event)">
+        <div class="grid-2">
+          <div class="form-group">
+            <label for="leaveType">Leave Type</label>
+            <select class="form-control" id="leaveType" name="leaveType" required>
+              <option value="">-- Select Leave Type --</option>
+              <option value="vacation">Vacation</option>
+              <option value="sick">Sick Leave</option>
+              <option value="emergency">Emergency Leave</option>
+              <option value="personal">Personal Leave</option>
+              <option value="maternity">Maternity Leave</option>
+              <option value="paternity">Paternity Leave</option>
+              <option value="bereavement">Bereavement Leave</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="startDate">Start Date</label>
+            <input class="form-control" type="date" id="startDate" name="startDate" required>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="form-group">
+            <label for="endDate">End Date</label>
+            <input class="form-control" type="date" id="endDate" name="endDate" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="leaveReason">Reason</label>
+          <textarea class="form-control" id="leaveReason" name="leaveReason" rows="3" placeholder="Please provide a brief reason for your leave request..." required></textarea>
+        </div>
+        <div class="form-group">
+          <label for="leaveAttachment">Attachment (Optional)</label>
+          <input class="form-control" type="file" id="leaveAttachment" name="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
+          <small class="form-text text-muted">Allowed formats: PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, TXT (Max 5MB)</small>
+        </div>
+        <div id="leaveRequestMessage" style="margin-top:16px;display:none;"></div>
+        <div style="display:flex;justify-content:center;margin-top:24px;">
+          <button type="submit" class="btn btn-primary">
+            <i class="fa-solid fa-paper-plane"></i> Submit Request
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LEAVE DETAIL MODAL ============ -->
+<!--
+     Opened by the "View" button in the Leave Requests table.
+     Shows every field stored on the leave request record, plus an inline
+     preview / download link for the attachment (if any).
+-->
+<div class="modal-overlay hidden" id="leaveDetailModal" role="dialog" aria-modal="true"
+     aria-labelledby="leaveDetailTitle"
+     onclick="if(event.target===this) closeLeaveDetailModal()">
+  <div class="modal-content leave-detail-modal" style="max-width:780px;width:100%;">
+    <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
+      <div class="modal-avatar"><i class="fa-solid fa-house" style="font-size:22px;"></i></div>
+      <div class="modal-user-info">
+        <h2 id="leaveDetailTitle">Leave Request Detail</h2>
+        <span id="leaveDetailSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
+      </div>
+      <button class="modal-close" onclick="closeLeaveDetailModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="modal-body" id="leaveDetailBody">
+      <!-- Filled dynamically by renderLeaveDetail() -->
+      <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading leave details…
+      </div>
+    </div>
+
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div id="leaveDetailFooterLeft" style="display:flex;gap:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-outline" onclick="closeLeaveDetailModal()">
+          <i class="fa-solid fa-times"></i> Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ LEAVE ATTACHMENT PREVIEW MODAL ============ -->
+<!--
+     Opened by "View Attachment" either from the leave-requests table or
+     from inside the Leave Detail modal. Renders images inline, embeds PDFs
+     in an <iframe>, shows plain text in a pre, and offers Open / Download
+     buttons for anything the browser can't render.
+-->
+<div class="modal-overlay hidden" id="leaveAttachmentModal" role="dialog" aria-modal="true"
+     aria-labelledby="leaveAttachmentTitle"
+     onclick="if(event.target===this) closeLeaveAttachmentModal()">
+  <div class="modal-content" style="max-width:900px;width:100%;">
+    <div class="modal-header" style="background:linear-gradient(135deg,#2563EB,#06B6D4);">
+      <div class="modal-avatar"><i class="fa-solid fa-paperclip" style="font-size:22px;"></i></div>
+      <div class="modal-user-info">
+        <h2 id="leaveAttachmentTitle">Attachment Preview</h2>
+        <span id="leaveAttachmentSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
+      </div>
+      <button class="modal-close" onclick="closeLeaveAttachmentModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="modal-body" id="leaveAttachmentBody" style="min-height:260px;">
+      <!-- Filled dynamically by openLeaveAttachmentPreview() -->
+      <div style="display:flex;justify-content:center;align-items:center;padding:60px 0;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
+      </div>
+    </div>
+
+    <div class="modal-footer" style="justify-content:space-between;align-items:center;gap:8px;">
+      <div id="leaveAttachmentMeta" style="font-size:12px;color:var(--text-muted);"></div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-outline" onclick="closeLeaveAttachmentModal()">
+          <i class="fa-solid fa-times"></i> Close
+        </button>
+        <a id="leaveAttachmentOpenBtn" class="btn btn-outline" href="#" target="_blank" rel="noopener">
+          <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
+        </a>
+        <a id="leaveAttachmentDownloadBtn" class="btn btn-primary" href="#" download>
+          <i class="fa-solid fa-download"></i> Download
+        </a>
+      </div>
     </div>
   </div>
 </div>

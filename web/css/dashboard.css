@@ -15,6 +15,8 @@
   --info-light:    #F5E6EA;
   --leave:         #8B5CF6;
   --leave-light:   #EDE9FE;
+  --orange:        #F97316;
+  --orange-light:  #FFEDD5;
 
   --bg:            #F1F5F9;
   --sidebar-bg:    #2C0A12;
@@ -978,6 +980,10 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .stat-purple .stat-icon-wrap { background: var(--leave-light); color: var(--leave); }
 .stat-purple .stat-progress-bar { background: linear-gradient(90deg, var(--leave), #A78BFA); }
 .stat-purple::before { background: var(--leave); }
+
+.stat-orange .stat-icon-wrap { background: var(--orange-light); color: var(--orange); }
+.stat-orange .stat-progress-bar { background: linear-gradient(90deg, var(--orange), #FB923C); }
+.stat-orange::before { background: var(--orange); }
 
 .stat-cyan .stat-icon-wrap { background: var(--accent-light); color: var(--accent); }
 .stat-cyan .stat-progress-bar { background: linear-gradient(90deg, var(--accent), #A32638); }
@@ -2467,9 +2473,8 @@ body.sidebar-collapsed .main {
   /* Modals: slightly tighter but still centered cards */
   .modal-content { max-width: 100%; max-height: 92vh; }
   .modal-header { padding: 18px 20px; }
-  . }
-  .modal-body { padding: 18px 20px; }
-  .modal-footer { padding: 14px 20px; flex-wrap: wrap; }
+.modal-body { padding: 18px 20px; }
+.modal-footer { padding: 14px 20px; flex-wrap: wrap; }
   .modal-footer .btn { flex: 1; justify-content: center; }
 
   .logout-modal { padding: 22px 18px 18px; }
@@ -2489,6 +2494,38 @@ body.sidebar-collapsed .main {
   .templates-grid { grid-template-columns: repeat(2, 1fr); }
   .employees-grid { grid-template-columns: 1fr; gap: 12px; }
   .emp-card-stats { grid-template-columns: 1fr 1fr 1fr; }
+
+  /* Leave Requests mobile optimizations */
+  #leaveRequestModal .form-control,
+  #leaveRequestModal .form-select {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  #leaveRequestModal .grid-2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  #leaveRequestModal textarea#leaveReason {
+    rows: 3;
+    max-height: 100px;
+  }
+
+  #leaveRequestModal .btn-primary {
+    width: 100%;
+    margin-top: 16px;
+  }
+
+  /* Leave Detail modal optimizations */
+  .leave-detail-modal .detail-item {
+    padding: 4px 0;
+  }
+
+  .leave-detail-modal .detail-label,
+  .leave-detail-modal .detail-value {
+    font-size: 12px;
+  }
 }
 
 .divider { height: 1px; background: var(--border); margin: 20px 0; }
@@ -2561,7 +2598,7 @@ body.sidebar-collapsed .main {
   border-radius: var(--radius-lg);
   max-width: 700px;
   width: 100%;
-  max-height: 90vh;
+  max-height: 95vh;
   overflow-y: auto;
   box-shadow: 0 25px 60px rgba(0,0,0,0.3);
   animation: slideUp 0.3s ease;
@@ -3374,5 +3411,97 @@ body.sidebar-collapsed .main {
   }
   .notification-toolbar-actions {
     justify-content: flex-end;
+  }
+}
+
+/* ===== LEAVE REQUEST MODAL SPECIFIC STYLES ===== */
+
+/* Improve modal sizing for leave request modals to reduce scrolling */
+.modal-content.leave-detail-modal,
+.modal-content#leaveRequestModal,
+.modal-content#leaveAttachmentModal {
+  /* Allow modals to grow with content but cap at reasonable height */
+  max-height: calc(100vh - 40px); /* Account for modal-overlay padding */
+}
+
+/* Ensure modal body doesn't have unnecessary constraints */
+.modal-body {
+  /* Remove any fixed heights that might cause scrolling */
+  min-height: auto !important;
+}
+
+/* Specific fix for leave attachment preview modal */
+#leaveAttachmentModal .modal-body {
+  /* Remove min-height constraint that might cause excess space */
+  min-height: auto !important;
+}
+
+/* Improve form group spacing in modals to prevent excess height */
+.modal-content .form-group {
+  margin-bottom: 16px;
+}
+
+/* Ensure textarea in leave request form doesn't grow too large */
+#leaveRequestModal textarea#leaveReason {
+  max-height: 150px;
+  resize: vertical;
+}
+
+/* Specific styles for leave detail modal to optimize space */
+.leave-detail-modal .modal-body {
+  padding: 20px;
+}
+
+.leave-detail-modal .detail-item {
+  padding: 6px 0;
+}
+
+.leave-detail-modal .detail-label,
+.leave-detail-modal .detail-value {
+  font-size: 13px;
+}
+
+/* Make sure modals don't exceed viewport on large screens */
+@media (min-width: 1200px) {
+  .modal-content {
+    max-height: calc(100vh - 40px);
+  }
+}
+
+/* Leave Requests mobile optimizations */
+@media (max-width: 480px) {
+  /* Ensure form fields in leave request modal are properly sized */
+  #leaveRequestModal .form-control,
+  #leaveRequestModal .form-select {
+    width: 100%;
+    margin-bottom: 8px;
+  }
+
+  /* Stack grid columns vertically on mobile */
+  #leaveRequestModal .grid-2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* Optimize textarea size */
+  #leaveRequestModal textarea#leaveReason {
+    rows: 3;
+    max-height: 100px;
+  }
+
+  /* Full width buttons */
+  #leaveRequestModal .btn-primary {
+    width: 100%;
+    margin-top: 16px;
+  }
+
+  /* Optimize leave detail modal spacing */
+  .leave-detail-modal .detail-item {
+    padding: 4px 0;
+  }
+
+  .leave-detail-modal .detail-label,
+  .leave-detail-modal .detail-value {
+    font-size: 12px;
   }
 }

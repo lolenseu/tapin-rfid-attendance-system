@@ -3,6 +3,29 @@ const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 // The logged-in admin's own user record, populated once the session is verified
 let currentAdminUser = null;
 
+/* ============ LEAVE REQUEST STATE (declared up front) ============ */
+
+// Store leave requests (pending + approved + rejected) and derived state.
+// These MUST be declared before any function that reads them runs — otherwise
+// loadLeaveRequests() throws "Cannot access 'leaveRequests' before initialization"
+// and the whole leave pipeline silently dies.
+let leaveRequests = [];
+let filteredLeaveRequests = [];
+let leaveRequestsCurrentPage = 1;
+const LEAVE_REQUESTS_PER_PAGE = 5;
+let leaveRequestFilters = {
+    employeeSearch: ''
+};
+let leaveRequestSort = {
+    field: 'start_date',
+    direction: 'asc'
+};
+
+// Leave Request employee search dropdown state
+let leaveRequestSelectedSuggestionIndex = -1;
+
+/* ============ END LEAVE REQUEST STATE ============ */
+
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');
     localStorage.removeItem('tapinToken');
@@ -3245,6 +3268,1266 @@ async function saveSettings() {
 
 // ============ END SETTINGS FUNCTIONS ============
 
+// ============ LEAVE REQUEST FUNCTIONS ============
+
+// Load leave requests from API
+async function loadLeaveRequests() {
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/leave-requests`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            console.error('Failed to load leave requests:', response.status);
+            return;
+        }
+
+        const result = await response.json();
+        if (result.status === 'success' && result.data) {
+            // Normalize every record so `status` is always set, regardless of
+            // which bucket the backend returned it in. The backend keeps
+            // `requests` for pending, `approved` for approved, and `rejected`
+            // for rejected, but older records may not carry a status field.
+            const pending = (result.data.requests || []).map(r => ({
+                ...r,
+                status: (r.status || 'pending').toLowerCase()
+            }));
+            const approved = (result.data.approved || []).map(r => ({
+                ...r,
+                status: (r.status || 'approved').toLowerCase()
+            }));
+            const rejected = (result.data.rejected || []).map(r => ({
+                ...r,
+                status: (r.status || 'rejected').toLowerCase()
+            }));
+
+            // Store all leave requests (pending + approved + rejected)
+            const allRequests = [...pending, ...approved, ...rejected];
+            leaveRequests = allRequests;
+            filteredLeaveRequests = [...leaveRequests];
+            leaveRequestsCurrentPage = 1;
+
+            // Update dashboard statistics
+            updateLeaveRequestStatistics({
+                pending: pending.length,
+                approved: approved.length,
+                rejected: rejected.length,
+                total: allRequests.length,
+                // Pass the actual approved request records so the
+                // "On Leave" card can count employees on leave today.
+                approvedRequests: approved
+            });
+
+            // Render leave requests table (for HR/Admin)
+            renderLeaveRequestTable();
+
+            // Render leave request form (for employees only)
+            const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
+            if (userRole !== 'admin' && userRole !== 'hr') {
+                renderLeaveRequestForm();
+            }
+
+            // Render filter controls
+            renderLeaveRequestFilterControls();
+        }
+    } catch (error) {
+        console.error('Error loading leave requests:', error);
+    }
+}
+
+// Update leave request statistics in dashboard
+function updateLeaveRequestStatistics(stats) {
+    const pendingEl = document.getElementById('statLeaveRequests');
+    if (pendingEl) {
+        pendingEl.textContent = stats.pending || 0;
+    }
+
+    // Update on leave stat based on approved requests
+    const onLeaveEl = document.getElementById('statOnLeave');
+    if (onLeaveEl) {
+        // Count unique employees on leave today from approved requests
+        const today = new Date().toISOString().split('T')[0];
+        const employeesOnLeave = new Set();
+
+        (stats.approvedRequests || []).forEach(req => {
+            if (req.days && req.days.includes(today)) {
+                employeesOnLeave.add(req.uid);
+            }
+        });
+
+        onLeaveEl.textContent = employeesOnLeave.size;
+    }
+}
+
+// Filter leave requests based on current filters
+function filterLeaveRequests() {
+    if (!leaveRequests || leaveRequests.length === 0) {
+        filteredLeaveRequests = [];
+        return;
+    }
+
+    filteredLeaveRequests = leaveRequests.filter(req => {
+        // Employee search filter (matches name or ID)
+        const matchesEmployeeSearch = !leaveRequestFilters.employeeSearch ||
+            `${req.fullname || ''} ${req.employeeid || ''}`.toLowerCase().includes(
+                leaveRequestFilters.employeeSearch.toLowerCase()
+            );
+
+        return matchesEmployeeSearch;
+    });
+
+    // Reset to first page when filtering
+    leaveRequestsCurrentPage = 1;
+}
+
+// Render leave request filter controls (for HR/Admin)
+function renderLeaveRequestFilterControls() {
+    const actionsContainer = document.getElementById('leaveRequestActions');
+    if (!actionsContainer) return;
+
+    // Check if user is HR/Admin (safe fallback to 'employee' if currentAdminUser
+    // hasn't been populated yet)
+    const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
+    if (userRole !== 'admin' && userRole !== 'hr') {
+        // Employees see the request form button
+        actionsContainer.innerHTML = `
+            <button class="btn btn-primary" onclick="openLeaveRequestModal()">
+                <i class="fa-solid fa-plus"></i> Request Leave
+            </button>
+        `;
+        return;
+    }
+
+    // HR/Admin see the toggle button for filters
+    actionsContainer.innerHTML = `
+        <button class="btn btn-outline" id="leaveRequestHideFilterBtn" onclick="toggleLeaveRequestFilter()">
+            <i class="fa-solid fa-eye-slash"></i> Hide Filter
+        </button>
+    `;
+}
+
+// Render leave request form in the page
+function renderLeaveRequestForm() {
+    const formSection = document.getElementById('leaveRequestFormSection');
+    if (!formSection) return;
+
+    // Check if user is HR/Admin or employee (everyone can submit requests)
+    const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
+
+    // Both employees and HR/Admin can see and use the leave request form
+    formSection.innerHTML = `
+        <form id="leaveRequestFormPage" onsubmit="return handleLeaveRequestFormSubmit(event)">
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="leaveType">Leave Type</label>
+                    <select class="form-control" id="leaveType" name="leaveType" required>
+                        <option value="">-- Select Leave Type --</option>
+                        <option value="vacation">Vacation</option>
+                        <option value="sick">Sick Leave</option>
+                        <option value="emergency">Emergency Leave</option>
+                        <option value="personal">Personal Leave</option>
+                        <option value="maternity">Maternity Leave</option>
+                        <option value="paternity">Paternity Leave</option>
+                        <option value="bereavement">Bereavement Leave</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="startDate">Start Date</label>
+                    <input class="form-control" type="date" id="startDate" name="startDate" required>
+                </div>
+            </div>
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="endDate">End Date</label>
+                    <input class="form-control" type="date" id="endDate" name="endDate" required>
+                </div>
+                <div class="form-group">
+                    <label for="leaveReason">Reason</label>
+                    <textarea class="form-control" id="leaveReason" name="leaveReason" rows="4" placeholder="Please provide a brief reason for your leave request..." required></textarea>
+                </div>
+            </div>
+            <div class="form-group>
+                <label for="leaveAttachment">Attachment (Optional)</label>
+                <input class="form-control" type="file" id="leaveAttachment" name="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
+                <small class="form-text text-muted">Allowed formats: PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, TXT (Max 5MB)</small>
+            </div>
+            <div id="leaveRequestMessagePage" style="margin-top:16px;display:none;"></div>
+            <div style="display:flex;justify-content:center;margin-top:24px;">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fa-solid fa-paper-plane"></i> Submit Request
+                </button>
+            </div>
+        </form>
+    `;
+
+    // Add form submission handling
+    const form = document.getElementById('leaveRequestFormPage');
+    if (form) {
+        // Prevent double submission handling - the onsubmit attribute will handle it
+        // We could add additional validation here if needed
+    }
+
+    // Add attachment preview functionality
+    const attachmentInput = document.getElementById('leaveAttachment');
+    if (attachmentInput) {
+        attachmentInput.addEventListener('change', function() {
+            const fileName = this.value.split('\\').pop().split('/').pop();
+            if (fileName) {
+                // Show file name next to input or in a small label
+                // For simplicity, we'll just log it - in a real app you might show a preview
+                console.log('Attachment selected:', fileName);
+            }
+        });
+    }
+}
+
+// Clear all leave request filters
+function clearLeaveRequestFilters() {
+    leaveRequestFilters = {
+        employeeSearch: ''
+    };
+    filterLeaveRequests();
+}
+
+// Check if a leave request is active during the current month
+function isLeaveRequestCurrentMonth(req) {
+    if (!req) return false;
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth(); // 0-11
+
+    // Check start date
+    if (req.start_date) {
+        const startDate = new Date(req.start_date);
+        if (startDate.getFullYear() === currentYear && startDate.getMonth() === currentMonth) {
+            return true;
+        }
+    }
+
+    // Check end date
+    if (req.end_date) {
+        const endDate = new Date(req.end_date);
+        if (endDate.getFullYear() === currentYear && endDate.getMonth() === currentMonth) {
+            return true;
+        }
+    }
+
+    // Check if the leave period spans the current month
+    if (req.start_date && req.end_date) {
+        const startDate = new Date(req.start_date);
+        const endDate = new Date(req.end_date);
+
+        // Create date objects for the first and last day of current month
+        const monthStart = new Date(currentYear, currentMonth, 1);
+        const monthEnd = new Date(currentYear, currentMonth + 1, 0); // Last day of month
+
+        // Check if the leave period overlaps with the current month
+        return !(startDate > monthEnd || endDate < monthStart);
+    }
+
+    return false;
+}
+
+// Apply leave request filters (called when Apply button clicked)
+function applyLeaveRequestFilters() {
+    filterLeaveRequests();
+}
+
+// Toggle leave request filter visibility
+function toggleLeaveRequestFilter() {
+    const filterArea = document.getElementById('leaveRequestFilterArea');
+    const btn = document.getElementById('leaveRequestHideFilterBtn');
+    if (!filterArea) return;
+    const isVisible = filterArea.style.display !== 'none';
+    filterArea.style.display = isVisible ? 'none' : 'block';
+    if (btn) {
+        btn.innerHTML = isVisible
+            ? '<i class="fa-solid fa-eye"></i> Show Filter'
+            : '<i class="fa-solid fa-eye-slash"></i> Hide Filter';
+    }
+}
+
+// Filter the leave request employee list as the user types and show matching
+// suggestions in the dropdown (similar to DTR employee search).
+function filterLeaveRequestEmployees() {
+    const input = document.getElementById('leaveRequestEmployeeSearch');
+    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
+    const clearBtn = document.getElementById('leaveRequestSearchClear');
+    if (!input || !dropdown) return;
+
+    const term = input.value.trim().toLowerCase();
+    if (clearBtn) clearBtn.style.display = term ? 'flex' : 'none';
+    leaveRequestSelectedSuggestionIndex = -1;
+
+    if (!term) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    const matches = allEmployees.filter(emp => {
+        const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
+        const employeeId = (emp.employeeid || '').toLowerCase();
+        const email = (emp.email || '').toLowerCase();
+        return fullname.includes(term) || employeeId.includes(term) || email.includes(term);
+    }).slice(0, 8);
+
+    dropdown.innerHTML = matches.length === 0
+        ? '<div class="dtr-suggestion-empty">No employees found</div>'
+        : matches.map((emp) => {
+            const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
+            const role = (emp.role || 'employee').toLowerCase();
+            return `
+                <div class="dtr-suggestion" onclick="selectLeaveRequestEmployee('${escapeHtml(emp.uid)}')">
+                    <div class="dtr-suggestion-avatar">${initials(emp)}</div>
+                    <div class="dtr-suggestion-body">
+                        <div class="dtr-suggestion-name">${highlightMatchText(fullname, term)}</div>
+                        <div class="dtr-suggestion-meta">${escapeHtml(emp.employeeid || 'N/A')}${emp.department ? ' &bull; ' + escapeHtml(emp.department) : ''}</div>
+                    </div>
+                    <span class="dtr-suggestion-badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
+                </div>`;
+        }).join('');
+
+    dropdown.style.display = 'block';
+}
+
+// Picking a suggestion narrows the search box to that person and re-filters
+function selectLeaveRequestEmployee(uid) {
+    const emp = getEmployeeByUid(uid);
+    if (!emp) return;
+
+    const input = document.getElementById('leaveRequestEmployeeSearch');
+    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
+    const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
+
+    if (input) input.value = fullname;
+    if (dropdown) dropdown.style.display = 'none';
+    filterLeaveRequests();
+}
+
+// Clear the Leave Request search box
+function clearLeaveRequestSearch() {
+    const input = document.getElementById('leaveRequestEmployeeSearch');
+    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
+    const clearBtn = document.getElementById('leaveRequestSearchClear');
+
+    if (input) input.value = '';
+    if (dropdown) dropdown.style.display = 'none';
+    if (clearBtn) clearBtn.style.display = 'none';
+    leaveRequestSelectedSuggestionIndex = -1;
+    filterLeaveRequests();
+}
+
+// Keyboard navigation (arrows/enter/escape) for the Leave Request search dropdown
+function handleLeaveRequestSearchKeydown(event) {
+    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
+    if (!dropdown || dropdown.style.display === 'none') return;
+    const items = dropdown.querySelectorAll('.dtr-suggestion');
+    if (!items.length) return;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        leaveRequestSelectedSuggestionIndex = Math.min(leaveRequestSelectedSuggestionIndex + 1, items.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        leaveRequestSelectedSuggestionIndex = Math.max(leaveRequestSelectedSuggestionIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const target = leaveRequestSelectedSuggestionIndex >= 0 ? items[leaveRequestSelectedSuggestionIndex] : items[0];
+        target.click();
+        return;
+    } else if (event.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+    } else {
+        return;
+    }
+
+    items.forEach(i => i.classList.remove('active'));
+    items[leaveRequestSelectedSuggestionIndex].classList.add('active');
+    items[leaveRequestSelectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+}
+
+// Hide the Leave Request search dropdown when clicking anywhere else on the page
+document.addEventListener('click', (event) => {
+    const input = document.getElementById('leaveRequestEmployeeSearch');
+    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
+    if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+// ============ LEAVE DETAIL MODAL ============
+
+// Open the leave detail modal for a specific leave request ID.
+// Shows every field stored on the record and, if the request has an
+// attachment, renders an inline preview (image / PDF / text) plus
+// "Open in New Tab" and "Download" buttons.
+function openLeaveDetailModal(leaveId) {
+    const req = leaveRequests.find(r => String(r.id) === String(leaveId));
+    if (!req) {
+        showNotification('Leave request not found.', 'error');
+        return;
+    }
+
+    const modal = document.getElementById('leaveDetailModal');
+    if (!modal) return;
+
+    // Populate header
+    const titleEl = document.getElementById('leaveDetailTitle');
+    const subtitleEl = document.getElementById('leaveDetailSubtitle');
+    if (titleEl) titleEl.textContent = `Leave Request #${escapeHtml(req.id)}`;
+    if (subtitleEl) subtitleEl.textContent = `${escapeHtml(req.fullname || 'Unknown')} · ${escapeHtml((req.leave_type || '').toUpperCase())}`;
+
+    // Build the detail body
+    const body = document.getElementById('leaveDetailBody');
+    if (!body) return;
+
+    const statusColors = {
+        pending: { bg: 'var(--warning-light)', color: 'var(--warning)' },
+        approved: { bg: 'var(--success-light)', color: 'var(--success)' },
+        rejected: { bg: 'var(--danger-light)', color: 'var(--danger)' }
+    };
+    const sc = statusColors[req.status] || statusColors.pending;
+
+    const startDate = req.start_date ? new Date(req.start_date) : null;
+    const endDate = req.end_date ? new Date(req.end_date) : null;
+    const formattedStart = startDate ? startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A';
+    const formattedEnd = endDate ? endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A';
+
+    // Count working days (Mon-Fri) from the days array
+    const workDays = (req.days || []).filter(day => {
+        const d = new Date(day);
+        return d.getDay() !== 0 && d.getDay() !== 6;
+    }).length;
+
+    // Render attachment area if present
+    let attachmentHTML = '';
+    if (req.attachment_path) {
+        const fileName = req.attachment_path.split('/').pop();
+        const safePath = escapeHtml(req.attachment_path);
+        const inlineUrl = `${dashboardApiBaseUrl}/${req.attachment_path}?inline=1`;
+        const downloadUrl = `${dashboardApiBaseUrl}/${req.attachment_path}`;
+
+        attachmentHTML = `
+            <div style="margin-top:16px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;">
+                        <i class="fa-solid fa-paperclip" style="color:var(--primary);"></i>
+                        <strong>${escapeHtml(fileName)}</strong>
+                    </div>
+                    <div style="display:flex;gap:6px;">
+                        <a href="${inlineUrl}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">
+                            <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
+                        </a>
+                        <a href="${downloadUrl}" download class="btn btn-primary btn-sm">
+                            <i class="fa-solid fa-download"></i> Download
+                        </a>
+                    </div>
+                </div>
+                <div id="leaveDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
+                    <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
+                        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        attachmentHTML = `
+            <div style="margin-top:16px;padding:12px;border:1px dashed var(--border);border-radius:8px;text-align:center;color:var(--text-muted);font-size:13px;">
+                <i class="fa-solid fa-paperclip" style="margin-right:6px;"></i> No attachment provided.
+            </div>
+        `;
+    }
+
+    body.innerHTML = `
+        <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-user"></i> Employee</span>
+                <span class="detail-value">${escapeHtml(req.fullname || 'N/A')}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-id-badge"></i> Employee ID</span>
+                <span class="detail-value">${escapeHtml(req.employeeid || req.uid || 'N/A')}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-building"></i> Department</span>
+                <span class="detail-value">${escapeHtml(req.department || 'N/A')}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-tag"></i> Leave Type</span>
+                <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(req.leave_type || 'N/A')}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-calendar-plus"></i> Start Date</span>
+                <span class="detail-value">${escapeHtml(formattedStart)}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-calendar-minus"></i> End Date</span>
+                <span class="detail-value">${escapeHtml(formattedEnd)}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-clock"></i> Working Days</span>
+                <span class="detail-value">${workDays} day${workDays !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-circle-info"></i> Status</span>
+                <span class="detail-value">
+                    <span class="badge" style="background:${sc.bg};color:${sc.color};">
+                        ${escapeHtml((req.status || '').toUpperCase())}
+                    </span>
+                </span>
+            </div>
+            <div class="detail-item" style="grid-column:1/-1;">
+                <span class="detail-label"><i class="fa-solid fa-comment-dots"></i> Reason</span>
+                <span class="detail-value" style="white-space:pre-wrap;">${escapeHtml(req.reason || 'No reason provided.')}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-calendar-day"></i> Requested At</span>
+                <span class="detail-value">${req.requested_at ? new Date(req.requested_at).toLocaleString() : 'N/A'}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-user-check"></i> Processed By</span>
+                <span class="detail-value">${escapeHtml(req.processed_by || '—')}</span>
+            </div>
+            ${req.processed_at ? `
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-clock-rotate-left"></i> Processed At</span>
+                <span class="detail-value">${new Date(req.processed_at).toLocaleString()}</span>
+            </div>` : ''}
+        </div>
+        ${attachmentHTML}
+    `;
+
+    // Populate footer actions
+    const footerLeft = document.getElementById('leaveDetailFooterLeft');
+    if (footerLeft) {
+        if (req.status === 'pending') {
+            footerLeft.innerHTML = `
+                <button class="btn btn-outline btn-sm" onclick="approveLeaveRequest('${escapeHtml(req.id)}'); closeLeaveDetailModal();">
+                    <i class="fa-solid fa-check"></i> Approve
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="rejectLeaveRequest('${escapeHtml(req.id)}'); closeLeaveDetailModal();">
+                    <i class="fa-solid fa-times"></i> Reject
+                </button>
+            `;
+        } else {
+            footerLeft.innerHTML = '';
+        }
+    }
+
+    // Show modal
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // If there's an attachment, load its preview
+    if (req.attachment_path) {
+        loadLeaveAttachmentPreview(req.attachment_path, 'leaveDetailAttachmentPreview');
+    }
+}
+
+// Close the leave detail modal
+function closeLeaveDetailModal() {
+    const modal = document.getElementById('leaveDetailModal');
+    if (modal) modal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Load and render an inline preview of a leave attachment into a given
+// container element ID. Uses the /api/leave-attachment/meta endpoint to
+// decide how to render (image, PDF, text) and falls back to a download
+// card for anything the browser can't preview natively.
+async function loadLeaveAttachmentPreview(attachmentPath, containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    const fileName = attachmentPath.split('/').pop();
+    const rfid = attachmentPath.split('/').slice(-2, -1)[0] || '';
+    const inlineUrl = `${dashboardApiBaseUrl}/${attachmentPath}?inline=1`;
+
+    // Determine the file extension to decide the preview type
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    const textExts = ['txt'];
+
+    if (imageExts.includes(ext)) {
+        // Image preview
+        container.innerHTML = `
+            <div style="text-align:center;max-width:100%;overflow:auto;">
+                <img src="${inlineUrl}" alt="${escapeHtml(fileName)}"
+                     style="max-width:100%;max-height:200px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);"
+                     onerror="this.parentElement.innerHTML='<div style=\\'padding:20px;color:var(--text-muted);\\'><i class=\\'fa-solid fa-image\\'></i> Could not load image preview.</div>';" />
+            </div>
+        `;
+    } else if (ext === 'pdf') {
+        // PDF preview via iframe
+        container.innerHTML = `
+            <iframe src="${inlineUrl}" style="width:100%;height:200px;border:1px solid var(--border);border-radius:8px;" title="PDF Preview"></iframe>
+        `;
+    } else if (textExts.includes(ext)) {
+        // Text preview
+        try {
+            const res = await fetch(inlineUrl);
+            const text = await res.text();
+            container.innerHTML = `
+                <pre style="background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow:auto;">${escapeHtml(text)}</pre>
+            `;
+        } catch (err) {
+            container.innerHTML = `
+                <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
+                    <i class="fa-solid fa-file-lines" style="font-size:24px;display:block;margin-bottom:8px;"></i>
+                    Preview not available.
+                </div>
+            `;
+        }
+    } else {
+        // Unknown / non-previewable file type
+        container.innerHTML = `
+            <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
+                <i class="fa-solid fa-file" style="font-size:32px;display:block;margin-bottom:8px;color:var(--primary);"></i>
+                <p><strong>${escapeHtml(fileName)}</strong></p>
+                <p>Preview is not available for this file type.</p>
+                <a href="${inlineUrl}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="margin-top:8px;">
+                    <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
+                </a>
+            </div>
+        `;
+    }
+}
+
+// ============ LEAVE ATTACHMENT PREVIEW MODAL ============
+
+// Open the standalone leave attachment preview modal.
+// This is what the small "Attachment" link in the leave table calls.
+function openLeaveAttachmentModal(attachmentPath, fileName) {
+    const modal = document.getElementById('leaveAttachmentModal');
+    if (!modal) return;
+
+    const titleEl = document.getElementById('leaveAttachmentTitle');
+    const subtitleEl = document.getElementById('leaveAttachmentSubtitle');
+    const body = document.getElementById('leaveAttachmentBody');
+    const metaEl = document.getElementById('leaveAttachmentMeta');
+    const openBtn = document.getElementById('leaveAttachmentOpenBtn');
+    const downloadBtn = document.getElementById('leaveAttachmentDownloadBtn');
+
+    const inlineUrl = `${dashboardApiBaseUrl}/${attachmentPath}?inline=1`;
+    const downloadUrl = `${dashboardApiBaseUrl}/${attachmentPath}`;
+
+    if (titleEl) titleEl.textContent = `Attachment Preview`;
+    if (subtitleEl) subtitleEl.textContent = escapeHtml(fileName || 'Loading…');
+    if (openBtn) openBtn.href = inlineUrl;
+    if (downloadBtn) downloadBtn.href = downloadUrl;
+
+    // Show loading state
+    if (body) {
+        body.innerHTML = `
+            <div style="display:flex;justify-content:center;align-items:center;padding:60px 0;color:var(--text-muted);font-size:13px;">
+                <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
+            </div>
+        `;
+    }
+
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Render the preview based on file type
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+
+    if (imageExts.includes(ext)) {
+        if (body) {
+            body.innerHTML = `
+                <div style="text-align:center;">
+                    <img src="${inlineUrl}" alt="${escapeHtml(fileName)}"
+                         style="max-width:100%;max-height:70vh;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);"
+                         onerror="this.parentElement.innerHTML='<div style=\\'padding:40px;color:var(--text-muted);text-align:center;\\'><i class=\\'fa-solid fa-image\\' style=\\'font-size:40px;margin-bottom:12px;display:block;\\'></i> Could not load image preview.</div>';" />
+                </div>
+            `;
+        }
+    } else if (ext === 'pdf') {
+        if (body) {
+            body.innerHTML = `
+                <iframe src="${inlineUrl}" style="width:100%;height:70vh;border:1px solid var(--border);border-radius:8px;" title="PDF Preview"></iframe>
+            `;
+        }
+    } else if (ext === 'txt') {
+        fetch(inlineUrl)
+            .then(res => res.text())
+            .then(text => {
+                if (body) {
+                    body.innerHTML = `
+                        <pre style="background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:40vh;overflow:auto;text-align:left;">${escapeHtml(text)}</pre>
+                    `;
+                }
+            })
+            .catch(() => {
+                if (body) {
+                    body.innerHTML = `
+                        <div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px;">
+                            <i class="fa-solid fa-file-lines" style="font-size:40px;display:block;margin-bottom:12px;"></i>
+                            Preview not available for this file type.
+                        </div>
+                    `;
+                }
+            });
+    } else {
+        if (body) {
+            body.innerHTML = `
+                <div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px;">
+                    <i class="fa-solid fa-file" style="font-size:40px;display:block;margin-bottom:12px;color:var(--primary);"></i>
+                    <p><strong>${escapeHtml(fileName)}</strong></p>
+                    <p>Preview is not available for this file type.</p>
+                    <p>Use the buttons below to open or download the file.</p>
+                </div>
+            `;
+        }
+    }
+
+    // Fetch and show file metadata in the footer
+    if (metaEl) {
+        const rfid = attachmentPath.split('/').slice(-2, -1)[0] || '';
+        fetch(`${dashboardApiBaseUrl}/api/leave-attachment/meta/${encodeURIComponent(rfid)}/${encodeURIComponent(fileName)}`, {
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        })
+        .then(res => res.json())
+        .then(result => {
+            if (result.status === 'success' && result.data) {
+                metaEl.textContent = `${result.data.filename} · ${result.data.size_human}`;
+            }
+        })
+        .catch(() => {
+            metaEl.textContent = '';
+        });
+    }
+}
+
+// Close the standalone leave attachment preview modal
+function closeLeaveAttachmentModal() {
+    const modal = document.getElementById('leaveAttachmentModal');
+    if (modal) modal.classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// ============ END LEAVE ATTACHMENT PREVIEW MODAL ============
+
+// Render leave requests table (for HR/Admin)
+function renderLeaveRequestTable() {
+    const tableSection = document.getElementById('leaveRequestTableSection');
+    if (!tableSection) return;
+
+    // Check if user is HR/Admin
+    const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
+    if (userRole !== 'admin' && userRole !== 'hr') {
+        // Employees don't see the management table
+        tableSection.innerHTML = '';
+        return;
+    }
+
+    // Apply filters first
+    filterLeaveRequests();
+
+    // Filter to only show pending requests for management (if no status filter is set)
+    let displayRequests = [...filteredLeaveRequests];
+    if (!leaveRequestFilters.status) {
+        // Show all leave requests active during the current month when no specific status is filtered
+        displayRequests = filteredLeaveRequests.filter(req => isLeaveRequestCurrentMonth(req));
+    }
+
+    // Apply sorting
+    displayRequests.sort((a, b) => {
+        let valueA = a[leaveRequestSort.field];
+        let valueB = b[leaveRequestSort.field];
+
+        // Handle the "employee" pseudo-field — sort by fullname instead
+        // because req.employee doesn't exist on the record.
+        if (leaveRequestSort.field === 'employee') {
+            valueA = a.fullname || '';
+            valueB = b.fullname || '';
+        }
+
+        // Handle date fields
+        if (leaveRequestSort.field.includes('date')) {
+            valueA = new Date(valueA);
+            valueB = new Date(valueB);
+        }
+
+        if (valueA < valueB) return leaveRequestSort.direction === 'asc' ? -1 : 1;
+        if (valueA > valueB) return leaveRequestSort.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    if (displayRequests.length === 0) {
+        tableSection.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><i class="fa-solid fa-home"></i> Pending Leave Requests</div>
+                </div>
+                <div class="card-body">
+                    <p class="text-center">No pending leave requests matching your filters.</p>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    // Calculate pagination
+    const totalPages = Math.ceil(displayRequests.length / LEAVE_REQUESTS_PER_PAGE);
+    const startIndex = (leaveRequestsCurrentPage - 1) * LEAVE_REQUESTS_PER_PAGE;
+    const endIndex = Math.min(startIndex + LEAVE_REQUESTS_PER_PAGE, displayRequests.length);
+    const pageRequests = displayRequests.slice(startIndex, endIndex);
+
+    tableSection.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-home"></i> Pending Leave Requests (${filteredLeaveRequests.filter(r => r.status === 'pending').length})</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortLeaveRequests('employee')">
+                                    Employee
+                                    ${leaveRequestSort.field === 'employee' && leaveRequestSort.direction === 'asc' ? ' ↑' :
+                                     leaveRequestSort.field === 'employee' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortLeaveRequests('leave_type')">
+                                    Leave Type
+                                    ${leaveRequestSort.field === 'leave_type' && leaveRequestSort.direction === 'asc' ? ' ↑' :
+                                     leaveRequestSort.field === 'leave_type' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortLeaveRequests('start_date')">
+                                    Dates
+                                    ${leaveRequestSort.field === 'start_date' && leaveRequestSort.direction === 'asc' ? ' ↑' :
+                                     leaveRequestSort.field === 'start_date' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortLeaveRequestDays()">
+                                    Days
+                                    ${leaveRequestSort.field === 'workDays' && leaveRequestSort.direction === 'asc' ? ' ↑' :
+                                     leaveRequestSort.field === 'workDays' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortLeaveRequests('status')">
+                                    Status
+                                    ${leaveRequestSort.field === 'status' && leaveRequestSort.direction === 'asc' ? ' ↑' :
+                                     leaveRequestSort.field === 'status' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${pageRequests.map(req => {
+                                const startDate = new Date(req.start_date);
+                                const endDate = new Date(req.end_date);
+                                const formattedStart = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                const formattedEnd = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                const dateRange = formattedStart === formattedEnd ? formattedStart : `${formattedStart} - ${formattedEnd}`;
+
+                                // Calculate working days (excluding weekends)
+                                const workDays = req.days ? req.days.filter(day => {
+                                    const date = new Date(day);
+                                    return date.getDay() !== 0 && date.getDay() !== 6; // Not Sunday (0) or Saturday (6)
+                                }).length : 0;
+
+
+// Optional attachment link — the backend saves it under
+// storage/leave-request/<RFID>/<filename> and returns the
+// relative path in req.attachment_path.
+                                const attachmentLink = req.attachment_path
+                                    ? `<div style="margin-top:4px;font-size:11px;">
+                                         <a href="javascript:void(0)" onclick="openLeaveAttachmentModal('${escapeHtml(req.attachment_path)}', '${escapeHtml(req.attachment_path.split('/').pop() || 'attachment')}')" style="color:var(--primary);text-decoration:underline;">
+                                           <i class="fa-solid fa-paperclip"></i> Attachment
+                                         </a>
+                                       </div>`
+                                    : '';
+                                return `
+                                    <tr>
+                                        <td>
+                                            <div class="emp-info">
+                                                <div>${escapeHtml(req.fullname)}</div>
+                                                <small class="text-muted">${escapeHtml(req.employeeid || req.uid)}</small>
+                                                ${attachmentLink}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge" style="background:var(--leave-light);color:var(--leave);">
+                                                ${escapeHtml((req.leave_type || '').charAt(0).toUpperCase() + (req.leave_type || '').slice(1))}
+                                            </span>
+                                        </td>
+                                        <td>${dateRange}</td>
+                                        <td>${workDays}</td>
+                                        <td>
+                                            <span class="badge ${req.status === 'approved' ? 'badge-approved' :
+                                                            req.status === 'rejected' ? 'badge-rejected' : 'badge-pending'}">
+                                                ${escapeHtml((req.status || '').toUpperCase())}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="action-buttons" style="display:flex;gap:4px;flex-wrap:wrap;">
+                                                <button class="btn btn-outline btn-sm" onclick="openLeaveDetailModal('${req.id}')">
+                                                    <i class="fa-solid fa-eye"></i> View
+                                                </button>
+                                                ${req.status === 'pending' ? `
+                                                    <button class="btn btn-outline btn-sm" onclick="approveLeaveRequest('${req.id}')">
+                                                        <i class="fa-solid fa-check"></i> Approve
+                                                    </button>
+                                                    <button class="btn btn-outline btn-sm" onclick="rejectLeaveRequest('${req.id}')">
+                                                        <i class="fa-solid fa-times"></i> Reject
+                                                    </button>
+                                                ` : ''}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Add pagination controls
+    const paginationContainer = document.createElement('div');
+    paginationContainer.className = 'pagination-footer';
+    paginationContainer.style.display = 'flex';
+    paginationContainer.style.justifyContent = 'center';
+    paginationContainer.style.alignItems = 'center';
+    paginationContainer.style.gap = '8px';
+    paginationContainer.style.marginTop = '16px';
+
+    let paginationHTML = '';
+
+    // Previous button
+    paginationHTML += `
+        <button class="btn btn-outline btn-sm pagination-btn"
+                onclick="changeLeaveRequestPage(${leaveRequestsCurrentPage - 1})"
+                ${leaveRequestsCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+            Prev
+        </button>
+    `;
+
+    // Page numbers
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, leaveRequestsCurrentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    if (startPage > 1) {
+        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeLeaveRequestPage(1)">1</button>`;
+        if (startPage > 2) {
+            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        const isActive = i === leaveRequestsCurrentPage;
+        paginationHTML += `
+            <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
+                    onclick="changeLeaveRequestPage(${i})"
+                    ${isActive ? 'style="font-weight:700;"' : ''}>
+                ${i}
+            </button>
+        `;
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+        }
+        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn"
+                                onclick="changeLeaveRequestPage(${totalPages})">${totalPages}</button>`;
+    }
+
+    // Next button
+    paginationHTML += `
+        <button class="btn btn-outline btn-sm pagination-btn"
+                onclick="changeLeaveRequestPage(${leaveRequestsCurrentPage + 1})"
+                ${leaveRequestsCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+            Next
+        </button>
+    `;
+
+    paginationContainer.innerHTML = paginationHTML;
+    tableSection.appendChild(paginationContainer);
+}
+
+// Change leave request page
+function changeLeaveRequestPage(page) {
+    const totalPages = Math.ceil((leaveRequestFilters.status ? filteredLeaveRequests :
+                                filteredLeaveRequests.filter(r => r.status === 'pending')).length / LEAVE_REQUESTS_PER_PAGE);
+    if (page < 1 || page > totalPages) return;
+    leaveRequestsCurrentPage = page;
+    renderLeaveRequestTable();
+}
+
+// Sort leave requests by field
+function sortLeaveRequests(field) {
+    // Toggle direction if clicking the same field
+    if (leaveRequestSort.field === field) {
+        leaveRequestSort.direction = leaveRequestSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        // Sort ascending by default for new field
+        leaveRequestSort.field = field;
+        leaveRequestSort.direction = 'asc';
+    }
+
+    // Reset to first page when sorting
+    leaveRequestsCurrentPage = 1;
+    renderLeaveRequestTable();
+}
+
+// Special function for sorting by calculated work days
+function sortLeaveRequestDays() {
+    // Toggle direction if clicking the same field
+    if (leaveRequestSort.field === 'workDays') {
+        leaveRequestSort.direction = leaveRequestSort.direction === 'asc' ? 'desc' : 'asc';
+    } else {
+        // Sort ascending by default for new field
+        leaveRequestSort.field = 'workDays';
+        leaveRequestSort.direction = 'asc';
+    }
+
+    // Reset to first page when sorting
+    leaveRequestsCurrentPage = 1;
+    renderLeaveRequestTable();
+}
+
+// Approve leave request
+async function approveLeaveRequest(leaveId) {
+    if (!confirm('Approve this leave request?')) return;
+
+    try {
+        // The backend route is POST /api/approve-leave/<request_id>,
+        // not PUT /api/leave-requests/<id>/approve. We also pass the
+        // leave request's own id (not the employee's uid).
+        const response = await fetch(`${dashboardApiBaseUrl}/api/approve-leave/${encodeURIComponent(leaveId)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to approve leave request.', 'error');
+            return;
+        }
+
+        showNotification('Leave request approved successfully!', 'success');
+        await loadLeaveRequests();
+    } catch (error) {
+        console.error('Error approving leave request:', error);
+        showNotification('Network error. Please try again.', 'error');
+    }
+}
+
+// Reject leave request
+async function rejectLeaveRequest(leaveId) {
+    if (!confirm('Reject this leave request?')) return;
+
+    try {
+        // The backend route is POST /api/reject-leave/<request_id>,
+        // not PUT /api/leave-requests/<id>/reject. We also pass the
+        // leave request's own id (not the employee's uid).
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reject-leave/${encodeURIComponent(leaveId)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to reject leave request.', 'error');
+            return;
+        }
+
+        showNotification('Leave request rejected successfully!', 'success');
+        await loadLeaveRequests();
+    } catch (error) {
+        console.error('Error rejecting leave request:', error);
+        showNotification('Network error. Please try again.', 'error');
+    }
+}
+
+// Open leave request modal (for employees)
+function openLeaveRequestModal() {
+    const modal = document.getElementById('leaveRequestModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        const form = document.getElementById('leaveRequestForm');
+        if (form) form.reset();
+    }
+}
+
+// Close leave request modal
+function closeLeaveRequestModal() {
+    const modal = document.getElementById('leaveRequestModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    }
+}
+
+// Handle leave request form submission
+async function handleLeaveRequestFormSubmit(event) {
+    event.preventDefault();
+
+    const form = event.target;
+
+    // Read fields by id — FormData only captures inputs that have `name`
+    // attributes, and these inputs use `id` only. So read directly.
+    const leaveType = document.getElementById('leaveType').value;
+    const startDate = document.getElementById('startDate').value;
+    const endDate = document.getElementById('endDate').value;
+    const reason = document.getElementById('leaveReason').value.trim();
+    const attachmentFile = document.getElementById('leaveAttachment').files[0];
+
+    // Basic validation
+    if (!leaveType || !startDate || !endDate || !reason) {
+        showLeaveRequestMessage('Please fill in all required fields.', 'error');
+        return;
+    }
+
+    // Validate attachment if provided
+    if (attachmentFile) {
+        // FIXED: this MUST be an Array (square brackets) — not an object literal.
+        // Objects do not have an .includes() method, so the old `{...}` version
+        // would throw "allowedExtensions.includes is not a function" at runtime.
+        const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.txt'];
+        const extension = attachmentFile.name.substring(attachmentFile.name.lastIndexOf('.')).toLowerCase();
+        if (!allowedExtensions.includes(extension)) {
+            showLeaveRequestMessage('File must be PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, or TXT', 'error');
+            return;
+        }
+
+        // Check file size (5MB limit)
+        if (attachmentFile.size > 5 * 1024 * 1024) {
+            showLeaveRequestMessage('File size must be less than 5MB', 'error');
+            return;
+        }
+    }
+
+    // Get current user's RFID
+    const rfid = currentAdminUser ? currentAdminUser.rfid : '';
+    if (!rfid) {
+        showLeaveRequestMessage('Unable to identify employee. Please log in again.', 'error');
+        return;
+    }
+
+    // Show loading state
+    showLeaveRequestMessage('Submitting leave request...', 'info');
+
+    try {
+        // Prepare form data for API
+        const apiFormData = new FormData();
+        apiFormData.append('rfid', rfid);
+        apiFormData.append('start_date', startDate);
+        apiFormData.append('end_date', endDate);
+        apiFormData.append('reason', reason);
+        apiFormData.append('leave_type', leaveType);
+
+        if (attachmentFile) {
+            apiFormData.append('attachment', attachmentFile);
+        }
+
+        const response = await fetch(`${dashboardApiBaseUrl}/api/request-leave`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+                // Don't set Content-Type for FormData
+            },
+            body: apiFormData,
+            credentials: 'include'
+        });
+
+        const result = await response.json();
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            showLeaveRequestMessage(result.message || 'Failed to submit leave request.', 'error');
+            return;
+        }
+
+        // Success
+        showLeaveRequestMessage('Leave request submitted successfully!', 'success');
+
+        // Reset form
+        form.reset();
+        document.getElementById('leaveAttachment').value = '';
+
+        // Reload leave requests to update the list
+        setTimeout(() => {
+            loadLeaveRequests();
+        }, 1000);
+
+    } catch (error) {
+        console.error('Error submitting leave request:', error);
+        showLeaveRequestMessage('Network error. Please try again.', 'error');
+    }
+}
+
+// Show leave request form message
+function showLeaveRequestMessage(message, type = 'info') {
+    const msgEl = document.getElementById('leaveRequestMessage');
+    if (!msgEl) return;
+
+    const colors = {
+        success: '#10B981',
+        error: '#EF4444',
+        warning: '#F59E0B',
+        info: '#3B82F6'
+    };
+
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    };
+
+    msgEl.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${message}`;
+    msgEl.style.color = colors[type] || colors.info;
+    msgEl.style.display = 'block';
+
+    // Auto hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
+    }
+}
+
+// ============ END LEAVE REQUEST FUNCTIONS ============
+
+// ============ SESSION VERIFICATION ============
+
 async function verifyDashboardSession() {
     const token = localStorage.getItem('tapinToken');
     if (!token) {
@@ -3275,12 +4558,18 @@ async function verifyDashboardSession() {
         await loadDTRMonths();
         // Load settings (which auto-checks version)
         await loadSettings();
+        // Load leave requests
+        await loadLeaveRequests();
         // Initialize search functionality
         initSearch();
     } catch (error) {
         redirectToLogin();
     }
 }
+
+// ============ END SESSION VERIFICATION ============
+
+// ============ SIDEBAR / NAV / LOGOUT ============
 
 const sidebar = document.querySelector('.sidebar');
 const sidebarToggle = document.getElementById('sidebarToggle');

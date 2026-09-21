@@ -163,24 +163,51 @@
   <!-- ======== LEAVE ======== -->
   <section class="page" id="page-leave">
     <div class="page-header">
-      <h1>Leave Requests</h1>
-      <p>Submit and track your leave applications</p>
+      <h1>Leave Management</h1>
+      <p>Request, track, and approve leave applications</p>
     </div>
 
+    <!-- Leave Request Button (for all employees) -->
     <button class="btn btn-primary w-full" onclick="openLeaveModal()" style="margin-bottom:12px;">
       <i class="fa-solid fa-plus"></i> Request Leave
     </button>
 
-    <div class="section-card" style="padding:0;">
-      <div class="list-item-empty" id="leaveEmpty" style="display:none;">
-        <i class="fa-solid fa-inbox"></i>
-        <p>No leave requests yet</p>
+    <!-- Tabs for Leave Requests vs Approval -->
+    <div class="tab-container" id="leaveTabs">
+      <button class="tab-btn active" onclick="showLeaveTab('requests')" id="leaveRequestsTab">
+        My Leave Requests
+      </button>
+      <button class="tab-btn" onclick="showLeaveTab('approval')" id="leaveApprovalTab">
+        Leave Approval
+      </button>
+    </div>
+
+    <!-- Leave Requests Content -->
+    <div class="tab-content active" id="leaveRequestsContent">
+      <div class="section-card" style="padding:0;">
+        <div class="list-item-empty" id="leaveEmpty" style="display:none;">
+          <i class="fa-solid fa-inbox"></i>
+          <p>No leave requests yet</p>
+        </div>
+        <div class="leave-list" id="leaveList"></div>
       </div>
-      <div class="leave-list" id="leaveList"></div>
+    </div>
+
+    <!-- Leave Approval Content (HR/Admin only) -->
+    <div class="tab-content" id="leaveApprovalContent">
+      <div class="section-card" style="padding:0;">
+        <div class="list-item-empty" id="leaveApprovalEmpty" style="display:none;">
+          <i class="fa-solid fa-check-circle"></i>
+          <p>No leave requests pending approval</p>
+        </div>
+        <div class="leave-approval-list" id="leaveApprovalList"></div>
+      </div>
     </div>
   </section>
 
-  <!-- ======== PROFILE ======== -->
+
+
+	  <!-- ======== PROFILE ======== -->
   <section class="page" id="page-profile">
     <div class="page-header">
       <h1>My Profile</h1>
@@ -293,6 +320,7 @@
       <div class="form-row"><label>Start Date</label><input class="form-control" type="date" id="leaveStart" required /></div>
       <div class="form-row"><label>End Date</label><input class="form-control" type="date" id="leaveEnd" required /></div>
       <div class="form-row"><label>Reason</label><textarea class="form-control" id="leaveReason" rows="3" required></textarea></div>
+      <div class="form-row"><label>Attachment (Optional)</label><input class="form-control" type="file" id="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt"><small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small></div>
       <div id="leaveMessage" class="msg" style="display:none;"></div>
       <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-paper-plane"></i> Submit</button>
     </form>

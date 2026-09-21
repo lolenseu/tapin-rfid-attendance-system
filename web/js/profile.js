@@ -284,8 +284,11 @@ async function fetchScanFeed() {
             return;
         }
         const payload = await res.json();
-        if (payload && payload.status === 'success' && payload.data && Array.isArray(payload.data.scans)) {
+        // The API returns { data: { scans: [...] }, status: "success" }
+        if (payload && payload.data && Array.isArray(payload.data.scans)) {
             scanFeedCache = payload.data.scans;
+        } else {
+            console.warn('scan-feed payload invalid:', payload);
         }
     } catch (err) {
         console.warn('scan-feed fetch error:', err);
@@ -346,6 +349,39 @@ function extractTimesFromFeed(rfid, todayLocalDate) {
     }
 
     return result;
+}
+
+// Given an RFID, walk the scan feed (today only), and return the MOST RECENT
+// scan time formatted for display, or '--' if none found.
+function getMostRecentScanTimeFromFeed(rfid, todayLocalDate) {
+    if (!rfid || !Array.isArray(scanFeedCache) || scanFeedCache.length === 0) {
+        return '--';
+    }
+
+    // The feed is newest-first (inserted at index 0), so we can stop at the first match
+    for (const entry of scanFeedCache) {
+        if (!entry) continue;
+        if (String(entry.rfid || '').toUpperCase() !== String(rfid).toUpperCase()) continue;
+
+        // Only consider taps that belong to today (compare on the calendar
+        // date portion of scanned_at, falling back to scanned_on).
+        // This matches the logic in extractTimesFromFeed for consistency.
+        const scannedAt = entry.scanned_at || '';
+        const datePart = scannedAt ? String(scannedAt).slice(0, 10) : (entry.scanned_on || '');
+        if (todayLocalDate && datePart && datePart !== todayLocalDate) continue;
+
+        // Found the most recent scan for today - format and return it
+        // We use scanned_at for the time display since it has the precise time
+        if (scannedAt) {
+            return labelFromScannedAt(scannedAt);
+        }
+        // Fallback: if no scanned_at but we have a date from scanned_on,
+        // we can't show a time without scanned_at, so return '--'
+        // (this case shouldn't happen in normal operation if we have scanned_on)
+        return '--';
+    }
+
+    return '--';
 }
 
 // Return today's date as "YYYY-MM-DD" in the user's local timezone.
@@ -415,20 +451,21 @@ function renderEmployee(emp, attendance, feedTimes) {
     const initials = getInitials(emp.firstname, emp.lastname);
     const role = emp.role || 'employee';
     const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
-    const scannedTime = currentData.scanned_at ? formatTimeFromISO(currentData.scanned_at) : '--';
+    const today = getLocalTodayString();
+    const scannedTime = getMostRecentScanTimeFromFeed(emp.rfid, today);
     const currentTime = getCurrentTime();
     const imageUrl = getImageUrl(emp.image);
 
-    // Prefer the AM/PM time-in and time-out values that came straight from
-    // the scan feed (labels built from the actual scanned_at timestamps).
-    // If the feed has nothing for a slot yet, fall back to the DTR value
-    // formatted with the field's own period context.
+    // Time values come ONLY from today's scan feed now - no fallback to the
+    // attendance/DTR record, since that isn't reliably scoped to "today"
+    // and was letting stale times from a previous day linger on screen.
+    // No tap today for a slot simply means "--", full stop.
     feedTimes = feedTimes || {};
 
-    const amIn  = feedTimes.am_in  || (attendance && attendance.am_in  ? formatDtrTimeForDisplay(attendance.am_in,  'am') : '--');
-    const amOut = feedTimes.am_out || (attendance && attendance.am_out ? formatDtrTimeForDisplay(attendance.am_out, 'am') : '--');
-    const pmIn  = feedTimes.pm_in  || (attendance && attendance.pm_in  ? formatDtrTimeForDisplay(attendance.pm_in,  'pm') : '--');
-    const pmOut = feedTimes.pm_out || (attendance && attendance.pm_out ? formatDtrTimeForDisplay(attendance.pm_out, 'pm') : '--');
+    const amIn  = feedTimes.am_in  || '--';
+    const amOut = feedTimes.am_out || '--';
+    const pmIn  = feedTimes.pm_in  || '--';
+    const pmOut = feedTimes.pm_out || '--';
     const status = attendance && attendance.status ? attendance.status : '';
 
     // Ensure empty feed slots show the placeholder instead of an empty string.
@@ -532,7 +569,8 @@ function renderEmployee(emp, attendance, feedTimes) {
 }
 
 function renderUnknownEmployee(rfid, scannedAtTime) {
-    const scannedTime = scannedAtTime ? formatTimeFromISO(scannedAtTime) : '--';
+    const today = getLocalTodayString();
+    const scannedTime = getMostRecentScanTimeFromFeed(rfid, today);
     const currentTime = getCurrentTime();
 
     const currentHtml = employeeCard.innerHTML;

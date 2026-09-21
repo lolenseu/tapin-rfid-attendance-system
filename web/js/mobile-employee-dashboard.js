@@ -25,6 +25,16 @@ function getAuthHeaders() {
   };
 }
 
+/* Auth headers for multipart/form-data requests (file uploads).
+   We must NOT set Content-Type — the browser sets it with the multipart
+   boundary automatically. Only the Authorization token is sent. */
+function getMultipartAuthHeaders() {
+  const token = localStorage.getItem('tapinToken');
+  return {
+    'Authorization': `Bearer ${token}`
+  };
+}
+
 function initialsOf(u) {
   return `${u.firstname || ''} ${u.lastname || ''}`
     .trim().split(/\s+/).map(p => p[0] || '').join('').slice(0, 2).toUpperCase() || '--';
@@ -405,12 +415,19 @@ async function loadLeaveRequests() {
   if (!list) return;
 
   try {
-    const res = await fetch(`${apiBaseUrl}/api/leave-requests?rfid=${encodeURIComponent(currentUser.rfid || '')}`, {
+    // FIXED: use the per-employee route. The plain /api/leave-requests
+    // endpoint returns EVERY employee's leave records (HR/Admin view).
+    // We only want this employee's requests, so we hit /api/leave-requests/<rfid>.
+    const res = await fetch(`${apiBaseUrl}/api/leave-requests/${encodeURIComponent(currentUser.rfid || '')}`, {
       method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
     });
     if (res.ok) {
       const result = await res.json();
-      myLeaveRequests = result.data?.requests || [];
+      // The per-employee route returns requests + approved + rejected.
+      // Show only the pending requests on the "My Leave Requests" list —
+      // approved/rejected would otherwise appear alongside new pending ones.
+      const pending = result.data?.requests || [];
+      myLeaveRequests = pending;
     } else {
       myLeaveRequests = [];
     }
@@ -429,6 +446,18 @@ async function loadLeaveRequests() {
               : status === 'rejected' ? 'badge-rejected'
               : 'badge-pending';
     const canCancel = status === 'pending';
+
+    // If the backend saved an attachment for this request, render a link
+    // so the user can open/download it. The file lives under
+    // storage/leave-request/<RFID>/<filename> and is served by the backend.
+    const attachmentLink = r.attachment_path
+      ? `<div class="leave-attachment" style="margin-top:6px;">
+           <a href="${apiBaseUrl}/${r.attachment_path}" target="_blank" rel="noopener">
+             <i class="fa-solid fa-paperclip"></i> View Attachment
+           </a>
+         </div>`
+      : '';
+
     return `
       <div class="leave-item">
         <div class="leave-header">
@@ -437,6 +466,7 @@ async function loadLeaveRequests() {
         </div>
         <div class="leave-dates">${escapeHtml(r.start_date || '--')} → ${escapeHtml(r.end_date || '--')}</div>
         <div class="leave-reason">${escapeHtml(r.reason || '')}</div>
+        ${attachmentLink}
         ${canCancel ? `<div class="leave-actions"><button class="btn btn-outline" onclick="cancelLeave(${i})"><i class="fa-solid fa-xmark"></i> Cancel</button></div>` : ''}
       </div>`;
   }).join('');
@@ -457,28 +487,39 @@ async function submitLeaveRequest(e) {
   e.preventDefault();
   if (!currentUser) return false;
 
-  const payload = {
-    rfid: currentUser.rfid,
-    employeeid: currentUser.employeeid || '',
-    leave_type: document.getElementById('leaveType').value,
-    start_date: document.getElementById('leaveStart').value,
-    end_date: document.getElementById('leaveEnd').value,
-    reason: document.getElementById('leaveReason').value.trim()
-  };
-  if (!payload.start_date || !payload.end_date || !payload.reason) {
+  const formData = new FormData();
+  formData.append('rfid', currentUser.rfid);
+  formData.append('employeeid', currentUser.employeeid || '');
+  formData.append('leave_type', document.getElementById('leaveType').value);
+  formData.append('start_date', document.getElementById('leaveStart').value);
+  formData.append('end_date', document.getElementById('leaveEnd').value);
+  formData.append('reason', document.getElementById('leaveReason').value.trim());
+
+  // Handle file upload
+  const attachmentInput = document.getElementById('leaveAttachment');
+  if (attachmentInput.files && attachmentInput.files[0]) {
+    formData.append('attachment', attachmentInput.files[0]);
+  }
+
+  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('reason')) {
     showMsg('leaveMessage', 'Please fill in all fields.', 'error'); return false;
   }
-  if (new Date(payload.start_date) > new Date(payload.end_date)) {
+  if (new Date(formData.get('start_date')) > new Date(formData.get('end_date'))) {
     showMsg('leaveMessage', 'Start date must be before end date.', 'error'); return false;
   }
 
   showMsg('leaveMessage', 'Submitting…', 'info');
 
   try {
-    const res = await fetch(`${apiBaseUrl}/api/leave-requests`, {
+    // FIXED: the backend POST route is /api/request-leave, not /api/leave-requests.
+    // The plain /api/leave-requests route is GET-only and returns all employees'
+    // leave data, so posting there 405s. We also use getMultipartAuthHeaders()
+    // because FormData must NOT have Content-Type: application/json —
+    // the browser needs to add the multipart boundary itself.
+    const res = await fetch(`${apiBaseUrl}/api/request-leave`, {
       method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
+      headers: getMultipartAuthHeaders(),
+      body: formData,
       credentials: 'include'
     });
     const result = await res.json().catch(() => ({}));
@@ -499,7 +540,10 @@ async function cancelLeave(index) {
   if (!confirm('Cancel this leave request?')) return;
 
   try {
-    const res = await fetch(`${apiBaseUrl}/api/leave-requests/${r.id || r.uid || index}`, {
+    // FIXED: the backend DELETE route is /api/leave-requests/<id>,
+    // which we've added to app.py. The previous code hit the same URL
+    // but the route didn't exist yet, so it 404'd.
+    const res = await fetch(`${apiBaseUrl}/api/leave-requests/${encodeURIComponent(r.id || r.uid || index)}`, {
       method: 'DELETE', headers: getAuthHeaders(), credentials: 'include'
     });
     if (!res.ok) { alert('Failed to cancel.'); return; }
