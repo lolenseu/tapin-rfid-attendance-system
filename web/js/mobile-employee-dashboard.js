@@ -469,7 +469,7 @@ async function loadLeaveRequests() {
     // storage/leave-request/<RFID>/<filename> and is served by the backend.
     const attachmentLink = r.attachment_path
       ? `<div class="leave-attachment" style="margin-top:6px;">
-           <a href="${apiBaseUrl}/${r.attachment_path}" target="_blank" rel="noopener">
+           <a href="javascript:void(0)" onclick="viewAttachment('${encodeURIComponent(r.attachment_path)}')">
              <i class="fa-solid fa-paperclip"></i> View Attachment
            </a>
          </div>`
@@ -989,6 +989,80 @@ function showSettingsMessageMobile(msg, type = 'info') {
       if (msgEl.parentNode) msgEl.remove();
     }, 3000);
   }
+}
+
+/* ---------- Attachment Modal ---------- */
+
+function viewAttachment(filePath) {
+  if (!filePath) return;
+
+  const modal = document.getElementById('attachmentModal');
+  const contentEl = document.getElementById('attachmentContent');
+  if (!modal || !contentEl) return;
+
+  // Clear previous content
+  contentEl.innerHTML = '';
+
+  // Show loading indicator
+  contentEl.innerHTML = '<div class="loading">Loading attachment...</div>';
+
+  modal.classList.add('show');
+
+  // Determine file type and display accordingly
+  const fileExtension = filePath.split('.').pop().toLowerCase();
+  const fullUrl = `${apiBaseUrl}/${filePath}`;
+
+  // For images
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(fileExtension)) {
+    contentEl.innerHTML = `<img src="${fullUrl}" alt="Attachment" style="max-width:100%; height:auto; border-radius:8px;" onerror="this.onerror=null;this.src='https://via.placeholder.com/400x300?text=Image+Not+Available'; this.style.display='block';">`;
+  }
+  // For PDFs
+  else if (fileExtension === 'pdf') {
+    contentEl.innerHTML = `
+      <div style="position:relative; width:100%; height:500px;">
+        <iframe src="${fullUrl}" style="width:100%; height:100%; border:none; border-radius:8px;" allowfullscreen></iframe>
+      </div>
+      <div style="margin-top:10px;">
+        <a href="${fullUrl}" target="_blank" rel="noopener" class="btn btn-outline">
+          <i class="fa-solid fa-download"></i> Download PDF
+        </a>
+      </div>
+    `;
+  }
+  // For text files
+  else if (['txt', 'log', 'md', 'csv', 'json', 'xml', 'html', 'htm'].includes(fileExtension)) {
+    fetch(fullUrl)
+      .then(response => {
+        if (!response.ok) throw new Error('Failed to fetch file');
+        return response.text();
+      })
+      .then(text => {
+        contentEl.innerHTML = `<div style="text-align:left; background:#f8f9fa; padding:15px; border-radius:8px; font-family:monospace; white-space:pre-wrap; max-height:400px; overflow-y:auto;">${escapeHtml(text)}</div>`;
+      })
+      .catch(error => {
+        contentEl.innerHTML = `<div style="color:#dc2626;">Error loading file: ${error.message}</div>`;
+        // Fallback to download link
+        contentEl.innerHTML += `<div style="margin-top:15px;"><a href="${fullUrl}" target="_blank" rel="noopener" class="btn btn-outline"><i class="fa-solid fa-download"></i> Download File</a></div>`;
+      });
+  }
+  // For other files (show download link)
+  else {
+    contentEl.innerHTML = `
+      <div style="text-align:center; padding:40px;">
+        <i class="fa-solid fa-file" style="font-size:48px; color:#6b7280; margin-bottom:20px;"></i>
+        <h3>Attachment</h3>
+        <p>File type not supported for preview</p>
+        <a href="${fullUrl}" target="_blank" rel="noopener" class="btn btn-primary">
+          <i class="fa-solid fa-download"></i> Download File
+        </a>
+      </div>
+    `;
+  }
+}
+
+function closeAttachmentModal() {
+  const modal = document.getElementById('attachmentModal');
+  if (modal) modal.classList.remove('show');
 }
 
 /* ---------- Init ---------- */

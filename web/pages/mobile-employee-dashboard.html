@@ -213,7 +213,12 @@
     </div>
 
     <div class="profile-hero">
-      <div class="profile-hero-avatar" id="mobileProfileAvatar">EM</div>
+      <div class="profile-hero-avatar" id="mobileProfileAvatar" style="position: relative;">
+  EM
+  <button class="camera-btn" onclick="openEditProfileModal()" style="position: absolute; bottom: 0; right: 0; background: rgba(0,0,0,0.5); color: white; border: none; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: 12px; margin: 4px;">
+    <i class="fa-solid fa-camera"></i>
+  </button>
+</div>
       <div class="profile-hero-name" id="mobileProfileName">Loading…</div>
       <div class="profile-hero-role" id="mobileProfileRole">Employee</div>
     </div>
@@ -283,12 +288,17 @@
       <div class="form-row"><label>First Name</label><input class="form-control" type="text" id="editFirstname" required /></div>
       <div class="form-row"><label>Last Name</label><input class="form-control" type="text" id="editLastname" required /></div>
       <div class="form-row"><label>Email</label><input class="form-control" type="email" id="editEmail" required /></div>
-      <div class="form-row"><label>Contact Number</label><input class="form-control" type="text" id="editCpnumber" /></div>
+      <div class="form-row"><label>Contact Number</label><input class="form-control" type="text" id="editCpnumber" placeholder="+63XXXXXXXXXX" pattern="^\+63[0-9]{10,11}$" /></div>
+<small class="form-text text-muted">Contact number must start with +63 followed by 10-11 digits</small>
       <div class="form-row"><label>Birth Date</label><input class="form-control" type="date" id="editBdate" /></div>
       <div class="form-row"><label>Address</label><input class="form-control" type="text" id="editAddress" /></div>
       <div class="form-row"><label>Position</label><input class="form-control" type="text" id="editPosition" /></div>
       <div class="form-row"><label>Username</label><input class="form-control" type="text" id="editUsername" /></div>
-      <div class="form-row"><label>Profile Image</label><input class="form-control" type="file" id="editProfileImage" accept="image/*" /></div>
+      <div class="form-row"><label>Profile Image</label><input class="form-control" type="file" id="editProfileImage" accept="image/*" capture="user" /></div>
+<button type="button" class="btn btn-outline w-full" style="margin-top:10px;" onclick="document.getElementById('editProfileImage').click()">
+  <i class="fa-solid fa-camera"></i> Take Photo
+</button>
+<div class="form-text text-muted small">Tip: Center your face in the frame for best results</div>
       <div id="editProfileMessage" class="msg" style="display:none;"></div>
       <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Save Changes</button>
     </form>
@@ -395,6 +405,20 @@
 
       <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Save Changes</button>
     </form>
+  </div>
+</div>
+
+<!-- ============ ATTACHMENT VIEW MODAL (bottom sheet) ============ -->
+<div class="sheet-backdrop" id="attachmentModal">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Attachment Preview</h2>
+      <button class="sheet-close" onclick="closeAttachmentModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <div class="attachment-content" id="attachmentContent" style="padding: 18px; text-align: center;">
+      <!-- Attachment will be loaded here -->
+    </div>
   </div>
 </div>
 

@@ -1421,8 +1421,9 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>RFID</label>
-                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required />
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required maxlength="8" pattern="^[0-9]{8}$" placeholder="XXXXXXXX" />
                             </div>
+                            <div class="form-text text-muted small">RFID must be exactly 8 digits</div>
                             <div class="form-group">
                                 <label>First Name</label>
                                 <input class="form-control" type="text" id="editFirstname" value="${escapeHtml(employee.firstname || '')}" required />
@@ -1437,8 +1438,9 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>Contact Number</label>
-                                <input class="form-control" type="text" id="editCpnumber" value="${escapeHtml(employee.cpnumber || '')}" required />
+                                <input class="form-control" type="text" id="editCpnumber" value="${escapeHtml(employee.cpnumber || '')}" required placeholder="+63XXXXXXXXXX" pattern="^\+63[0-9]{10,11}$" />
                             </div>
+                            <div class="form-text text-muted small">Contact number must start with +63 followed by 10-11 digits</div>
                             <div class="form-group">
                                 <label>Address</label>
                                 <input class="form-control" type="text" id="editAddress" value="${escapeHtml(employee.address || '')}" required />

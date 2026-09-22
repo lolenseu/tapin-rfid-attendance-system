@@ -589,13 +589,15 @@
             <form id="employeeRegistrationForm" enctype="multipart/form-data">
               <div class="grid-2">
                 <div class="form-group"><label for="registrationRole">Role</label><select class="form-control" id="registrationRole" name="role" required><option value="employee">Employee</option><option value="hr">HR</option><option value="admin">Admin</option></select></div>
-                <div class="form-group"><label for="registrationRfid">RFID</label><input class="form-control" id="registrationRfid" name="rfid" required /></div>
+                <div class="form-group"><label for="registrationRfid">RFID</label><input class="form-control" id="registrationRfid" name="rfid" required maxlength="8" pattern="^[0-9]{8}$" placeholder="XXXXXXXX" /></div>
+<small class="form-text text-muted">RFID must be exactly 8 digits</small>
                 <div class="form-group"><label for="registrationEmployeeId">Employee ID</label><input class="form-control" id="registrationEmployeeId" name="employeeid" /></div>
                 <div class="form-group"><label for="registrationLastname">Last Name</label><input class="form-control" id="registrationLastname" name="lastname" required /></div>
                 <div class="form-group"><label for="registrationFirstname">First Name</label><input class="form-control" id="registrationFirstname" name="firstname" required /></div>
                 <div class="form-group"><label for="registrationAddress">Address</label><input class="form-control" id="registrationAddress" name="address" required /></div>
                 <div class="form-group"><label for="registrationBdate">Birth Date</label><input class="form-control" id="registrationBdate" name="bdate" type="date" required /></div>
-                <div class="form-group"><label for="registrationCpnumber">CP Number</label><input class="form-control" id="registrationCpnumber" name="cpnumber" required /></div>
+                <div class="form-group"><label for="registrationCpnumber">CP Number</label><input class="form-control" id="registrationCpnumber" name="cpnumber" required placeholder="+63XXXXXXXXXX" pattern="^\+63[0-9]{10,11}$" /></div>
+<small class="form-text text-muted">Contact number must start with +63 followed by 10-11 digits</small>
                 <div class="form-group"><label for="registrationEmail">Email</label><input class="form-control" id="registrationEmail" name="email" type="email" required /></div>
                 <div class="form-group"><label for="registrationUsername">Username</label><input class="form-control" id="registrationUsername" name="username" autocomplete="username" required /></div>
                 <div class="form-group"><label for="registrationPassword">Password</label><input class="form-control" id="registrationPassword" name="password" type="password" autocomplete="new-password" required /></div>

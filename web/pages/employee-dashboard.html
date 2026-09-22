@@ -432,7 +432,8 @@
           </div>
           <div class="form-group">
             <label>Contact Number</label>
-            <input class="form-control" type="text" id="editCpnumber" />
+            <input class="form-control" type="text" id="editCpnumber" placeholder="+63XXXXXXXXXX" pattern="^\+63[0-9]{10,11}$" />
+            <small style="color: #ef4444; display: block; margin-top: 4px; font-size: 12px;">Contact number must start with +63 followed by 10-11 digits</small>
           </div>
           <div class="form-group">
             <label>Birth Date</label>
