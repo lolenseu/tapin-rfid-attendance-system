@@ -301,6 +301,7 @@ Protected functionality may include:
 | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Beta v0.0.0** | Beta    | Initial TAP-IN RFID Attendance System development version. Basic project structure, web interface, API, database integration, and IoT development initiated. |
 | **Test v0.1.0** | Testing | Initial IoT device testing version. RFID reader, LCD, buzzer, device communication, and basic RFID attendance functionality tested.                          |
+| **Test v0.2.0** | Testing | Web version developed and tested                                                                                                                             |
 
 ### Beta v0.0.0
 
@@ -330,6 +331,18 @@ Focus:
 * API communication
 * Device heartbeat
 * Basic attendance scan testing
+
+### Test v0.2.0 — Web Version
+
+The web version of the TAP-IN system was developed and tested.
+
+Focus:
+
+* Web dashboard development
+* Frontend implementation
+* User interface design
+* Integration with Flask API
+* Testing of web functionalities
 
 ## Future Improvements
 

@@ -38,6 +38,10 @@
         <span class="nav-icon"><i class="fa-solid fa-gauge-high"></i></span>
         Dashboard
       </a>
+      <a href="#reports" class="nav-item">
+        <span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span>
+        Reports
+      </a>
       <a href="#leave-requests" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span>
         Leave Requests
@@ -53,10 +57,6 @@
       <a href="#employee-register" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-user-plus"></i></span>
         Employee Register
-      </a>
-      <a href="#reports" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span>
-        Reports
       </a>
       <a href="#realtime" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-signal"></i></span>
@@ -206,6 +206,149 @@
           </div>
 
         </div><!-- /grid-2 -->
+      </section>
+
+      <!-- Reports Section - MOVED HERE, directly below Dashboard Overview -->
+      <section class="page-section" id="reports">
+        <div class="section-actions">
+          <div>
+            <h1 class="section-title" style="margin-top:6px;">Attendance Reports</h1>
+            <p class="section-subtitle">Generate, print, and export all attendance and HR reports.</p>
+          </div>
+          <button class="btn btn-primary" onclick="generateAllReports()"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate All Reports</button>
+        </div>
+
+        <div class="reports-grid">
+
+          <div class="report-card" data-report="daily">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-calendar-day"></i></div>
+              <div><div class="report-card-title">Daily Attendance</div><div class="report-card-desc">Complete daily attendance log of all employees including time in/out and status.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:40%;"></div><div class="preview-bar" style="height:65%;"></div><div class="preview-bar" style="height:80%;"></div><div class="preview-bar" style="height:55%;"></div><div class="preview-bar" style="height:90%;"></div><div class="preview-bar" style="height:70%;"></div><div class="preview-bar" style="height:85%;"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('daily')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('daily')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('daily')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('daily')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="weekly">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-calendar-week"></i></div>
+              <div><div class="report-card-title">Weekly Attendance</div><div class="report-card-desc">Weekly attendance summary with totals, absences, and tardiness per employee.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('weekly')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('weekly')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('weekly')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('weekly')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="monthly">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-calendar"></i></div>
+              <div><div class="report-card-title">Monthly Attendance</div><div class="report-card-desc">Month-end attendance consolidation for payroll and HR compliance reporting.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('monthly')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('monthly')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('monthly')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('monthly')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="yearly">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-calendar-xmark"></i></div>
+              <div><div class="report-card-title">Yearly Attendance</div><div class="report-card-desc">Annual attendance summary for performance reviews and leave entitlement computation.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('yearly')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('yearly')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('yearly')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('yearly')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="summary">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-bar"></i></div>
+              <div><div class="report-card-title">Attendance Summary</div><div class="report-card-desc">Consolidated attendance overview across all departments and employees.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:85%;"></div><div class="preview-bar" style="height:70%;"></div><div class="preview-bar" style="height:90%;"></div><div class="preview-bar" style="height:60%;"></div><div class="preview-bar" style="height:80%;"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('summary')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('summary')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('summary')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('summary')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="absent">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-user-xmark"></i></div>
+              <div><div class="report-card-title">Absent Employees</div><div class="report-card-desc">Absence tracking report with patterns, frequencies, and department breakdowns.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:25%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:15%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:20%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:30%;background:linear-gradient(180deg,var(--danger),#F87171);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('absent')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('absent')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('absent')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('absent')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="leave">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-house"></i></div>
+              <div><div class="report-card-title">Leave Report</div><div class="report-card-desc">Summary of leave applications, approvals, rejections, and leave balance per employee.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:55%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:40%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('leave')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('leave')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('leave')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('leave')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+          <div class="report-card" data-report="rfid-logs">
+            <div class="report-card-header">
+              <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-tower-broadcast"></i></div>
+              <div><div class="report-card-title">RFID Scan Logs</div><div class="report-card-desc">Complete log of all RFID tap events including card ID, timestamp, device, and status.</div></div>
+            </div>
+            <div class="report-card-preview">
+              <div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div>
+            </div>
+            <div class="report-card-footer">
+              <button class="btn btn-report" onclick="printReport('rfid-logs')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('rfid-logs')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('rfid-logs')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('rfid-logs')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+            </div>
+          </div>
+
+        </div>
       </section>
 
       <!-- Leave Requests Section -->
@@ -470,156 +613,6 @@
         </div>
       </section>
   
-      <section class="page-section" id="reports">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title" style="margin-top:6px;">Attendance Reports</h1>
-            <p class="section-subtitle">Generate, preview, and export all attendance and HR reports.</p>
-          </div>
-          <button class="btn btn-primary"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate All Reports</button>
-        </div>
-
-        <div class="reports-grid">
-
-          <div class="report-card" data-report="daily">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-calendar-day"></i></div>
-              <div><div class="report-card-title">Daily Attendance</div><div class="report-card-desc">Complete daily attendance log of all employees including time in/out and status.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:40%;"></div><div class="preview-bar" style="height:65%;"></div><div class="preview-bar" style="height:80%;"></div><div class="preview-bar" style="height:55%;"></div><div class="preview-bar" style="height:90%;"></div><div class="preview-bar" style="height:70%;"></div><div class="preview-bar" style="height:85%;"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="weekly">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--success-light);color:var(--success);"><i class="fa-solid fa-calendar-week"></i></div>
-              <div><div class="report-card-title">Weekly Attendance</div><div class="report-card-desc">Weekly attendance summary with totals, absences, and tardiness per employee.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--success),#4ADE80);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="monthly">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-calendar"></i></div>
-              <div><div class="report-card-title">Monthly Attendance</div><div class="report-card-desc">Month-end attendance consolidation for payroll and HR compliance reporting.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="yearly">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-calendar-xmark"></i></div>
-              <div><div class="report-card-title">Yearly Attendance</div><div class="report-card-desc">Annual attendance summary for performance reviews and leave entitlement computation.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="summary">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--primary-light);color:var(--primary);"><i class="fa-solid fa-chart-bar"></i></div>
-              <div><div class="report-card-title">Attendance Summary</div><div class="report-card-desc">Consolidated attendance overview across all departments and employees.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:85%;"></div><div class="preview-bar" style="height:70%;"></div><div class="preview-bar" style="height:90%;"></div><div class="preview-bar" style="height:60%;"></div><div class="preview-bar" style="height:80%;"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="absent">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--danger-light);color:var(--danger);"><i class="fa-solid fa-user-xmark"></i></div>
-              <div><div class="report-card-title">Absent Employees</div><div class="report-card-desc">Absence tracking report with patterns, frequencies, and department breakdowns.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:25%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:15%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:20%;background:linear-gradient(180deg,var(--danger),#F87171);"></div><div class="preview-bar" style="height:30%;background:linear-gradient(180deg,var(--danger),#F87171);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="leave">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-house"></i></div>
-              <div><div class="report-card-title">Leave Report</div><div class="report-card-desc">Summary of leave applications, approvals, rejections, and leave balance per employee.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:55%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:40%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-          <div class="report-card" data-report="rfid-logs">
-            <div class="report-card-header">
-              <div class="report-icon" style="background:var(--accent-light);color:var(--accent);"><i class="fa-solid fa-tower-broadcast"></i></div>
-              <div><div class="report-card-title">RFID Scan Logs</div><div class="report-card-desc">Complete log of all RFID tap events including card ID, timestamp, device, and status.</div></div>
-            </div>
-            <div class="report-card-preview">
-              <div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:90%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:85%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--accent),#22D3EE);"></div>
-            </div>
-            <div class="report-card-footer">
-              <button class="btn btn-report"><i class="fa-regular fa-eye"></i> Preview</button>
-              <button class="btn btn-report"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
-            </div>
-          </div>
-
-        </div>
-      </section>
-      
       <section class="page-section" id="realtime">
         <div class="section-actions">
           <div>

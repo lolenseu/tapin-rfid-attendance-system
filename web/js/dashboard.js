@@ -3094,6 +3094,422 @@ function printDTR() {
 
 // ============ END DTR FUNCTIONS ============
 
+// ============ REPORT FUNCTIONS ============
+
+// Report type labels for display
+const REPORT_LABELS = {
+    'daily': 'Daily Attendance',
+    'weekly': 'Weekly Attendance',
+    'monthly': 'Monthly Attendance',
+    'yearly': 'Yearly Attendance',
+    'summary': 'Attendance Summary',
+    'absent': 'Absent Employees',
+    'leave': 'Leave Report',
+    'rfid-logs': 'RFID Scan Logs'
+};
+
+// Print a report - opens a new window with the report data and triggers print.
+// Uses the /api/reports/<report_type>/print endpoint, which now returns real
+// data pulled straight from the attendance database (not sample data).
+async function printReport(reportType) {
+    try {
+        showNotification(`Preparing ${REPORT_LABELS[reportType] || reportType} report for printing...`, 'info');
+        
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reports/${reportType}/print`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to load report data.', 'error');
+            return;
+        }
+        
+        const result = await response.json();
+        if (result.status !== 'success' || !result.data) {
+            showNotification('No report data available.', 'error');
+            return;
+        }
+        
+        // Build printable HTML from report data
+        const printHTML = buildReportPrintHTML(reportType, result.data);
+        
+        const printWindow = window.open('', '_blank', 'width=1100,height=800');
+        if (!printWindow) {
+            showNotification('Please allow popups for this site to print.', 'warning');
+            return;
+        }
+        
+        printWindow.document.write(printHTML);
+        printWindow.document.close();
+        
+        printWindow.onload = function() {
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+        };
+        
+        showNotification('Report ready for printing!', 'success');
+    } catch (error) {
+        console.error('Error printing report:', error);
+        showNotification('Error printing report.', 'error');
+    }
+}
+
+// Download a report as PDF - hits the backend PDF endpoint which builds the
+// PDF from real attendance data and streams it back as a blob.
+async function downloadReportPDF(reportType) {
+    try {
+        showNotification(`Generating ${REPORT_LABELS[reportType] || reportType} PDF...`, 'info');
+        
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reports/${reportType}/pdf`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to generate PDF.', 'error');
+            return;
+        }
+        
+        // Get the blob and trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${reportType}-report-${new Date().toISOString().slice(0, 10)}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        showNotification('PDF downloaded successfully!', 'success');
+    } catch (error) {
+        console.error('Error downloading PDF:', error);
+        showNotification('Error generating PDF.', 'error');
+    }
+}
+
+// Download a report as Excel - hits the backend Excel endpoint which builds
+// the spreadsheet from real attendance data and streams it back as a blob.
+async function downloadReportExcel(reportType) {
+    try {
+        showNotification(`Generating ${REPORT_LABELS[reportType] || reportType} Excel...`, 'info');
+        
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reports/${reportType}/excel`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to generate Excel.', 'error');
+            return;
+        }
+        
+        // Get the blob and trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${reportType}-report-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        
+        showNotification('Excel downloaded successfully!', 'success');
+    } catch (error) {
+        console.error('Error downloading Excel:', error);
+        showNotification('Error generating Excel.', 'error');
+    }
+}
+
+// Generate a report (trigger background generation)
+async function generateReport(reportType) {
+    try {
+        showNotification(`Generating ${REPORT_LABELS[reportType] || reportType} report...`, 'info');
+        
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reports/${reportType}/generate`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+        
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        
+        const result = await response.json().catch(() => ({}));
+        
+        if (!response.ok) {
+            showNotification(result.message || 'Failed to generate report.', 'error');
+            return;
+        }
+        
+        showNotification(`${REPORT_LABELS[reportType] || reportType} report generated successfully!`, 'success');
+    } catch (error) {
+        console.error('Error generating report:', error);
+        showNotification('Error generating report.', 'error');
+    }
+}
+
+// Generate all reports in one click
+async function generateAllReports() {
+    const reportTypes = ['daily', 'weekly', 'monthly', 'yearly', 'summary', 'absent', 'leave', 'rfid-logs'];
+    
+    showNotification('Generating all reports...', 'info');
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const reportType of reportTypes) {
+        try {
+            const response = await fetch(`${dashboardApiBaseUrl}/api/reports/${reportType}/generate`, {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                credentials: 'include'
+            });
+            
+            if (response.ok) {
+                successCount++;
+            } else {
+                failCount++;
+            }
+        } catch (error) {
+            failCount++;
+        }
+    }
+    
+    if (failCount === 0) {
+        showNotification(`All ${successCount} reports generated successfully!`, 'success');
+    } else {
+        showNotification(`${successCount} reports generated, ${failCount} failed.`, 'warning');
+    }
+}
+
+// Build printable HTML from report data returned by the backend.
+// The backend now returns real rows pulled from the attendance database,
+// so the printout shows actual employee data instead of placeholder text.
+function buildReportPrintHTML(reportType, data) {
+    const title = data.title || `${REPORT_LABELS[reportType] || reportType} Report`;
+    const generatedAt = new Date().toLocaleString();
+    
+    // Build rows from data if available
+    let tableHTML = '';
+    
+    if (data.rows && data.rows.length > 0) {
+        // Get headers from the first row
+        const headers = Object.keys(data.rows[0]);
+        
+        tableHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        ${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.rows.map(row => `
+                        <tr>
+                            ${headers.map(h => `<td>${escapeHtml(row[h] ?? '')}</td>`).join('')}
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } else if (data.content) {
+        tableHTML = `<div class="content">${data.content}</div>`;
+    } else {
+        tableHTML = `<div class="content">No data available for this report.</div>`;
+    }
+    
+    // Build summary section if available
+    let summaryHTML = '';
+    if (data.summary) {
+        summaryHTML = `
+            <div class="summary">
+                <h3>Summary</h3>
+                <table class="summary-table">
+                    ${Object.entries(data.summary).map(([key, value]) => `
+                        <tr>
+                            <td class="summary-label">${escapeHtml(key)}</td>
+                            <td class="summary-value">${escapeHtml(value)}</td>
+                        </tr>
+                    `).join('')}
+                </table>
+            </div>
+        `;
+    }
+    
+    return `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>${escapeHtml(title)}</title>
+            <style>
+                @page {
+                    size: A4 portrait;
+                    margin: 15mm;
+                }
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                body {
+                    font-family: Arial, Helvetica, sans-serif;
+                    font-size: 11px;
+                    color: #000;
+                    padding: 20px;
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 20px;
+                    padding-bottom: 15px;
+                    border-bottom: 2px solid #000;
+                }
+                .header h1 {
+                    font-size: 20px;
+                    font-weight: bold;
+                    margin-bottom: 4px;
+                }
+                .header .subtitle {
+                    font-size: 12px;
+                    color: #444;
+                }
+                .header .timestamp {
+                    font-size: 10px;
+                    color: #666;
+                    margin-top: 8px;
+                }
+                .institution {
+                    font-size: 11px;
+                    font-weight: bold;
+                    margin-bottom: 2px;
+                }
+                table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 20px;
+                }
+                th, td {
+                    border: 1px solid #333;
+                    padding: 6px 8px;
+                    text-align: left;
+                    font-size: 10px;
+                }
+                th {
+                    background-color: #e5e7eb;
+                    font-weight: bold;
+                    text-align: center;
+                }
+                td {
+                    text-align: center;
+                }
+                .summary {
+                    margin-top: 20px;
+                    padding: 15px;
+                    background: #f9fafb;
+                    border: 1px solid #e5e7eb;
+                    border-radius: 4px;
+                }
+                .summary h3 {
+                    font-size: 13px;
+                    margin-bottom: 10px;
+                    padding-bottom: 5px;
+                    border-bottom: 1px solid #e5e7eb;
+                }
+                .summary-table {
+                    width: auto;
+                    margin-bottom: 0;
+                }
+                .summary-table td {
+                    border: none;
+                    padding: 4px 12px 4px 0;
+                    text-align: left;
+                    font-size: 11px;
+                }
+                .summary-label {
+                    font-weight: bold;
+                    color: #444;
+                }
+                .summary-value {
+                    color: #000;
+                }
+                .content {
+                    font-size: 12px;
+                    line-height: 1.6;
+                    margin-bottom: 20px;
+                }
+                .footer {
+                    margin-top: 30px;
+                    padding-top: 15px;
+                    border-top: 1px solid #ccc;
+                    font-size: 9px;
+                    color: #666;
+                    text-align: center;
+                }
+                @media print {
+                    body {
+                        padding: 0;
+                    }
+                    .header {
+                        page-break-after: avoid;
+                    }
+                    table {
+                        page-break-inside: auto;
+                    }
+                    tr {
+                        page-break-inside: avoid;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="institution">ISPSC Tagudin Campus</div>
+                <h1>${escapeHtml(title)}</h1>
+                <div class="subtitle">TAPIN RFID-Based Attendance Management System</div>
+                <div class="timestamp">Generated: ${escapeHtml(generatedAt)}</div>
+            </div>
+            ${tableHTML}
+            ${summaryHTML}
+            <div class="footer">
+                <p>This is a system-generated report. TAPIN RFID Attendance System &copy; ${new Date().getFullYear()} ISPSC Tagudin Campus</p>
+            </div>
+        </body>
+        </html>
+    `;
+}
+
+// ============ END REPORT FUNCTIONS ============
+
 // Update Realtime Attendance rate circle and progress bars
 function updateAttendanceRate(stats) {
     const total = stats.total_employees || 0;
@@ -4824,6 +5240,16 @@ const pageHeaderMap = {
         title: 'Dashboard Overview',
         subtitle: 'Real-time attendance statistics and system activities.'
     },
+    '#reports': {
+        breadcrumb: 'Reports',
+        title: 'Attendance Reports',
+        subtitle: 'Generate, print, and export all attendance and HR reports.'
+    },
+    '#leave-requests': {
+        breadcrumb: 'Leave Requests',
+        title: 'Leave Requests',
+        subtitle: 'Manage employee leave requests and approvals.'
+    },
     '#employees': {
         breadcrumb: 'IPO — Employees Personal Info',
         title: 'Employee Directory',
@@ -4858,11 +5284,6 @@ const pageHeaderMap = {
         breadcrumb: 'Information',
         title: 'IoT-Based Attendance',
         subtitle: 'Attendance captured via IoT devices.'
-    },
-    '#reports': {
-        breadcrumb: 'HR Documents',
-        title: 'Reports',
-        subtitle: 'Generate and export attendance reports.'
     },
     '#settings': {
         breadcrumb: 'Settings',

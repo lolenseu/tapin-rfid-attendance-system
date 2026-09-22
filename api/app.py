@@ -951,13 +951,6 @@ def delete_notification(rfid, notification_id):
 # Before overwriting any settings file, the previous content is copied to
 # <RFID>.json.backup in the SAME folder — exactly like users.json.backup.
 
-def _sanitize_rfid(rfid):
-    """Sanitize an RFID so it is safe to use as a filename."""
-    if not rfid:
-        return ""
-    cleaned = re.sub(r'[^A-Za-z0-9_\-]', '', str(rfid).strip().upper())
-    return cleaned
-
 def _employee_settings_path(rfid):
     """Return the absolute path to an employee's settings file."""
     safe_rfid = _sanitize_rfid(rfid)
@@ -979,7 +972,7 @@ def _empty_employee_settings_doc(rfid, uid=None, fullname=None, role=None):
         "uid": uid or "",
         "fullname": fullname or "",
         "role": role or "",
-        "settings": {},  // Empty settings object - will inherit from system settings
+        "settings": {},  # Empty settings object - will inherit from system settings
         "last_updated": datetime.now().isoformat()
     }
 
@@ -2144,6 +2137,594 @@ def get_user_role(user):
 def get_role_redirect(role):
     return ROLE_DASHBOARDS[role]
 
+# ============================================================================
+# REPORT DATA GENERATION - REAL DATA FROM THE DATABASE
+# ============================================================================
+# This replaces the old generate_report_preview() function, which returned
+# hardcoded sample data. Everything below queries the actual attendance
+# records, employee database, leave data, and scan feed so the printed /
+# exported reports reflect what's really stored in the system.
+
+def generate_report_print_data(report_type):
+    """Generate real report data from the database for printing / exporting.
+
+    Returns a dict:
+        {
+            "title": "...",
+            "rows": [ {header: value, ...}, ... ],
+            "summary": {label: value, ...},
+            "generated_at": "..."
+        }
+
+    Every branch below pulls from attendance_records, employee_database,
+    leave_data, or the scan feed — no sample/placeholder data is used.
+    """
+    now = datetime.now()
+
+    report_title = {
+        "daily": "Daily Attendance Report",
+        "weekly": "Weekly Attendance Report",
+        "monthly": "Monthly Attendance Report",
+        "yearly": "Yearly Attendance Report",
+        "summary": "Attendance Summary Report",
+        "absent": "Absent Employees Report",
+        "leave": "Leave Management Report",
+        "rfid_logs": "RFID Scan Log Report"
+    }.get(report_type, f"{report_type.capitalize()} Report")
+
+    # All employees (excluding admin/hr) — these are the people whose
+    # attendance actually matters for HR reporting.
+    employees = [
+        emp for emp in employee_database.values()
+        if emp.get("role") == "employee"
+    ]
+
+    rows = []
+    summary = {}
+
+    if report_type == "daily":
+        # ---- Daily attendance: everyone's status for TODAY --------------
+        today = now.strftime("%Y-%m-%d")
+        month_key = now.strftime("%Y-%m")
+
+        for emp in employees:
+            # Find this employee's attendance record for the current month
+            record = None
+            for rec in attendance_records:
+                if rec.get("uid") == emp.get("uid") and rec.get("month") == month_key:
+                    record = rec
+                    break
+
+            am_in = am_out = pm_in = pm_out = ""
+            hours = "0.00"
+            status = "Absent"
+
+            if record:
+                for key, day in record.get("dtr", {}).items():
+                    if day.get("date") == today:
+                        am_in = day.get("am_in", "")
+                        am_out = day.get("am_out", "")
+                        pm_in = day.get("pm_in", "")
+                        pm_out = day.get("pm_out", "")
+                        hours = day.get("hours", "0.00")
+                        if day.get("status") == "on_leave":
+                            status = "On Leave"
+                        elif am_in or pm_in:
+                            status = "Present"
+                        break
+
+            rows.append({
+                "Employee ID": emp.get("employeeid", emp.get("uid", "")),
+                "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                "Department": emp.get("department", "--"),
+                "AM In": am_in,
+                "AM Out": am_out,
+                "PM In": pm_in,
+                "PM Out": pm_out,
+                "Hours": hours,
+                "Status": status
+            })
+
+        present = sum(1 for r in rows if r["Status"] == "Present")
+        on_leave = sum(1 for r in rows if r["Status"] == "On Leave")
+        absent = len(rows) - present - on_leave
+
+        summary = {
+            "Total Employees": len(employees),
+            "Present Today": present,
+            "Absent Today": absent,
+            "On Leave": on_leave,
+            "Report Date": now.strftime("%B %d, %Y")
+        }
+
+    elif report_type == "weekly":
+        # ---- Weekly attendance: Mon–Sun window ending today -------------
+        start_of_week = now - timedelta(days=now.weekday())
+        end_of_week = start_of_week + timedelta(days=6)
+
+        for emp in employees:
+            total_hours = 0.0
+            days_present = 0
+            days_absent = 0
+
+            for rec in attendance_records:
+                if rec.get("uid") != emp.get("uid"):
+                    continue
+
+                for key, day in rec.get("dtr", {}).items():
+                    try:
+                        day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
+                        if start_of_week <= day_date <= end_of_week:
+                            if day.get("status") == "on_leave":
+                                continue
+                            if day.get("am_in") or day.get("pm_in"):
+                                days_present += 1
+                                total_hours += float(day.get("hours", "0.00"))
+                            elif day_date.weekday() < 5:  # Weekday
+                                days_absent += 1
+                    except Exception:
+                        pass
+
+            rows.append({
+                "Employee ID": emp.get("employeeid", emp.get("uid", "")),
+                "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                "Department": emp.get("department", "--"),
+                "Days Present": days_present,
+                "Days Absent": days_absent,
+                "Total Hours": f"{total_hours:.2f}",
+                "Week": f"{start_of_week.strftime('%b %d')} - {end_of_week.strftime('%b %d, %Y')}"
+            })
+
+        summary = {
+            "Total Employees": len(employees),
+            "Week Period": f"{start_of_week.strftime('%B %d')} - {end_of_week.strftime('%B %d, %Y')}",
+            "Total Working Days": 5
+        }
+
+    elif report_type == "monthly":
+        # ---- Monthly attendance: consolidated per employee --------------
+        month_key = now.strftime("%Y-%m")
+        month_display = now.strftime("%B %Y")
+
+        for emp in employees:
+            total_hours = 0.0
+            total_ot = 0.0
+            total_ut = 0.0
+            days_present = 0
+            days_absent = 0
+            days_leave = 0
+
+            for rec in attendance_records:
+                if rec.get("uid") != emp.get("uid") or rec.get("month") != month_key:
+                    continue
+
+                for key, day in rec.get("dtr", {}).items():
+                    try:
+                        day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
+                        if day_date.month == now.month and day_date.year == now.year:
+                            if day.get("status") == "on_leave":
+                                days_leave += 1
+                            elif day.get("am_in") or day.get("pm_in"):
+                                days_present += 1
+                                total_hours += float(day.get("hours", "0.00"))
+                                total_ot += float(day.get("ot", "0.00"))
+                                total_ut += float(day.get("ut", "0.00"))
+                            elif day_date.weekday() < 5:
+                                days_absent += 1
+                    except Exception:
+                        pass
+
+            rows.append({
+                "Employee ID": emp.get("employeeid", emp.get("uid", "")),
+                "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                "Department": emp.get("department", "--"),
+                "Days Present": days_present,
+                "Days Absent": days_absent,
+                "Leave Days": days_leave,
+                "Total Hours": f"{total_hours:.2f}",
+                "Overtime": f"{total_ot:.2f}",
+                "Undertime": f"{total_ut:.2f}"
+            })
+
+        summary = {
+            "Total Employees": len(employees),
+            "Month": month_display,
+            "Working Days": sum(
+                1 for d in range(1, calendar.monthrange(now.year, now.month)[1] + 1)
+                if datetime(now.year, now.month, d).weekday() < 5
+            )
+        }
+
+    elif report_type == "yearly":
+        # ---- Yearly attendance: Jan–Dec rollup per employee -------------
+        year = now.year
+
+        for emp in employees:
+            total_hours = 0.0
+            total_ot = 0.0
+            total_ut = 0.0
+            days_present = 0
+            days_leave = 0
+
+            for rec in attendance_records:
+                if rec.get("uid") != emp.get("uid"):
+                    continue
+
+                for key, day in rec.get("dtr", {}).items():
+                    try:
+                        day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
+                        if day_date.year == year:
+                            if day.get("status") == "on_leave":
+                                days_leave += 1
+                            elif day.get("am_in") or day.get("pm_in"):
+                                days_present += 1
+                                total_hours += float(day.get("hours", "0.00"))
+                                total_ot += float(day.get("ot", "0.00"))
+                                total_ut += float(day.get("ut", "0.00"))
+                    except Exception:
+                        pass
+
+            attendance_pct = (days_present / 240 * 100) if days_present else 0
+
+            rows.append({
+                "Employee ID": emp.get("employeeid", emp.get("uid", "")),
+                "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                "Department": emp.get("department", "--"),
+                "Days Present": days_present,
+                "Leave Days": days_leave,
+                "Total Hours": f"{total_hours:.2f}",
+                "Overtime": f"{total_ot:.2f}",
+                "Undertime": f"{total_ut:.2f}",
+                "Attendance %": f"{attendance_pct:.1f}%"
+            })
+
+        summary = {
+            "Total Employees": len(employees),
+            "Year": year,
+            "Total Working Days": 240
+        }
+
+    elif report_type == "summary":
+        # ---- Summary: aggregate present/absent/leave counts -------------
+        total_present = 0
+        total_absent = 0
+        total_leave = 0
+
+        for emp in employees:
+            for rec in attendance_records:
+                if rec.get("uid") != emp.get("uid"):
+                    continue
+                for key, day in rec.get("dtr", {}).items():
+                    if day.get("status") == "on_leave":
+                        total_leave += 1
+                    elif day.get("am_in") or day.get("pm_in"):
+                        total_present += 1
+                    else:
+                        total_absent += 1
+
+        rows.append({
+            "Metric": "Total Employees",
+            "Value": len(employees),
+            "Percentage": "100%"
+        })
+        rows.append({
+            "Metric": "Total Present Days",
+            "Value": total_present,
+            "Percentage": f"{(total_present / max(total_present + total_absent, 1) * 100):.1f}%"
+        })
+        rows.append({
+            "Metric": "Total Absent Days",
+            "Value": total_absent,
+            "Percentage": f"{(total_absent / max(total_present + total_absent, 1) * 100):.1f}%"
+        })
+        rows.append({
+            "Metric": "Total Leave Days",
+            "Value": total_leave,
+            "Percentage": f"{(total_leave / max(total_present + total_absent + total_leave, 1) * 100):.1f}%"
+        })
+
+        summary = {
+            "Report Generated": now.strftime("%B %d, %Y at %I:%M %p"),
+            "Total Employees": len(employees)
+        }
+
+    elif report_type == "absent":
+        # ---- Absent employees: only those with at least one absence -----
+        month_key = now.strftime("%Y-%m")
+
+        for emp in employees:
+            absent_count = 0
+            absent_dates = []
+
+            for rec in attendance_records:
+                if rec.get("uid") != emp.get("uid") or rec.get("month") != month_key:
+                    continue
+
+                for key, day in rec.get("dtr", {}).items():
+                    try:
+                        day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
+                        if day_date.weekday() < 5:  # Weekday
+                            if not day.get("am_in") and not day.get("pm_in") and day.get("status") != "on_leave":
+                                absent_count += 1
+                                absent_dates.append(day_date.strftime("%b %d"))
+                    except Exception:
+                        pass
+
+            if absent_count > 0:
+                rows.append({
+                    "Employee ID": emp.get("employeeid", emp.get("uid", "")),
+                    "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                    "Department": emp.get("department", "--"),
+                    "Absence Count": absent_count,
+                    "Absent Dates": ", ".join(absent_dates[:10]) + ("..." if len(absent_dates) > 10 else "")
+                })
+
+        summary = {
+            "Month": now.strftime("%B %Y"),
+            "Total Employees with Absences": len(rows)
+        }
+
+    elif report_type == "leave":
+        # ---- Leave report: every request across all three buckets -------
+        all_leaves = (
+            leave_data.get("requests", [])
+            + leave_data.get("approved", [])
+            + leave_data.get("rejected", [])
+        )
+
+        for req in all_leaves:
+            rows.append({
+                "Employee ID": req.get("employeeid", req.get("uid", "")),
+                "Employee Name": req.get("fullname", ""),
+                "Leave Type": (req.get("leave_type", "") or "").capitalize(),
+                "Start Date": req.get("start_date", ""),
+                "End Date": req.get("end_date", ""),
+                "Days": len(req.get("days", [])),
+                "Status": (req.get("status", "pending") or "pending").upper(),
+                "Requested At": (req.get("requested_at", "") or "")[:10]
+            })
+
+        approved = len(leave_data.get("approved", []))
+        pending = len(leave_data.get("requests", []))
+        rejected = len(leave_data.get("rejected", []))
+
+        summary = {
+            "Total Requests": len(all_leaves),
+            "Approved": approved,
+            "Pending": pending,
+            "Rejected": rejected
+        }
+
+    elif report_type == "rfid_logs":
+        # ---- RFID scan logs: most recent 100 scans in the feed ----------
+        scan_feed = load_scan_feed()
+        scans = scan_feed.get("scans", [])[:100]
+
+        for scan in scans:
+            emp = scan.get("employee") or {}
+            rows.append({
+                "Timestamp": scan.get("scanned_at", ""),
+                "RFID": scan.get("rfid", ""),
+                "Employee ID": emp.get("employeeid", ""),
+                "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip() or "Unknown",
+                "Scan Type": (scan.get("scan_type", "") or "").replace("_", " ").upper(),
+                "Status": "Success" if scan.get("found") else "Unknown Card"
+            })
+
+        summary = {
+            "Total Scans": scan_feed.get("total_scans", 0),
+            "Scans Shown": len(rows)
+        }
+
+    return {
+        "title": report_title,
+        "rows": rows,
+        "summary": summary,
+        "generated_at": now.strftime("%B %d, %Y at %I:%M %p")
+    }
+
+def generate_report_pdf_buffer(report_type):
+    """Generate PDF report buffer using REAL data.
+
+    Uses generate_report_print_data() to fetch actual rows and summary,
+    then lays them out on a landscape letter page with a header, data
+    table, and summary block.
+    """
+    from reportlab.lib.pagesizes import letter, landscape
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.lib.enums import TA_CENTER
+
+    report_data = generate_report_print_data(report_type)
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        rightMargin=0.5 * inch,
+        leftMargin=0.5 * inch,
+        topMargin=0.5 * inch,
+        bottomMargin=0.5 * inch
+    )
+
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name='CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=10,
+        alignment=TA_CENTER
+    ))
+    styles.add(ParagraphStyle(
+        name='CustomSubtitle',
+        parent=styles['Normal'],
+        fontSize=10,
+        alignment=TA_CENTER,
+        textColor=colors.grey,
+        spaceAfter=15
+    ))
+
+    elements = []
+
+    # Header block
+    elements.append(Paragraph(report_data["title"], styles['CustomTitle']))
+    elements.append(Paragraph(
+        "ISPSC Tagudin Campus · TAPIN RFID Attendance System",
+        styles['CustomSubtitle']
+    ))
+    elements.append(Paragraph(
+        f"Generated: {report_data['generated_at']}",
+        styles['CustomSubtitle']
+    ))
+    elements.append(Spacer(1, 0.15 * inch))
+
+    # Data table
+    if report_data["rows"]:
+        headers = list(report_data["rows"][0].keys())
+        table_data = [headers]
+
+        for row in report_data["rows"]:
+            table_data.append([str(row.get(h, "")) for h in headers])
+
+        num_cols = len(headers)
+        available_width = landscape(letter)[0] - 1 * inch
+        col_width = available_width / num_cols
+
+        table = Table(table_data, colWidths=[col_width] * num_cols, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.Color(0.9, 0.9, 0.9)),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(table)
+    else:
+        elements.append(Paragraph("No data available for this report.", styles['Normal']))
+
+    # Summary block
+    if report_data["summary"]:
+        elements.append(Spacer(1, 0.25 * inch))
+        elements.append(Paragraph("Summary", styles['Heading2']))
+
+        summary_data = [[k, str(v)] for k, v in report_data["summary"].items()]
+        summary_table = Table(summary_data, colWidths=[2 * inch, 2 * inch])
+        summary_table.setStyle(TableStyle([
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ]))
+        elements.append(summary_table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+def generate_report_excel_buffer(report_type):
+    """Generate Excel report buffer using REAL data.
+
+    Uses generate_report_print_data() to fetch actual rows and summary,
+    then writes them into a styled worksheet with a title, header row,
+    data rows, and a summary section below.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    report_data = generate_report_print_data(report_type)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = report_data["title"][:31]  # Excel sheet name limit
+
+    # Styles
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    title_font = Font(bold=True, size=14)
+    center_alignment = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    # Title rows
+    ws.merge_cells('A1:H1')
+    ws['A1'] = report_data["title"]
+    ws['A1'].font = title_font
+    ws['A1'].alignment = center_alignment
+
+    ws.merge_cells('A2:H2')
+    ws['A2'] = f"ISPSC Tagudin Campus · Generated: {report_data['generated_at']}"
+    ws['A2'].alignment = center_alignment
+    ws['A2'].font = Font(size=10, italic=True)
+
+    start_row = 4
+
+    if report_data["rows"]:
+        headers = list(report_data["rows"][0].keys())
+
+        # Header row
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=start_row, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_alignment
+            cell.border = thin_border
+
+        # Data rows
+        for row_idx, row in enumerate(report_data["rows"], start=start_row + 1):
+            for col_idx, header in enumerate(headers, start=1):
+                cell = ws.cell(row=row_idx, column=col_idx, value=row.get(header, ""))
+                cell.alignment = center_alignment
+                cell.border = thin_border
+
+        # Auto column widths
+        for col_idx, header in enumerate(headers, start=1):
+            max_length = len(str(header))
+            for row in report_data["rows"]:
+                val_length = len(str(row.get(header, "")))
+                if val_length > max_length:
+                    max_length = val_length
+            ws.column_dimensions[get_column_letter(col_idx)].width = min(max_length + 4, 40)
+
+        # Summary block
+        if report_data["summary"]:
+            summary_start = start_row + len(report_data["rows"]) + 2
+            ws.cell(row=summary_start, column=1, value="Summary").font = Font(bold=True, size=12)
+
+            for idx, (key, value) in enumerate(report_data["summary"].items(), start=1):
+                ws.cell(row=summary_start + idx, column=1, value=key).font = Font(bold=True)
+                ws.cell(row=summary_start + idx, column=2, value=str(value))
+    else:
+        ws.cell(row=start_row, column=1, value="No data available for this report.")
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def generate_report_data(report_type):
+    """Generate report data for background processing.
+
+    Returns a simple acknowledgement dict — the heavy lifting happens
+    in generate_report_print_data() when the client actually requests
+    the print / PDF / Excel output.
+    """
+    return {
+        "message": f"{report_type.capitalize()} report generation initiated",
+        "report_type": report_type,
+        "timestamp": datetime.now().isoformat()
+    }
+
 # Helper function to verify JWT token
 def verify_token():
     auth_header = request.headers.get('Authorization')
@@ -2750,6 +3331,204 @@ def get_dtr_months():
         "status": "success",
         "data": [{"value": m[0], "label": m[1]} for m in sorted_months]
     }), 200
+
+## REPORT GENERATION ROUTES ------------------------------------
+# NOTE: The old /api/reports/<report_type>/preview route has been REMOVED.
+# The front-end no longer exposes a Preview button — Print, PDF, Excel,
+# and Generate are the only report actions now.
+
+# Report print data — real data, used by the front-end "Print" button
+@app.route("/api/reports/<report_type>/print", methods=["GET"])
+def print_report(report_type):
+    """Generate print data for a report using REAL database data."""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Validate report type
+    valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
+    if report_type not in valid_reports:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid report type. Valid types are: {', '.join(valid_reports)}"
+        }), 400
+
+    try:
+        # Generate report print data with REAL rows pulled from the database
+        print_data = generate_report_print_data(report_type)
+        return jsonify({
+            "status": "success",
+            "data": print_data
+        }), 200
+    except Exception as e:
+        print(f"Error generating report print data: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to generate report print data"
+        }), 500
+
+# Report PDF — real data, used by the front-end "PDF" button
+@app.route("/api/reports/<report_type>/pdf", methods=["GET"])
+def generate_report_pdf(report_type):
+    """Generate PDF report using REAL database data."""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Validate report type
+    valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
+    if report_type not in valid_reports:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid report type. Valid types are: {', '.join(valid_reports)}"
+        }), 400
+
+    # Check if reportlab is available
+    if not REPORTLAB_AVAILABLE:
+        return jsonify({
+            "status": "error",
+            "message": "PDF generation is not available. Please install reportlab."
+        }), 500
+
+    try:
+        # Generate PDF report from real data
+        pdf_buffer = generate_report_pdf_buffer(report_type)
+
+        # Log activity
+        add_activity(
+            "report_pdf_generated",
+            f"{report_type.capitalize()} report PDF generated",
+            {"name": session.get("user", {}).get("fullname", "User")},
+            "report"
+        )
+
+        # Return PDF
+        filename = f"{report_type}-report-{datetime.now().strftime('%Y%m%d')}.pdf"
+        response = make_response(pdf_buffer.getvalue())
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        return response
+    except Exception as e:
+        print(f"Error generating PDF report: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to generate PDF report"
+        }), 500
+
+# Report Excel — real data, used by the front-end "Excel" button
+@app.route("/api/reports/<report_type>/excel", methods=["GET"])
+def generate_report_excel(report_type):
+    """Generate Excel report using REAL database data."""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Validate report type
+    valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
+    if report_type not in valid_reports:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid report type. Valid types are: {', '.join(valid_reports)}"
+        }), 400
+
+    try:
+        # Generate Excel report from real data
+        excel_buffer = generate_report_excel_buffer(report_type)
+
+        # Log activity
+        add_activity(
+            "report_excel_generated",
+            f"{report_type.capitalize()} report Excel generated",
+            {"name": session.get("user", {}).get("fullname", "User")},
+            "report"
+        )
+
+        # Return Excel file
+        filename = f"{report_type}-report-{datetime.now().strftime('%Y%m%d')}.xlsx"
+        response = make_response(excel_buffer.getvalue())
+        response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+
+        return response
+    except Exception as e:
+        print(f"Error generating Excel report: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to generate Excel report"
+        }), 500
+
+# Report generate (trigger background generation)
+@app.route("/api/reports/<report_type>/generate", methods=["POST"])
+def generate_report(report_type):
+    """Trigger report generation"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Validate report type
+    valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
+    if report_type not in valid_reports:
+        return jsonify({
+            "status": "error",
+            "message": f"Invalid report type. Valid types are: {', '.join(valid_reports)}"
+        }), 400
+
+    try:
+        # Generate report data
+        report_data = generate_report_data(report_type)
+
+        # Log activity
+        add_activity(
+            "report_generated",
+            f"{report_type.capitalize()} report generated",
+            {"name": session.get("user", {}).get("fullname", "User")},
+            "report"
+        )
+
+        return jsonify({
+            "status": "success",
+            "message": f"{report_type.capitalize()} report generated successfully",
+            "data": report_data
+        }), 200
+    except Exception as e:
+        print(f"Error generating report: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to generate report"
+        }), 500
 
 ## LEAVE MANAGEMENT ROUTES ------------------------------------
 # Request leave
