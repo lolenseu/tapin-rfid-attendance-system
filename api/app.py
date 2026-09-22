@@ -237,6 +237,11 @@ SETTINGS_FILE = os.path.join(BASE_DIR, "storage", "config", "settings.json")
 # users.json.backup and attendance.json.backup.
 NOTIFICATION_STORAGE = os.path.join(BASE_DIR, "storage", "notification")
 
+# EMPLOYEE SETTINGS STORAGE - PER-RFID FILES
+# Every employee gets their own settings file keyed by their RFID.
+# Path: storage/settings/<RFID>.json
+EMPLOYEE_SETTINGS_STORAGE = os.path.join(BASE_DIR, "storage", "settings")
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
@@ -248,6 +253,7 @@ os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
 os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
+os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
 os.makedirs(LEAVE_REQUEST_STORAGE, exist_ok=True)
 
 # Debug: Print paths to verify
@@ -441,14 +447,14 @@ def perform_nightly_feed_wipe(force=False):
     print(f"[Nightly] All feeds wiped for {today.isoformat()} at {now_iso}")
 
 def start_nightly_wipe_scheduler():
-    """Start a background thread that wipes all feeds at 12:00 AM local time.
+    """Start a background thread that wipes all feeds every Sunday evening before Monday.
 
     The scheduler wakes up every 30 seconds and checks whether the current
-    local time has just crossed midnight. If it has, and we haven't already
-    wiped today, it calls perform_nightly_feed_wipe(force=True).
+    local time is Sunday at 23:30. If it is, and we haven't already
+    wiped this week, it calls perform_nightly_feed_wipe(force=True).
 
     This runs regardless of whether any API route is hit, so the feeds are
-    always cleared at exactly midnight local time.
+    always cleared at Sunday 23:30 local time.
 
     Runs as a daemon thread — it shuts down automatically when the app exits.
     """
@@ -461,11 +467,11 @@ def start_nightly_wipe_scheduler():
         while True:
             try:
                 now = datetime.now()
-                # Trigger once per day, during the first minute after midnight.
-                if now.hour == 0 and now.minute == 0:
-                    # Only wipe if we haven't already wiped for this date.
+                # Trigger once per week on Sunday at 23:30
+                if now.weekday() == 6 and now.hour == 23 and now.minute == 30:
+                    # Only wipe if we haven't already wiped this week
                     if _last_feed_wipe_date != now.date():
-                        print(f"[Scheduler] Midnight detected at {now.isoformat()} — wiping feeds")
+                        print(f"[Scheduler] Sunday 23:30 detected at {now.isoformat()} — wiping feeds")
                         perform_nightly_feed_wipe(force=True)
             except Exception as e:
                 print(f"[Scheduler] Error in scheduler loop: {e}")
@@ -474,7 +480,7 @@ def start_nightly_wipe_scheduler():
 
     scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="nightly-wipe")
     scheduler_thread.start()
-    print("✅ Nightly wipe scheduler thread launched")
+    print("✅ Nightly wipe scheduler thread launched (weekly on Sunday at 23:30)")
 
 ## Functions ------------------------------------
 # Image compression function
@@ -925,6 +931,195 @@ def delete_notification(rfid, notification_id):
 
     save_notifications(safe_rfid, doc)
     return True
+
+# ============================================================================
+# EMPLOYEE SETTINGS STORAGE - PER-RFID FILES
+# ============================================================================
+# Every employee gets their own settings file keyed by their RFID.
+# Path: storage/settings/<RFID>.json
+#
+# Each file shape:
+#     {
+#         "rfid": "FB822A54",
+#         "uid": "021",
+#         "fullname": "JIM-MAR DE LOS REYES",
+#         "role": "employee",
+#         "settings": { ... },  // Employee-specific settings override
+#         "last_updated": "..."
+#     }
+#
+# Before overwriting any settings file, the previous content is copied to
+# <RFID>.json.backup in the SAME folder — exactly like users.json.backup.
+
+def _sanitize_rfid(rfid):
+    """Sanitize an RFID so it is safe to use as a filename."""
+    if not rfid:
+        return ""
+    cleaned = re.sub(r'[^A-Za-z0-9_\-]', '', str(rfid).strip().upper())
+    return cleaned
+
+def _employee_settings_path(rfid):
+    """Return the absolute path to an employee's settings file."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return None
+    return os.path.join(EMPLOYEE_SETTINGS_STORAGE, f"{safe_rfid}.json")
+
+def _employee_settings_backup_path(rfid):
+    """Return the absolute path to an employee's settings backup file (.json.backup)."""
+    path = _employee_settings_path(rfid)
+    if not path:
+        return None
+    return path + ".backup"
+
+def _empty_employee_settings_doc(rfid, uid=None, fullname=None, role=None):
+    """Build a fresh empty employee settings document for a given RFID."""
+    return {
+        "rfid": _sanitize_rfid(rfid),
+        "uid": uid or "",
+        "fullname": fullname or "",
+        "role": role or "",
+        "settings": {},  // Empty settings object - will inherit from system settings
+        "last_updated": datetime.now().isoformat()
+    }
+
+def _backup_employee_settings_file(rfid, existing_doc):
+    """Write a .json.backup copy of the current employee settings document.
+
+    Called right before we overwrite the live file so the previous version
+    is preserved as <RFID>.json.backup in the same folder.
+    """
+    try:
+        backup_path = _employee_settings_backup_path(rfid)
+        if not backup_path or existing_doc is None:
+            return
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(existing_doc, f, indent=4)
+            f.write("\n")
+        print(f"Employee settings backup written: {backup_path}")
+    except Exception as e:
+        print(f"Warning: failed to write employee settings backup for {rfid}: {e}")
+
+def load_employee_settings(rfid, uid=None, fullname=None, role=None):
+    """Load the settings document for a given employee RFID.
+
+    If the file does not exist, an empty document is created and returned.
+    """
+    path = _employee_settings_path(rfid)
+    if not path:
+        return _empty_employee_settings_doc(rfid, uid, fullname, role)
+
+    if not os.path.exists(path):
+        doc = _empty_employee_settings_doc(rfid, uid, fullname, role)
+        # Persist the empty doc so the employee has a real file going forward.
+        try:
+            os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(doc, f, indent=4)
+                f.write("\n")
+        except Exception as e:
+            print(f"Warning: could not create employee settings file for {rfid}: {e}")
+        return doc
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Error reading employee settings file for {rfid}: {e}")
+        return _empty_employee_settings_doc(rfid, uid, fullname, role)
+
+    # Normalize structure
+    if not isinstance(data, dict):
+        data = _empty_employee_settings_doc(rfid, uid, fullname, role)
+    if "settings" not in data or not isinstance(data["settings"], dict):
+        data["settings"] = {}
+    data["rfid"] = _sanitize_rfid(rfid)
+    if uid is not None:
+        data["uid"] = uid
+    if fullname is not None:
+        data["fullname"] = fullname
+    if role is not None:
+        data["role"] = role
+    if "last_updated" not in data:
+        data["last_updated"] = datetime.now().isoformat()
+    return data
+
+def save_employee_settings(rfid, doc, backup=True):
+    """Persist an employee settings document to disk.
+
+    If `backup` is True and the live file already exists, the previous
+    content is first written to <RFID>.json.backup in the same folder.
+    """
+    path = _employee_settings_path(rfid)
+    if not path:
+        return False
+
+    existing = None
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = None
+
+    if backup and existing is not None:
+        _backup_employee_settings_file(rfid, existing)
+
+    doc["rfid"] = _sanitize_rfid(rfid)
+    doc["last_updated"] = datetime.now().isoformat()
+
+    try:
+        os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(doc, f, indent=4)
+            f.write("\n")
+        print(f"Employee settings saved for {rfid}")
+        return True
+    except Exception as e:
+        print(f"Error saving employee settings for {rfid}: {e}")
+        return False
+
+def update_employee_setting(rfid, setting_key, setting_value, uid=None, fullname=None, role=None):
+    """Update a specific setting for an employee."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return False
+
+    doc = load_employee_settings(safe_rfid, uid=uid, fullname=fullname, role=role)
+
+    # Update the specific setting
+    if "settings" not in doc:
+        doc["settings"] = {}
+    doc["settings"][setting_key] = setting_value
+
+    return save_employee_settings(safe_rfid, doc)
+
+def get_employee_setting(rfid, setting_key, default=None):
+    """Get a specific setting for an employee, falling back to system settings."""
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return default
+
+    doc = load_employee_settings(safe_rfid)
+
+    # First check employee-specific settings
+    if "settings" in doc and isinstance(doc["settings"], dict) and setting_key in doc["settings"]:
+        return doc["settings"][setting_key]
+
+    # Fall back to system settings
+    # Handle nested settings like "attendance.work_start"
+    if "." in setting_key:
+        keys = setting_key.split(".")
+        value = settings
+        try:
+            for key in keys:
+                value = value[key]
+            return value
+        except (KeyError, TypeError):
+            return default
+    else:
+        return settings.get(setting_key, default)
 
 # ============================================================================
 # LEAVE STORAGE (TWO FILES, SAME SHAPE)
@@ -1427,60 +1622,40 @@ def is_on_leave(day_data):
 def determine_scan_type(day_data, scan_time, employee):
     """
     Determine whether this scan should be a time in or time out.
+    Uses odd/even pattern based on how many slots are already filled:
+    - Even number filled (0,2,4): next scan is TIME_IN
+    - Odd number filled (1,3): next scan is TIME_OUT
+    The actual slot (AM_IN, AM_OUT, PM_IN, PM_OUT) is determined by scan time.
 
     Returns one of:
         ("am", "in")   -> record am_in
         ("am", "out")  -> record am_out
         ("pm", "in")   -> record pm_in
         ("pm", "out")  -> record pm_out
-        None           -> skip this tap entirely
-
-    Rules (in priority order):
-
-    1. If the day is marked on_leave, skip.
-
-    2. If AM is incomplete and the current period is AM:
-         - am_in missing                     -> ("am", "in")
-         - am_in present, am_out missing     -> ("am", "out")
-         - am_in and am_out both present     -> skip (AM already complete)
-
-    3. If AM is incomplete and the current period is PM:
-         - am_in missing
-             * tap is at/after lunch_end     -> ("pm", "in")   (late arrival —
-                                                                 first tap of the
-                                                                 day is PM in)
-             * tap is before lunch_end       -> ("am", "in")   (very late AM in)
-         - am_in present, am_out missing
-             * tap is at/after lunch_end     -> ("pm", "in")   (forgot AM out;
-                                                                 leave am_out blank)
-             * tap is before lunch_end       -> ("am", "out")  (late AM out)
-
-    4. If AM is complete and PM has not started:
-         - pm_in missing                     -> ("pm", "in")
-
-    5. If PM is in progress:
-         - pm_out missing                    -> ("pm", "out")
-
-    6. If PM is complete                     -> skip.
-
-    The `last_scan_tracking` map is used ONLY to avoid double-recording the
-    same direction back-to-back inside the cooldown window. It never blocks
-    an in/out transition on the DTR itself.
+        None           -> skip this tap entirely (cooldown not met or all slots filled)
     """
     rfid = employee.get("rfid")
-    period = get_period(scan_time)
+    period = get_period(scan_time)  # Returns "am" or "pm"
 
     if is_on_leave(day_data):
         print(f"Day marked as ON LEAVE for {rfid} - scan skipped")
         return None
 
-    am_has_in = has_time_in_for_period(day_data, "am")
-    am_has_out = has_time_out_for_period(day_data, "am")
-    am_complete = am_has_in and am_has_out
+    # Count how many time slots are already filled for today
+    filled_count = 0
+    if day_data.get("am_in"):
+        filled_count += 1
+    if day_data.get("am_out"):
+        filled_count += 1
+    if day_data.get("pm_in"):
+        filled_count += 1
+    if day_data.get("pm_out"):
+        filled_count += 1
 
-    pm_has_in = has_time_in_for_period(day_data, "pm")
-    pm_has_out = has_time_out_for_period(day_data, "pm")
-    pm_complete = pm_has_in and pm_has_out
+    # Determine what type of scan we want to record (in or out)
+    # Even number filled -> next is IN (0,2,4, ...)
+    # Odd number filled -> next is OUT (1,3,5, ...)
+    desired_type = "in" if filled_count % 2 == 0 else "out"
 
     # Helper: returns True if the last recorded tap for this RFID was the
     # same direction we're about to record, within the cooldown window.
@@ -1495,97 +1670,19 @@ def determine_scan_type(day_data, scan_time, employee):
             return False
         return (scan_time - last_time).total_seconds() < SCAN_COOLDOWN_SECONDS
 
-    # Helper: returns True if the tap happened at or after the configured
-    # lunch_end time. Falls back to 13:00 if settings are unreadable.
-    def is_at_or_after_lunch_end():
-        try:
-            lunch_end_str = settings.get("attendance", {}).get("lunch_end", "13:00")
-            lunch_end_hour = int(lunch_end_str.split(":")[0])
-            lunch_end_minute = int(lunch_end_str.split(":")[1]) if ":" in lunch_end_str else 0
-            lunch_end_time = scan_time.replace(
-                hour=lunch_end_hour, minute=lunch_end_minute,
-                second=0, microsecond=0
-            )
-            return scan_time >= lunch_end_time
-        except Exception as e:
-            print(f"Error checking lunch_end time: {e}")
-            return False
+    # Check if we're in cooldown for the desired type
+    if same_direction_within_cooldown(desired_type):
+        print(f"{desired_type.upper()} cooldown not met for {rfid}")
+        return None
 
-    # --- 1) AM period ----------------------------------------------------
-    if period == "am":
-        if not am_has_in:
-            if same_direction_within_cooldown("in"):
-                print(f"AM in cooldown not met for {rfid}")
-                return None
-            return ("am", "in")
+    # All four slots filled, can't record more
+    if filled_count >= 4:
+        print(f"All time slots filled for {rfid}")
+        return None
 
-        if am_has_in and not am_has_out:
-            if same_direction_within_cooldown("out"):
-                print(f"AM out cooldown not met for {rfid}")
-                return None
-            return ("am", "out")
-
-        if am_complete:
-            print(f"AM already complete for {rfid}")
-            return None
-
-    # --- 2) PM period ----------------------------------------------------
-    elif period == "pm":
-        if not am_complete:
-            # AM still unfinished — figure out what this PM tap means.
-            if not am_has_in:
-                # No morning tap at all. Is this a late arrival (after lunch)
-                # or a very-late morning arrival (still before lunch_end)?
-                if is_at_or_after_lunch_end():
-                    print(f"Late arrival after lunch for {rfid} — recording as PM time in "
-                          f"at {scan_time.strftime('%H:%M:%S')}")
-                    if same_direction_within_cooldown("in"):
-                        print(f"PM in cooldown not met for {rfid}")
-                        return None
-                    return ("pm", "in")
-
-                if same_direction_within_cooldown("in"):
-                    print(f"Late AM in cooldown not met for {rfid}")
-                    return None
-                print(f"Late AM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
-                return ("am", "in")
-
-            if am_has_in and not am_has_out:
-                # Employee tapped in the morning but forgot to tap out. If
-                # it's already past lunch, treat this as a fresh PM time in
-                # and leave am_out blank. Otherwise it's a late AM out.
-                if is_at_or_after_lunch_end():
-                    print(f"AM period ended (past lunch_end), treating scan as "
-                          f"PM time in for {rfid} at {scan_time.strftime('%H:%M:%S')}")
-                    if same_direction_within_cooldown("in"):
-                        print(f"PM in cooldown not met for {rfid}")
-                        return None
-                    return ("pm", "in")
-
-                if same_direction_within_cooldown("out"):
-                    print(f"Late AM out cooldown not met for {rfid}")
-                    return None
-                print(f"Late AM time out for {rfid} at {scan_time.strftime('%H:%M:%S')}")
-                return ("am", "out")
-
-        # AM is complete — normal PM flow.
-        if not pm_has_in:
-            if same_direction_within_cooldown("in"):
-                print(f"PM in cooldown not met for {rfid}")
-                return None
-            return ("pm", "in")
-
-        if pm_has_in and not pm_has_out:
-            if same_direction_within_cooldown("out"):
-                print(f"PM out cooldown not met for {rfid}")
-                return None
-            return ("pm", "out")
-
-        if pm_complete:
-            print(f"PM already complete for {rfid}")
-            return None
-
-    return None
+    # Return the period (am/pm) and the desired type (in/out)
+    # The actual recording function will use this to determine the correct slot
+    return (period, desired_type)
 
 # Format a datetime as 12-hour time (no AM/PM suffix) for DTR storage.
 def format_dtr_time(scan_time):
@@ -3275,6 +3372,233 @@ def check_version():
         }
     }), 200
 
+# Get employee-specific settings
+@app.route("/api/settings/<rfid>", methods=["GET"])
+def get_employee_settings(rfid):
+    """Get settings for a specific employee"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Authorization: users can only access their own settings unless they are admin/hr
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    # Check if requesting user is authorized to access this RFID's settings
+    current_user_rfid = None
+    current_user_role = "employee"
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, _, _ = verify_token()
+        if user_data:
+            current_user_rfid = user_data.get('rfid')
+            current_user_role = user_data.get('role', 'employee')
+    elif session.get("user"):
+        current_user_rfid = session.get("user", {}).get('rfid')
+        current_user_role = session.get("user", {}).get('role', 'employee')
+
+    # Allow access if: user is requesting their own settings, or user is admin/hr
+    if current_user_rfid != safe_rfid and current_user_role not in ['admin', 'hr']:
+        return jsonify({
+            "status": "error",
+            "message": "Unauthorized to access these settings"
+        }), 403
+
+    try:
+        # Get employee data for context
+        employee = employee_database.get(safe_rfid)
+        uid = employee.get("uid") if employee else None
+        fullname = f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip() if employee else None
+        role = employee.get("role") if employee else None
+
+        # Load employee-specific settings
+        employee_settings_doc = load_employee_settings(safe_rfid, uid=uid, fullname=fullname, role=role)
+
+        # Merge with system settings (employee settings override system settings)
+        merged_settings = {}
+        # Start with system settings as base
+        for key in ["attendance", "institution", "system"]:
+            if key in settings:
+                merged_settings[key] = settings[key].copy()
+
+        # Override with employee-specific settings
+        if "settings" in employee_settings_doc and isinstance(employee_settings_doc["settings"], dict):
+            for key in employee_settings_doc["settings"]:
+                # Handle nested keys like "attendance.work_start"
+                if "." in key:
+                    keys = key.split(".")
+                    target = merged_settings
+                    try:
+                        # Navigate to the parent of the target key
+                        for k in keys[:-1]:
+                            if k not in target:
+                                target[k] = {}
+                            target = target[k]
+                        # Set the value
+                        target[keys[-1]] = employee_settings_doc["settings"][key]
+                    except Exception:
+                        # If there's any error in nested setting, skip it
+                        pass
+                else:
+                    # Direct key override
+                    # Determine which section it belongs to
+                    if key in ["work_start", "work_end", "lunch_start", "lunch_end", "grace_period"]:
+                        if "attendance" not in merged_settings:
+                            merged_settings["attendance"] = {}
+                        merged_settings["attendance"][key] = employee_settings_doc["settings"][key]
+                    elif key in ["name", "system_name", "academic_year", "hr_email"]:
+                        if "institution" not in merged_settings:
+                            merged_settings["institution"] = {}
+                        merged_settings["institution"][key] = employee_settings_doc["settings"][key]
+                    elif key in ["version", "version_url"]:
+                        if "system" not in merged_settings:
+                            merged_settings["system"] = {}
+                        merged_settings["system"][key] = employee_settings_doc["settings"][key]
+                    else:
+                        # Unknown key, store in system section for now
+                        if "system" not in merged_settings:
+                            merged_settings["system"] = {}
+                        merged_settings["system"][key] = employee_settings_doc["settings"][key]
+
+        return jsonify({
+            "status": "success",
+            "data": {
+                "rfid": safe_rfid,
+                "settings": merged_settings,
+                "employee": {
+                    "uid": uid,
+                    "fullname": fullname,
+                    "role": role
+                } if employee else None,
+                "last_updated": employee_settings_doc.get("last_updated")
+            }
+        }), 200
+    except Exception as e:
+        print(f"Error getting employee settings: {e}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to retrieve employee settings"
+        }), 500
+
+# Update employee-specific settings
+@app.route("/api/settings/<rfid>", methods=["PUT"])
+def update_employee_settings(rfid):
+    """Update settings for a specific employee"""
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+
+    # Authorization: users can only update their own settings unless they are admin/hr
+    safe_rfid = _sanitize_rfid(rfid)
+    if not safe_rfid:
+        return jsonify({"status": "error", "message": "Invalid RFID"}), 400
+
+    # Check if requesting user is authorized to access this RFID's settings
+    current_user_rfid = None
+    current_user_role = "employee"
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, _, _ = verify_token()
+        if user_data:
+            current_user_rfid = user_data.get('rfid')
+            current_user_role = user_data.get('role', 'employee')
+    elif session.get("user"):
+        current_user_rfid = session.get("user", {}).get('rfid')
+        current_user_role = session.get("user", {}).get('role', 'employee')
+
+    # Allow access if: user is requesting their own settings, or user is admin/hr
+    if current_user_rfid != safe_rfid and current_user_role not in ['admin', 'hr']:
+        return jsonify({
+            "status": "error",
+            "message": "Unauthorized to update these settings"
+        }), 403
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "No data provided"
+            }), 400
+
+        # Get employee data for context
+        employee = employee_database.get(safe_rfid)
+        uid = employee.get("uid") if employee else None
+        fullname = f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip() if employee else None
+        role = employee.get("role") if employee else None
+
+        # Load existing employee settings
+        employee_settings_doc = load_employee_settings(safe_rfid, uid=uid, fullname=fullname, role=role)
+
+        # Update settings - store as employee-specific overrides
+        if "settings" not in employee_settings_doc:
+            employee_settings_doc["settings"] = {}
+
+        # Flatten the incoming data for storage as employee-specific overrides
+        # We'll store user preferences as flat keys for simplicity
+        if "attendance" in data:
+            for key in ["work_start", "work_end", "lunch_start", "lunch_end", "grace_period"]:
+                if key in data["attendance"]:
+                    employee_settings_doc["settings"][key] = data["attendance"][key]
+
+        if "institution" in data:
+            for key in ["name", "system_name", "academic_year", "hr_email"]:
+                if key in data["institution"]:
+                    # Institution settings are typically system-wide, but we allow personal overrides
+                    employee_settings_doc["settings"][f"institution.{key}"] = data["institution"][key]
+
+        if "system" in data:
+            for key in ["version_url"]:  # version is auto-managed
+                if key in data["system"]:
+                    employee_settings_doc["settings"][f"system.{key}"] = data["system"][key]
+
+        # Save the updated employee settings
+        if save_employee_settings(safe_rfid, employee_settings_doc):
+            # Log activity
+            add_activity(
+                "employee_settings_updated",
+                f"Employee settings updated for RFID {safe_rfid}",
+                {"name": session.get("user", {}).get("fullname", "User")},
+                "system"
+            )
+
+            return jsonify({
+                "status": "success",
+                "message": "Employee settings updated successfully",
+                "data": {
+                    "rfid": safe_rfid,
+                    "settings": employee_settings_doc["settings"],
+                    "last_updated": employee_settings_doc["last_updated"]
+                }
+            }), 200
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to save employee settings"
+            }), 500
+
+    except Exception as e:
+        print(f"Error updating employee settings: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 # Reset settings to defaults
 @app.route("/api/settings/reset", methods=["POST"])
 def reset_settings():
@@ -4272,6 +4596,7 @@ def page_not_found(e):
 @app.route("/api/settings", methods=["OPTIONS"])
 @app.route("/api/settings/check-version", methods=["OPTIONS"])
 @app.route("/api/settings/reset", methods=["OPTIONS"])
+@app.route("/api/settings/<rfid>", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/clear", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])

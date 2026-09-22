@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#2C0A12" />
-  <title>TapIn - My Dashboard</title>
+  <title>TapIn - Dashboard</title>
   <link rel="icon" type="image/png" href="../assets/tapin_icon.png">
   <link rel="stylesheet" href="../css/mobile-employee-dashboard.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
@@ -24,9 +24,8 @@
     </div>
   </div>
   <div class="app-topbar-right">
-    <button class="app-icon-btn" title="Notifications">
-      <i class="fa-regular fa-bell"></i>
-      <span class="app-notif-dot"></span>
+    <button class="app-icon-btn" title="Settings" id="topSettingsBtn">
+      <i class="fa-solid fa-gear"></i>
     </button>
     <button class="app-icon-btn" title="Logout" id="topLogoutBtn">
       <i class="fa-solid fa-arrow-right-from-bracket"></i>
@@ -78,7 +77,7 @@
 
     
     <div class="section-card">
-      <div class="section-title"><i class="fa-solid fa-user"></i> My Account</div>
+      <div class="section-title"><i class="fa-solid fa-user"></i> Account</div>
       <div class="info-list">
         <div class="info-row"><i class="fa-solid fa-id-badge"></i><span class="info-label">Employee ID</span><span class="info-val" id="employeeId">--</span></div>
         <div class="info-row"><i class="fa-solid fa-user"></i><span class="info-label">Full Name</span><span class="info-val" id="employeeFullname">--</span></div>
@@ -91,7 +90,6 @@
       <div class="section-title"><i class="fa-solid fa-signal"></i> Latest Activity</div>
       <div class="info-list">
         <div class="info-row"><i class="fa-solid fa-clock"></i><span class="info-label">Last Scan</span><span class="info-val" id="employeeLatestScan">--</span></div>
-        <div class="info-row"><i class="fa-solid fa-circle-check"></i><span class="info-label">Status</span><span class="info-val" id="employeeStatus">Waiting</span></div>
       </div>
     </div>
 
@@ -100,7 +98,7 @@
   <!-- ======== DTR ======== -->
   <section class="page" id="page-dtr">
     <div class="page-header">
-      <h1>My DTR</h1>
+      <h1>DTR</h1>
       <p>Daily Time Record — CSC Form 48</p>
     </div>
 
@@ -147,7 +145,7 @@
   <!-- ======== ATTENDANCE ======== -->
   <section class="page" id="page-attendance">
     <div class="page-header">
-      <h1>My Attendance</h1>
+      <h1>Attendance</h1>
       <p>Your latest RFID scans</p>
     </div>
 
@@ -210,7 +208,7 @@
 	  <!-- ======== PROFILE ======== -->
   <section class="page" id="page-profile">
     <div class="page-header">
-      <h1>My Profile</h1>
+      <h1>Profile</h1>
       <p>View and edit your account</p>
     </div>
 
@@ -319,8 +317,8 @@
       </div>
       <div class="form-row"><label>Start Date</label><input class="form-control" type="date" id="leaveStart" required /></div>
       <div class="form-row"><label>End Date</label><input class="form-control" type="date" id="leaveEnd" required /></div>
-      <div class="form-row"><label>Reason</label><textarea class="form-control" id="leaveReason" rows="3" required></textarea></div>
-      <div class="form-row"><label>Attachment (Optional)</label><input class="form-control" type="file" id="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt"><small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small></div>
+      <div class="form-row"><label>Reason</label><textarea class="form-control" id="leaveReason" rows="3"></textarea></div>
+      <div class="form-row"><label>Attachment</label><input class="form-control" type="file" id="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt"><small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small></div>
       <div id="leaveMessage" class="msg" style="display:none;"></div>
       <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-paper-plane"></i> Submit</button>
     </form>
@@ -337,6 +335,66 @@
       <button class="btn btn-outline" id="logoutConfirmCancel">Cancel</button>
       <button class="btn btn-primary" id="logoutConfirmYes">Logout</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ SETTINGS MODAL (bottom sheet) ============ -->
+<div class="sheet-backdrop" id="settingsModal">
+  <div class="sheet">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2>Settings</h2>
+      <button class="sheet-close" onclick="closeSettingsModal()"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+    <form id="settingsForm" onsubmit="return saveSettingsMobile(event)" style="padding: 4px 18px 18px;">
+      <div class="settings-section">
+        <div class="settings-title">Attendance Settings</div>
+        <div class="form-row">
+          <label>Work Start Time</label>
+          <input class="form-control" type="time" id="workStartTime" />
+        </div>
+        <div class="form-row">
+          <label>Work End Time</label>
+          <input class="form-control" type="time" id="workEndTime" />
+        </div>
+        <div class="form-row">
+          <label>Lunch Start Time</label>
+          <input class="form-control" type="time" id="lunchStartTime" />
+        </div>
+        <div class="form-row">
+          <label>Lunch End Time</label>
+          <input class="form-control" type="time" id="lunchEndTime" />
+        </div>
+        <div class="form-row">
+          <label>Grace Period (minutes)</label>
+          <input class="form-control" type="number" id="gracePeriod" min="0" max="60" />
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-title">Notification Preferences</div>
+        <div class="form-row">
+          <label>Notify on Time In</label>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="notifyTimeIn" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Notify on Time Out</label>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="notifyTimeOut" />
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Notify on Leave Approval</label>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="notifyLeaveApproval" />
+          </div>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-save"></i> Save Changes</button>
+    </form>
   </div>
 </div>
 

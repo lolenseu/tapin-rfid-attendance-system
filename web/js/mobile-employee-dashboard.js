@@ -122,12 +122,15 @@ async function verifySession() {
     const enriched = allEmployees.find(e => e.rfid === currentUser?.rfid || e.uid === currentUser?.uid);
     if (enriched) currentUser = { ...currentUser, ...enriched };
 
+    // Load leave requests BEFORE monthly stats so the "Leaves" counter
+    // and the "Absent" calc both have the right data to work with.
+    await loadLeaveRequests();
+
     // Load attendance data early so we have latest scan for paintUserInfo
     await loadAttendance();
 
     paintUserInfo();
     paintProfile();
-    await loadLeaveRequests();
     await loadDtrMonths();
     await loadMonthlyStats();
   } catch (err) {
@@ -148,7 +151,6 @@ function paintUserInfo() {
   setText('employeeDepartment', currentUser.department || '--');
   setText('employeeRfid', currentUser.rfid || '--');
   setText('employeeLatestScan', currentUser.latest_scan || '--');
-  setText('employeeStatus', currentUser.present ? 'Present Today' : 'Waiting');
 
   const avatar = document.getElementById('empTopAvatar');
   if (avatar) avatar.textContent = initialsOf(currentUser);
@@ -261,10 +263,23 @@ async function loadMonthlyStats() {
       if (!Number.isNaN(h)) hours += h;
     });
 
+    // "Leaves" counter — count approved + pending leaves that overlap the
+    // current calendar month, matching the desktop dashboard logic.
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const leaveCount = myLeaveRequests.filter(r => {
+      const status = (r.status || '').toLowerCase();
+      if (status !== 'approved' && status !== 'pending') return false;
+      const start = new Date(r.start_date || '');
+      const end = new Date(r.end_date || '');
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
+      return start <= monthEnd && end >= monthStart;
+    }).length;
+
     setText('statTotalPresent', String(present));
     setText('statTotalAbsent', String(absent));
     setText('statTotalHours', hours.toFixed(2));
-    setText('statLeaveCount', String(myLeaveRequests.length));
+    setText('statLeaveCount', String(leaveCount));
   } catch (err) { console.error(err); }
 }
 
@@ -423,11 +438,13 @@ async function loadLeaveRequests() {
     });
     if (res.ok) {
       const result = await res.json();
-      // The per-employee route returns requests + approved + rejected.
-      // Show only the pending requests on the "My Leave Requests" list —
-      // approved/rejected would otherwise appear alongside new pending ones.
+      // Show ALL of this employee's requests (pending + approved + rejected)
+      // so the "My Leave Requests" list is a complete history, not just
+      // the still-pending ones.
       const pending = result.data?.requests || [];
-      myLeaveRequests = pending;
+      const approved = result.data?.approved || [];
+      const rejected = result.data?.rejected || [];
+      myLeaveRequests = [...pending, ...approved, ...rejected];
     } else {
       myLeaveRequests = [];
     }
@@ -493,6 +510,7 @@ async function submitLeaveRequest(e) {
   formData.append('leave_type', document.getElementById('leaveType').value);
   formData.append('start_date', document.getElementById('leaveStart').value);
   formData.append('end_date', document.getElementById('leaveEnd').value);
+  // Reason is optional — we still send whatever the user typed, even if empty.
   formData.append('reason', document.getElementById('leaveReason').value.trim());
 
   // Handle file upload
@@ -501,7 +519,8 @@ async function submitLeaveRequest(e) {
     formData.append('attachment', attachmentInput.files[0]);
   }
 
-  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('reason')) {
+  // Only start/end dates are required; reason is optional.
+  if (!formData.get('start_date') || !formData.get('end_date')) {
     showMsg('leaveMessage', 'Please fill in all fields.', 'error'); return false;
   }
   if (new Date(formData.get('start_date')) > new Date(formData.get('end_date'))) {
@@ -765,6 +784,213 @@ async function loadVersion() {
   } catch { el.textContent = 'v0.1.40'; }
 }
 
+/* ---------- SETTINGS (bottom sheet) ---------- */
+
+function openSettingsMobile() {
+  if (!currentUser) return;
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+
+  // Load current employee settings and populate the form
+  loadEmployeeSettingsForMobile();
+
+  modal.style.display = 'flex';
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function loadEmployeeSettingsForMobile() {
+  if (!currentUser || !currentUser.rfid) return;
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/settings/${currentUser.rfid}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) {
+      console.warn('Failed to load employee settings, using system defaults');
+      // Load system settings as fallback
+      loadSystemSettingsForMobile();
+      return;
+    }
+
+    const result = await res.json();
+    if (result.status !== 'success' || !result.data) {
+      console.warn('Failed to load employee settings, using system defaults');
+      loadSystemSettingsForMobile();
+      return;
+    }
+
+    const settings = result.data.settings;
+    const employee = result.data.employee;
+
+    // Populate form with settings values
+    if (settings.attendance) {
+      document.getElementById('workStartTime').value = settings.attendance.work_start || '08:00';
+      document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
+      document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
+      document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+    }
+
+    // Set notification preferences (default to true if not specified)
+    document.getElementById('notifyTimeIn').checked = settings.notify_time_in !== false;
+    document.getElementById('notifyTimeOut').checked = settings.notify_time_out !== false;
+    document.getElementById('notifyLeaveApproval').checked = settings.notify_leave_approval !== false;
+
+  } catch (err) {
+    console.error('Load employee settings error:', err);
+    // Fall back to system settings
+    loadSystemSettingsForMobile();
+  }
+}
+
+async function loadSystemSettingsForMobile() {
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/settings`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) return;
+
+    const result = await res.json();
+    if (result.status !== 'success' || !result.data) return;
+
+    const settings = result.data;
+
+    // Populate form with system settings values
+    if (settings.attendance) {
+      document.getElementById('workStartTime').value = settings.attendance.work_start || '08:00';
+      document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
+      document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
+      document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+    }
+
+    // Set notification preferences (default to true if not specified)
+    document.getElementById('notifyTimeIn').checked = settings.notify_time_in !== false;
+    document.getElementById('notifyTimeOut').checked = settings.notify_time_out !== false;
+    document.getElementById('notifyLeaveApproval').checked = settings.notify_leave_approval !== false;
+
+  } catch (err) {
+    console.error('Load system settings error:', err);
+    // Set default values
+    document.getElementById('workStartTime').value = '08:00';
+    document.getElementById('workEndTime').value = '17:00';
+    document.getElementById('lunchStartTime').value = '12:00';
+    document.getElementById('lunchEndTime').value = '13:00';
+    document.getElementById('gracePeriod').value = 10;
+    document.getElementById('notifyTimeIn').checked = true;
+    document.getElementById('notifyTimeOut').checked = true;
+    document.getElementById('notifyLeaveApproval').checked = true;
+  }
+}
+
+async function saveSettingsMobile() {
+  if (!currentUser || !currentUser.rfid) return;
+
+  const settingsData = {
+    attendance: {
+      work_start: document.getElementById('workStartTime').value,
+      work_end: document.getElementById('workEndTime').value,
+      lunch_start: document.getElementById('lunchStartTime').value,
+      lunch_end: document.getElementById('lunchEndTime').value,
+      grace_period: parseInt(document.getElementById('gracePeriod').value) || 10
+    },
+    notify_time_in: document.getElementById('notifyTimeIn').checked,
+    notify_time_out: document.getElementById('notifyTimeOut').checked,
+    notify_leave_approval: document.getElementById('notifyLeaveApproval').checked
+  };
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/settings/${currentUser.rfid}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+      },
+      credentials: 'include',
+      body: JSON.stringify(settingsData)
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) {
+      throw new Error(`Failed to save settings: ${res.status}`);
+    }
+
+    const result = await res.json();
+    if (result.status !== 'success') {
+      throw new Error(result.message || 'Failed to save settings');
+    }
+
+    // Show success message
+    showSettingsMessageMobile('Settings saved successfully!', 'success');
+
+    // Close modal after delay
+    setTimeout(() => {
+      closeSettingsModal();
+    }, 1200);
+
+  } catch (err) {
+    console.error('Save settings error:', err);
+    showSettingsMessageMobile('Failed to save settings. Please try again.', 'error');
+  }
+}
+
+function showSettingsMessageMobile(msg, type = 'info') {
+  const modalBody = document.getElementById('settingsModal').querySelector('.sheet');
+  if (!modalBody) return;
+
+  // Remove any existing message
+  const existingMsg = document.getElementById('settingsMessageMobile');
+  if (existingMsg) existingMsg.remove();
+
+  const msgEl = document.createElement('div');
+  msgEl.id = 'settingsMessageMobile';
+  msgEl.style.marginTop = '16px';
+  msgEl.style.padding = '12px';
+  msgEl.style.borderRadius = '8px';
+  msgEl.style.textAlign = 'center';
+  msgEl.style.fontWeight = '600';
+  msgEl.style.width = '100%';
+  msgEl.style.boxSizing = 'border-box';
+
+  if (type === 'success') {
+    msgEl.style.backgroundColor = '#dcfce7';
+    msgEl.style.color = '#166534';
+    msgEl.style.border = '1px solid #bbf7d0';
+  } else if (type === 'error') {
+    msgEl.style.backgroundColor = '#fee2e2';
+    msgEl.style.color = '#991b1b';
+    msgEl.style.border = '1px solid #fecaca';
+  } else {
+    msgEl.style.backgroundColor = '#dbeafe';
+    msgEl.style.color = '#1d4ed8';
+    msgEl.style.border = '1px solid #bfdbfe';
+  }
+
+  msgEl.innerHTML = msg;
+  modalBody.prepend(msgEl);
+
+  // Remove message after 3 seconds for success/info
+  if (type !== 'error') {
+    setTimeout(() => {
+      if (msgEl.parentNode) msgEl.remove();
+    }, 3000);
+  }
+}
+
 /* ---------- Init ---------- */
 
 initNav();
@@ -774,3 +1000,11 @@ updateClock();
 window.addEventListener('pageshow', verifySession);
 verifySession();
 loadVersion();
+
+// Settings button event listener
+const settingsBtn = document.getElementById('topSettingsBtn');
+if (settingsBtn) {
+  settingsBtn.addEventListener('click', () => {
+    openSettingsMobile();
+  });
+}

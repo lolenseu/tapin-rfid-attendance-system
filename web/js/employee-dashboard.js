@@ -269,6 +269,7 @@ async function verifyEmployeeSession() {
 
     await loadDtrMonths();
     await loadMyAttendance();
+    await loadMyLatestScan();
     await loadMyActivityTimeline();
   } catch (err) {
     console.error('Session verify error:', err);
@@ -475,13 +476,57 @@ function populateAccountInfo() {
   setText('employeeDepartment', currentUser.department || '--');
   setText('employeeRole', (currentUser.role || 'employee').toUpperCase());
   setText('employeeLatestScan', currentUser.latest_scan || '--');
-  setText('employeeStatus', currentUser.present ? 'Present Today' : 'Waiting');
 
   const activityEl = document.getElementById('employeeActivity');
   if (activityEl) {
     activityEl.textContent = currentUser.latest_scan
       ? `Last scan recorded at ${currentUser.latest_scan}.`
       : 'No RFID scan received yet.';
+  }
+}
+
+/* ---------------- LATEST RFID SCAN ---------------- */
+
+// Fetch the employee's own most recent scan from /api/dashboard-data and
+// write it into the "Latest RFID Activity" card. This runs independently
+// of `currentUser.latest_scan` (which may be stale or missing on the
+// verify-token response).
+async function loadMyLatestScan() {
+  if (!currentUser || !currentUser.rfid) return;
+
+  const activityEl = document.getElementById('employeeActivity');
+
+  try {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/dashboard-data`, {
+      method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
+    });
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) return;
+
+    const result = await res.json();
+    const scans = (result.data?.scans || []).filter(s => s.rfid === currentUser.rfid);
+
+    if (!scans.length) {
+      setText('employeeLatestScan', '--');
+      if (activityEl) activityEl.textContent = 'No RFID scan received yet.';
+      return;
+    }
+
+    // Scans list is typically newest-first, but sort to be safe.
+    scans.sort((a, b) => new Date(b.scanned_at) - new Date(a.scanned_at));
+    const latest = scans[0];
+    const d = new Date(latest.scanned_at);
+    const formatted = `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+    setText('employeeLatestScan', formatted);
+    if (activityEl) {
+      activityEl.textContent = `Last scan recorded at ${formatted}.`;
+    }
+
+    // Keep the in-memory user in sync so subsequent re-renders show the same value.
+    currentUser.latest_scan = formatted;
+  } catch (err) {
+    console.error('Load latest scan error:', err);
   }
 }
 
@@ -661,7 +706,7 @@ async function loadMyAttendance() {
     const scans = (result.data?.scans || []).filter(s => s.rfid === currentUser.rfid);
 
     if (!scans.length) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">
         <i class="fa-solid fa-info-circle" style="font-size:20px;display:block;margin-bottom:10px;"></i>
         No attendance records yet.
       </td></tr>`;
@@ -673,7 +718,6 @@ async function loadMyAttendance() {
       return `<tr>
         <td>${escapeHtml(d.toLocaleDateString())}</td>
         <td>${escapeHtml(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}</td>
-        <td>--</td>
         <td><span class="badge badge-present">Present</span></td>
         <td>${escapeHtml(scan.remarks || 'RFID scan')}</td>
       </tr>`;
@@ -729,14 +773,14 @@ async function loadMyLeaveRequests() {
                : status === 'rejected' ? 'badge-rejected'
                : 'badge-pending';
     const canCancel = status === 'pending';
-    return `<tr>
+    return `<tr class="leave-row-clickable" onclick="openMyLeaveDetailModal(${i})" style="cursor:pointer;">
       <td>${escapeHtml(r.filed_at || r.requested_at || '--')}</td>
       <td>${escapeHtml((r.leave_type || '').toUpperCase())}</td>
       <td>${escapeHtml(r.start_date || '--')}</td>
       <td>${escapeHtml(r.end_date || '--')}</td>
       <td>${escapeHtml(r.reason || '--')}</td>
       <td><span class="badge ${badge}">${escapeHtml(status.toUpperCase())}</span></td>
-      <td>${canCancel ? `<button class="btn btn-outline btn-sm" onclick="cancelLeaveRequest(${i})"><i class="fa-solid fa-times"></i> Cancel</button>` : '--'}</td>
+      <td onclick="event.stopPropagation();">${canCancel ? `<button class="btn btn-outline btn-sm" onclick="cancelLeaveRequest(${i})"><i class="fa-solid fa-times"></i> Cancel</button>` : `<button class="btn btn-outline btn-sm" onclick="openMyLeaveDetailModal(${i})"><i class="fa-solid fa-eye"></i> View</button>`}</td>
     </tr>`;
   }).join('');
 }
@@ -765,6 +809,7 @@ async function submitLeaveRequest(event) {
   formData.append('leave_type', document.getElementById('leaveType').value);
   formData.append('start_date', document.getElementById('leaveStart').value);
   formData.append('end_date', document.getElementById('leaveEnd').value);
+  // Reason is optional — we still send whatever the user typed, even if empty.
   formData.append('reason', document.getElementById('leaveReason').value.trim());
 
   // Handle file upload
@@ -773,7 +818,8 @@ async function submitLeaveRequest(event) {
     formData.append('attachment', attachmentInput.files[0]);
   }
 
-  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('reason')) {
+  // Only start/end dates are required; reason is optional.
+  if (!formData.get('start_date') || !formData.get('end_date')) {
     showLeaveMessage('Please fill in all required fields.', 'warning');
     return false;
   }
@@ -842,6 +888,248 @@ async function cancelLeaveRequest(index) {
   } catch (err) {
     console.error('Cancel leave error:', err);
     alert('Network error.');
+  }
+}
+
+/* ---------------- MY LEAVE DETAIL MODAL ---------------- */
+
+// Open the leave detail modal for the currently signed-in employee's
+// own leave request. Receives an index into the `myLeaveRequests` array
+// (rather than an id) so we don't need to re-query the API just to show
+// the data we already have in memory.
+function openMyLeaveDetailModal(index) {
+  const req = myLeaveRequests[index];
+  if (!req) {
+    alert('Leave request not found.');
+    return;
+  }
+
+  const modal = document.getElementById('myLeaveDetailModal');
+  if (!modal) return;
+
+  // Populate header
+  const titleEl = document.getElementById('myLeaveDetailTitle');
+  const subtitleEl = document.getElementById('myLeaveDetailSubtitle');
+  if (titleEl) titleEl.textContent = `Leave Request #${escapeHtml(req.id || req.uid || (index + 1))}`;
+  if (subtitleEl) subtitleEl.textContent = `${escapeHtml((req.leave_type || '').toUpperCase())} · ${escapeHtml((req.status || '').toUpperCase())}`;
+
+  // Status colors
+  const statusColors = {
+    pending: { bg: 'var(--warning-light)', color: 'var(--warning)' },
+    approved: { bg: 'var(--success-light)', color: 'var(--success)' },
+    rejected: { bg: 'var(--danger-light)', color: 'var(--danger)' }
+  };
+  const statusKey = (req.status || 'pending').toLowerCase();
+  const sc = statusColors[statusKey] || statusColors.pending;
+
+  const startDate = req.start_date ? new Date(req.start_date) : null;
+  const endDate = req.end_date ? new Date(req.end_date) : null;
+  const formattedStart = startDate ? startDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A';
+  const formattedEnd = endDate ? endDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'N/A';
+
+  // Count working days (Mon-Fri) from the days array if available
+  let workDays = 0;
+  if (Array.isArray(req.days)) {
+    workDays = req.days.filter(day => {
+      const d = new Date(day);
+      return d.getDay() !== 0 && d.getDay() !== 6;
+    }).length;
+  } else if (startDate && endDate) {
+    // Fall back to counting weekdays between start and end
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const wd = d.getDay();
+      if (wd !== 0 && wd !== 6) workDays++;
+    }
+  }
+
+  // Attachment preview (if any)
+  let attachmentHTML = '';
+  if (req.attachment_path) {
+    const fileName = req.attachment_path.split('/').pop();
+    const inlineUrl = `${dashboardApiBaseUrl}/${req.attachment_path}?inline=1`;
+    const downloadUrl = `${dashboardApiBaseUrl}/${req.attachment_path}`;
+
+    attachmentHTML = `
+      <div style="margin-top:16px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;font-size:13px;">
+            <i class="fa-solid fa-paperclip" style="color:var(--primary);"></i>
+            <strong>${escapeHtml(fileName)}</strong>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <a href="${inlineUrl}" target="_blank" rel="noopener" class="btn btn-outline btn-sm">
+              <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
+            </a>
+            <a href="${downloadUrl}" download class="btn btn-primary btn-sm">
+              <i class="fa-solid fa-download"></i> Download
+            </a>
+          </div>
+        </div>
+        <div id="myLeaveDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
+          <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
+            <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    attachmentHTML = `
+      <div style="margin-top:16px;padding:12px;border:1px dashed var(--border);border-radius:8px;text-align:center;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-paperclip" style="margin-right:6px;"></i> No attachment provided.
+      </div>
+    `;
+  }
+
+  const body = document.getElementById('myLeaveDetailBody');
+  if (body) {
+    body.innerHTML = `
+      <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-user"></i> Employee</span>
+          <span class="detail-value">${escapeHtml(req.fullname || currentUser?.fullname || 'N/A')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-id-badge"></i> Employee ID</span>
+          <span class="detail-value">${escapeHtml(req.employeeid || currentUser?.employeeid || currentUser?.uid || 'N/A')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-building"></i> Department</span>
+          <span class="detail-value">${escapeHtml(req.department || currentUser?.department || 'N/A')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-tag"></i> Leave Type</span>
+          <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(req.leave_type || 'N/A')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-calendar-plus"></i> Start Date</span>
+          <span class="detail-value">${escapeHtml(formattedStart)}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-calendar-minus"></i> End Date</span>
+          <span class="detail-value">${escapeHtml(formattedEnd)}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-clock"></i> Working Days</span>
+          <span class="detail-value">${workDays} day${workDays !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-circle-info"></i> Status</span>
+          <span class="detail-value">
+            <span class="badge" style="background:${sc.bg};color:${sc.color};">
+              ${escapeHtml((req.status || '').toUpperCase())}
+            </span>
+          </span>
+        </div>
+        <div class="detail-item" style="grid-column:1/-1;">
+          <span class="detail-label"><i class="fa-solid fa-comment-dots"></i> Reason</span>
+          <span class="detail-value" style="white-space:pre-wrap;">${escapeHtml(req.reason || 'No reason provided.')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-calendar-day"></i> Requested At</span>
+          <span class="detail-value">${req.requested_at ? new Date(req.requested_at).toLocaleString() : (req.filed_at || 'N/A')}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-user-check"></i> Processed By</span>
+          <span class="detail-value">${escapeHtml(req.processed_by || '—')}</span>
+        </div>
+        ${req.processed_at ? `
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-clock-rotate-left"></i> Processed At</span>
+          <span class="detail-value">${new Date(req.processed_at).toLocaleString()}</span>
+        </div>` : ''}
+      </div>
+      ${attachmentHTML}
+    `;
+  }
+
+  // Populate footer actions — only pending requests can be cancelled
+  const footerLeft = document.getElementById('myLeaveDetailFooterLeft');
+  if (footerLeft) {
+    if (statusKey === 'pending') {
+      footerLeft.innerHTML = `
+        <button class="btn btn-outline btn-sm" onclick="closeMyLeaveDetailModal(); cancelLeaveRequest(${index});">
+          <i class="fa-solid fa-times"></i> Cancel Request
+        </button>
+      `;
+    } else {
+      footerLeft.innerHTML = '';
+    }
+  }
+
+  // Show the modal
+  modal.style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+
+  // If there's an attachment, load its preview
+  if (req.attachment_path) {
+    loadMyLeaveAttachmentPreview(req.attachment_path, 'myLeaveDetailAttachmentPreview');
+  }
+}
+
+// Close the leave detail modal
+function closeMyLeaveDetailModal() {
+  const modal = document.getElementById('myLeaveDetailModal');
+  if (modal) modal.style.display = 'none';
+  document.body.style.overflow = '';
+}
+
+// Render an inline preview of a leave attachment into the given container id.
+// Handles images, PDFs, and plain text; falls back to a download card for
+// anything the browser can't preview natively.
+async function loadMyLeaveAttachmentPreview(attachmentPath, containerId) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const fileName = attachmentPath.split('/').pop();
+  const inlineUrl = `${dashboardApiBaseUrl}/${attachmentPath}?inline=1`;
+
+  // Determine the file extension to decide the preview type
+  const ext = (fileName.split('.').pop() || '').toLowerCase();
+  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+  const textExts = ['txt'];
+
+  if (imageExts.includes(ext)) {
+    // Image preview
+    container.innerHTML = `
+      <div style="text-align:center;max-width:100%;overflow:auto;">
+        <img src="${inlineUrl}" alt="${escapeHtml(fileName)}"
+             style="max-width:100%;max-height:200px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);"
+             onerror="this.parentElement.innerHTML='<div style=&quot;padding:20px;color:var(--text-muted);&quot;><i class=&quot;fa-solid fa-image&quot;></i> Could not load image preview.</div>';" />
+      </div>
+    `;
+  } else if (ext === 'pdf') {
+    // PDF preview via iframe
+    container.innerHTML = `
+      <iframe src="${inlineUrl}" style="width:100%;height:200px;border:1px solid var(--border);border-radius:8px;" title="PDF Preview"></iframe>
+    `;
+  } else if (textExts.includes(ext)) {
+    // Text preview
+    try {
+      const res = await fetch(inlineUrl);
+      const text = await res.text();
+      container.innerHTML = `
+        <pre style="background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:400px;overflow:auto;">${escapeHtml(text)}</pre>
+      `;
+    } catch (err) {
+      container.innerHTML = `
+        <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
+          <i class="fa-solid fa-file-lines" style="font-size:24px;display:block;margin-bottom:8px;"></i>
+          Preview not available.
+        </div>
+      `;
+    }
+  } else {
+    // Unknown / non-previewable file type
+    container.innerHTML = `
+      <div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-file" style="font-size:32px;display:block;margin-bottom:8px;color:var(--primary);"></i>
+        <p><strong>${escapeHtml(fileName)}</strong></p>
+        <p>Preview is not available for this file type.</p>
+        <a href="${inlineUrl}" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="margin-top:8px;">
+          <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
+        </a>
+      </div>
+    `;
   }
 }
 
@@ -1008,6 +1296,213 @@ async function changePassword() {
     console.error('Change password error:', err);
     msgEl.style.color = '#EF4444';
     msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error.';
+  }
+}
+
+/* ---------------- SETTINGS ---------------- */
+
+function openSettingsModal() {
+  if (!currentUser) return;
+  const modal = document.getElementById('settingsModal');
+  if (!modal) return;
+
+  // Load current employee settings and populate the form
+  loadEmployeeSettingsForModal();
+
+  modal.style.display = 'flex';
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settingsModal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function loadEmployeeSettingsForModal() {
+  if (!currentUser || !currentUser.rfid) return;
+
+  try {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/settings/${currentUser.rfid}`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) {
+      console.warn('Failed to load employee settings, using system defaults');
+      // Load system settings as fallback
+      loadSystemSettingsForModal();
+      return;
+    }
+
+    const result = await res.json();
+    if (result.status !== 'success' || !result.data) {
+      console.warn('Failed to load employee settings, using system defaults');
+      loadSystemSettingsForModal();
+      return;
+    }
+
+    const settings = result.data.settings;
+    const employee = result.data.employee;
+
+    // Populate form with settings values
+    if (settings.attendance) {
+      document.getElementById('workStartTime').value = settings.attendance.work_start || '08:00';
+      document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
+      document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
+      document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+    }
+
+    // Set notification preferences (default to true if not specified)
+    document.getElementById('notifyTimeIn').checked = settings.notify_time_in !== false;
+    document.getElementById('notifyTimeOut').checked = settings.notify_time_out !== false;
+    document.getElementById('notifyLeaveApproval').checked = settings.notify_leave_approval !== false;
+
+  } catch (err) {
+    console.error('Load employee settings error:', err);
+    // Fall back to system settings
+    loadSystemSettingsForModal();
+  }
+}
+
+async function loadSystemSettingsForModal() {
+  try {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/settings`, {
+      method: 'GET',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      cache: 'no-store'
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) return;
+
+    const result = await res.json();
+    if (result.status !== 'success' || !result.data) return;
+
+    const settings = result.data;
+
+    // Populate form with system settings values
+    if (settings.attendance) {
+      document.getElementById('workStartTime').value = settings.attendance.work_start || '08:00';
+      document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
+      document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
+      document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+    }
+
+    // Set notification preferences (default to true if not specified)
+    document.getElementById('notifyTimeIn').checked = settings.notify_time_in !== false;
+    document.getElementById('notifyTimeOut').checked = settings.notify_time_out !== false;
+    document.getElementById('notifyLeaveApproval').checked = settings.notify_leave_approval !== false;
+
+  } catch (err) {
+    console.error('Load system settings error:', err);
+    // Set default values
+    document.getElementById('workStartTime').value = '08:00';
+    document.getElementById('workEndTime').value = '17:00';
+    document.getElementById('lunchStartTime').value = '12:00';
+    document.getElementById('lunchEndTime').value = '13:00';
+    document.getElementById('gracePeriod').value = 10;
+    document.getElementById('notifyTimeIn').checked = true;
+    document.getElementById('notifyTimeOut').checked = true;
+    document.getElementById('notifyLeaveApproval').checked = true;
+  }
+}
+
+async function saveSettings() {
+  if (!currentUser || !currentUser.rfid) return;
+
+  const settingsData = {
+    attendance: {
+      work_start: document.getElementById('workStartTime').value,
+      work_end: document.getElementById('workEndTime').value,
+      lunch_start: document.getElementById('lunchStartTime').value,
+      lunch_end: document.getElementById('lunchEndTime').value,
+      grace_period: parseInt(document.getElementById('gracePeriod').value) || 10
+    },
+    notify_time_in: document.getElementById('notifyTimeIn').checked,
+    notify_time_out: document.getElementById('notifyTimeOut').checked,
+    notify_leave_approval: document.getElementById('notifyLeaveApproval').checked
+  };
+
+  try {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/settings/${currentUser.rfid}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+      },
+      credentials: 'include',
+      body: JSON.stringify(settingsData)
+    });
+
+    if (res.status === 401) { redirectToLogin(); return; }
+    if (!res.ok) {
+      throw new Error(`Failed to save settings: ${res.status}`);
+    }
+
+    const result = await res.json();
+    if (result.status !== 'success') {
+      throw new Error(result.message || 'Failed to save settings');
+    }
+
+    // Show success message
+    showSettingsMessage('Settings saved successfully!', 'success');
+
+    // Close modal after delay
+    setTimeout(() => {
+      closeSettingsModal();
+    }, 1200);
+
+  } catch (err) {
+    console.error('Save settings error:', err);
+    showSettingsMessage('Failed to save settings. Please try again.', 'error');
+  }
+}
+
+function showSettingsMessage(msg, type = 'info') {
+  const modalBody = document.getElementById('settingsModal').querySelector('.modal-body');
+  if (!modalBody) return;
+
+  // Remove any existing message
+  const existingMsg = document.getElementById('settingsMessage');
+  if (existingMsg) existingMsg.remove();
+
+  const msgEl = document.createElement('div');
+  msgEl.id = 'settingsMessage';
+  msgEl.style.marginTop = '16px';
+  msgEl.style.padding = '12px';
+  msgEl.style.borderRadius = '8px';
+  msgEl.style.textAlign = 'center';
+  msgEl.style.fontWeight = '600';
+
+  if (type === 'success') {
+    msgEl.style.backgroundColor = '#dcfce7';
+    msgEl.style.color = '#166534';
+    msgEl.style.border = '1px solid #bbf7d0';
+  } else if (type === 'error') {
+    msgEl.style.backgroundColor = '#fee2e2';
+    msgEl.style.color = '#991b1b';
+    msgEl.style.border = '1px solid #fecaca';
+  } else {
+    msgEl.style.backgroundColor = '#dbeafe';
+    msgEl.style.color = '#1d4ed8';
+    msgEl.style.border = '1px solid #bfdbfe';
+  }
+
+  msgEl.innerHTML = msg;
+  modalBody.prepend(msgEl);
+
+  // Remove message after 3 seconds for success/info
+  if (type === 'success' || type === 'info') {
+    setTimeout(() => {
+      if (msgEl.parentNode) {
+        msgEl.remove();
+      }
+    }, 3000);
   }
 }
 
@@ -1486,6 +1981,7 @@ if (logoutYes) {
   });
 }
 
+
 /* ---------------- INIT ---------------- */
 
 window.addEventListener('pageshow', verifyEmployeeSession);
@@ -1686,5 +2182,13 @@ loadAppVersion();
 setInterval(updateClock, 1000);
 updateClock();
 verifyEmployeeSession();
-// Load activity timeline periodicallysetInterval(loadMyActivityTimeline, 10000); // Refresh every 10 seconds
+// Settings button event listener
+const settingsBtn = document.getElementById('settingsBtn');
+if (settingsBtn) {
+  settingsBtn.addEventListener('click', () => {
+    openSettingsModal();
+  });
+}
+// Load activity timeline periodically
+setInterval(loadMyActivityTimeline, 10000); // Refresh every 10 seconds
 loadMyActivityTimeline(); // Initial load

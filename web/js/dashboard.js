@@ -40,6 +40,172 @@ function getAuthHeaders() {
     };
 }
 
+/* ============ DTR / EMPLOYEE SEARCH DROPDOWN STYLES ============ */
+
+// Inject the CSS that the DTR search dropdown needs to actually appear
+// on top of the surrounding cards. Without these, the dropdown renders
+// but is hidden behind the card below it (or clipped), which is exactly
+// the "suggestion box doesn't show" bug.
+function ensureDTRSearchStyles() {
+    if (document.getElementById('dtrSearchStyles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'dtrSearchStyles';
+    style.textContent = `
+        /* Wrapper that holds the icon + input + clear button. */
+        .dtr-search-wrap {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        /* Magnifying glass icon inside the input. */
+        .dtr-search-wrap .dtr-search-icon {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--text-muted, #94a3b8);
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        /* Leave room for the icon on the left and the clear button on the right. */
+        .dtr-search-wrap .dtr-search-input {
+            padding-left: 34px;
+            padding-right: 34px;
+            width: 100%;
+        }
+
+        /* Small × button that clears the search box. */
+        .dtr-search-wrap .dtr-search-clear {
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: transparent;
+            border: none;
+            color: var(--text-muted, #94a3b8);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2px;
+            z-index: 1;
+        }
+        .dtr-search-wrap .dtr-search-clear:hover {
+            color: var(--text, #0f172a);
+        }
+
+        /* THE DROPDOWN ITSELF — this is the piece that was missing
+           proper positioning. position: absolute + z-index: 3000 makes it
+           float above every card below the input. */
+        .dtr-search-dropdown {
+            position: absolute;
+            top: calc(100% + 4px);
+            left: 0;
+            right: 0;
+            background: var(--card-bg, #ffffff);
+            border: 1px solid var(--border, #e5e7eb);
+            border-radius: var(--radius, 8px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+            max-height: 320px;
+            overflow-y: auto;
+            z-index: 3000;
+            padding: 4px 0;
+            scrollbar-width: thin;
+        }
+
+        /* Parent form-group must establish a positioning context for
+           the absolutely-positioned dropdown. */
+        .form-group:has(> .dtr-search-wrap) {
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Each suggestion row. */
+        .dtr-suggestion {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: background 0.12s ease;
+        }
+        .dtr-suggestion:hover,
+        .dtr-suggestion.active {
+            background: var(--primary-light, #eff6ff);
+        }
+
+        .dtr-suggestion-avatar {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--primary, #2563eb);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 12px;
+        }
+
+        .dtr-suggestion-body {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .dtr-suggestion-name {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text, #0f172a);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .dtr-suggestion-meta {
+            font-size: 11px;
+            color: var(--text-muted, #94a3b8);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .dtr-suggestion-highlight {
+            background: #fef3c7;
+            color: #92400e;
+            padding: 0 2px;
+            border-radius: 3px;
+        }
+
+        .dtr-suggestion-badge {
+            flex-shrink: 0;
+            font-size: 10px;
+            text-transform: uppercase;
+            padding: 2px 8px;
+            border-radius: 999px;
+            font-weight: 700;
+        }
+        .dtr-suggestion-badge.role-admin { background: #fee2e2; color: #dc2626; }
+        .dtr-suggestion-badge.role-hr { background: #dbeafe; color: #2563eb; }
+        .dtr-suggestion-badge.role-employee { background: #dcfce7; color: #16a34a; }
+
+        .dtr-suggestion-empty {
+            padding: 14px;
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-muted, #94a3b8);
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+/* ============ END DTR / EMPLOYEE SEARCH DROPDOWN STYLES ============ */
+
 function updateUserDisplay(user) {
     const name = document.getElementById('dashboardUserName');
     const role = document.getElementById('dashboardUserRole');

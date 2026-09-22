@@ -41,15 +41,11 @@
       </a>
       <a href="#my-attendance" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span>
-        My Attendance
+        Attendance
       </a>
       <a href="#leave-requests" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-envelope-open-text"></i></span>
         Leave Requests
-      </a>
-      <a href="#leave-approval" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-check-circle"></i></span>
-        Leave Approval
       </a>
     </nav>
 
@@ -59,6 +55,10 @@
         <a href="#my-profile" class="nav-item">
           <span class="nav-icon"><i class="fa-solid fa-circle-user"></i></span>
           My Profile
+        </a>
+        <a href="#" id="openSettingsBtn" class="nav-item" onclick="event.preventDefault(); openSettingsModal();">
+          <span class="nav-icon"><i class="fa-solid fa-gear"></i></span>
+          Settings
         </a>
         <a href="#" id="tapinLogout" class="nav-item" style="color:#EF4444;">
           <span class="nav-icon" style="color:#EF4444;"><i class="fa-solid fa-right-from-bracket"></i></span>
@@ -81,10 +81,7 @@
       </div>
 
       <div class="topbar-actions">
-        <button class="topbar-btn" title="Notifications">
-          <i class="fa-regular fa-bell"></i>
-          <span class="notif-dot"></span>
-        </button>
+        <button class="admin-chip" id="settingsBtn" title="Settings"><i class="fa-solid fa-gear"></i></button>
         <div class="admin-chip">
           <div class="admin-avatar" id="empTopAvatar">EM</div>
           <div class="admin-info">
@@ -101,7 +98,7 @@
       <section class="page-section" id="employee-dashboard">
         <div class="global-section-actions">
           <div>
-            <h1 class="section-title">My Dashboard</h1>
+            <h1 class="section-title">Dashboard</h1>
             <p class="section-subtitle">Your attendance summary and personal information at a glance.</p>
           </div>
           <div class="flex gap-2">
@@ -136,7 +133,6 @@
           </div>
         </div>
 
-        
         <!-- Account Info + Latest Scan -->
         <div class="grid-2">
           <div class="card">
@@ -162,7 +158,6 @@
               <p id="employeeActivity" style="font-size:13px;color:var(--text-muted);">No RFID scan received yet.</p>
               <div class="emp-card-info" style="margin-top:12px;">
                 <div class="emp-info-row"><i class="fa-solid fa-clock"></i> <span class="emp-info-val" id="employeeLatestScan">--</span></div>
-                <div class="emp-info-row"><i class="fa-solid fa-circle-check"></i> <span class="emp-info-val" id="employeeStatus">Waiting</span></div>
               </div>
             </div>
           </div>
@@ -173,7 +168,7 @@
       <section class="page-section" id="my-dtr">
         <div class="section-actions">
           <div>
-            <h1 class="section-title">My Daily Time Record</h1>
+            <h1 class="section-title">Daily Time Record</h1>
             <p class="section-subtitle">CSC Form No. 48 — Your monthly DTR.</p>
           </div>
           <div class="flex gap-2">
@@ -272,7 +267,7 @@
       <section class="page-section" id="my-attendance">
         <div class="section-actions">
           <div>
-            <h1 class="section-title">My Attendance</h1>
+            <h1 class="section-title">Attendance</h1>
             <p class="section-subtitle">Your latest attendance activity and RFID scan log.</p>
           </div>
         </div>
@@ -286,15 +281,14 @@
               <thead>
                 <tr>
                   <th>Date</th>
-                  <th>Time In</th>
-                  <th>Time Out</th>
+                  <th>Time</th>
                   <th>Status</th>
                   <th>Remarks</th>
                 </tr>
               </thead>
               <tbody id="myAttendanceBody">
                 <tr>
-                  <td colspan="5" style="text-align:center;padding:30px;color:var(--text-muted);">
+                  <td colspan="4" style="text-align:center;padding:30px;color:var(--text-muted);">
                     <i class="fa-solid fa-info-circle" style="font-size:20px;display:block;margin-bottom:10px;"></i>
                     No attendance records yet.
                   </td>
@@ -309,7 +303,7 @@
       <section class="page-section" id="leave-requests">
         <div class="section-actions">
           <div>
-            <h1 class="section-title">My Leave Requests</h1>
+            <h1 class="section-title">Leave Requests</h1>
             <p class="section-subtitle">Request leave and view your request history.</p>
           </div>
           <button class="btn btn-primary" onclick="openLeaveModal()"><i class="fa-solid fa-plus"></i> Request Leave</button>
@@ -345,76 +339,11 @@
         </div>
       </section>
 
-      <!-- ================= MY ACTIVITY TIMELINE ================= -->
-      <section class="page-section" id="my-activity">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title">My Activity Timeline</h1>
-            <p class="section-subtitle">Your recent activities and system updates.</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Activity Timeline</div>
-          </div>
-          <div class="card-body" style="padding:0;max-height:340px;overflow-y:auto;scrollbar-width:thin;">
-            <div class="timeline" id="myActivityTimeline" style="padding:12px 16px 12px 40px;">
-              <!-- Filled dynamically from employee activity API -->
-              <div style="display:flex;justify-content:center;align-items:center;padding:20px 0;color:var(--text-muted);font-size:13px;">
-                <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading activities...
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- ================= LEAVE APPROVAL SECTION ================= -->
-      <section class="page-section" id="leave-approval">
-        <div class="section-actions">
-          <div>
-            <h1 class="section-title">Leave Approval</h1>
-            <p class="section-subtitle">Review and approve leave requests from employees.</p>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <div class="card-title"><i class="fa-solid fa-check-circle"></i> Leave Approval</div>
-          </div>
-          <div class="card-body">
-            <div class="table-wrap">
-              <table class="data-table" id="leaveApprovalTable">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Leave Type</th>
-                    <th>Start Date</th>
-                    <th>End Date</th>
-                    <th>Reason</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="leaveApprovalBody">
-                  <tr>
-                    <td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">
-                      <i class="fa-solid fa-spinner fa-spin" style="font-size:20px;display:block;margin-bottom:10px;"></i>
-                      Loading leave requests for approval...
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </section>
-
       <!-- ================= MY PROFILE SECTION ================= -->
       <section class="page-section" id="my-profile">
         <div class="section-actions" style="background:linear-gradient(135deg,var(--primary),var(--accent));padding:20px;border-radius:var(--radius);margin-bottom:20px;">
           <div>
-            <h2 class="section-title" style="color:white;margin:0 0 8px 0;font-size:22px;">My Profile</h2>
+            <h2 class="section-title" style="color:white;margin:0 0 8px 0;font-size:22px;">Profile</h2>
             <p class="section-subtitle" style="color:rgba(255,255,255,0.9);margin:0;font-size:14px;">View and edit your account information.</p>
           </div>
           <button class="btn btn-primary" onclick="openEditProfileModal()">Edit Profile</button>
@@ -588,10 +517,10 @@
         </div>
         <div class="form-group" style="margin-top:12px;">
           <label>Reason</label>
-          <textarea class="form-control" id="leaveReason" rows="3" required placeholder="State your reason for filing this leave..."></textarea>
+          <textarea class="form-control" id="leaveReason" rows="3" placeholder="State your reason for filing this leave..."></textarea>
         </div>
         <div class="form-group" style="margin-top:12px;">
-          <label>Attachment (Optional)</label>
+          <label>Attachment</label>
           <input class="form-control" type="file" id="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
           <small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small>
         </div>
@@ -605,6 +534,43 @@
   </div>
 </div>
 
+<!-- ============ LEAVE DETAIL MODAL ============ -->
+<!--
+     Opened when the employee clicks a row in "My Requests" (or its View button).
+     Shows every field stored on the leave request record, plus an inline
+     preview / download link for the attachment (if any).
+-->
+<div class="modal-overlay" id="myLeaveDetailModal" style="display:none;" role="dialog" aria-modal="true"
+     aria-labelledby="myLeaveDetailTitle"
+     onclick="if(event.target===this) closeMyLeaveDetailModal()">
+  <div class="modal-content" style="max-width:780px;width:100%;">
+    <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
+      <div class="modal-avatar"><i class="fa-solid fa-envelope-open-text" style="font-size:22px;"></i></div>
+      <div class="modal-user-info">
+        <h2 id="myLeaveDetailTitle">Leave Request Detail</h2>
+        <span id="myLeaveDetailSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
+      </div>
+      <button class="modal-close" onclick="closeMyLeaveDetailModal()" aria-label="Close">&times;</button>
+    </div>
+
+    <div class="modal-body" id="myLeaveDetailBody">
+      <!-- Filled dynamically by openMyLeaveDetailModal() -->
+      <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
+        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading leave details…
+      </div>
+    </div>
+
+    <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div id="myLeaveDetailFooterLeft" style="display:flex;gap:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn btn-outline" onclick="closeMyLeaveDetailModal()">
+          <i class="fa-solid fa-times"></i> Close
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ LOGOUT CONFIRM MODAL ============ -->
 <div id="logoutConfirmModal" class="logout-modal-backdrop hidden" role="dialog" aria-modal="true">
   <div class="logout-modal">
@@ -613,6 +579,75 @@
     <div class="logout-modal-actions">
       <button id="logoutConfirmYes" class="btn btn-success">Yes</button>
       <button id="logoutConfirmCancel" class="btn btn-primary">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SETTINGS MODAL ============ -->
+<div class="modal-overlay" id="settingsModal" style="display:none;" onclick="if(event.target===this) closeSettingsModal()">
+  <div class="modal-content edit-modal">
+    <div class="modal-header" style="background:linear-gradient(135deg,#10B981,#34D399);">
+      <div class="modal-avatar"><i class="fa-solid fa-gear" style="font-size:22px;"></i></div>
+      <div class="modal-user-info">
+        <h2>Settings</h2>
+        <span style="font-size:13px;opacity:0.85;">Configure your attendance and notification preferences</span>
+      </div>
+      <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="settingsForm" onsubmit="return saveSettings(event)">
+        <div class="settings-section">
+          <div class="settings-title">Attendance Settings</div>
+          <div class="form-group">
+            <label>Work Start Time</label>
+            <input class="form-control" type="time" id="workStartTime" />
+          </div>
+          <div class="form-group">
+            <label>Work End Time</label>
+            <input class="form-control" type="time" id="workEndTime" />
+          </div>
+          <div class="form-group">
+            <label>Lunch Start Time</label>
+            <input class="form-control" type="time" id="lunchStartTime" />
+          </div>
+          <div class="form-group">
+            <label>Lunch End Time</label>
+            <input class="form-control" type="time" id="lunchEndTime" />
+          </div>
+          <div class="form-group">
+            <label>Grace Period (minutes)</label>
+            <input class="form-control" type="number" id="gracePeriod" min="0" max="60" />
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <div class="settings-title">Notification Preferences</div>
+          <div class="form-group">
+            <label>Notify on Time In</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="notifyTimeIn" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notify on Time Out</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="notifyTimeOut" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Notify on Leave Approval</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="notifyLeaveApproval" />
+            </div>
+          </div>
+        </div>
+
+        <div id="settingsMessage" style="margin-top:10px;font-size:13px;display:none;"></div>
+        <div class="modal-footer" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+          <button type="button" class="btn btn-outline" onclick="closeSettingsModal()"><i class="fa-solid fa-times"></i> Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-save"></i> Save Changes</button>
+        </div>
+      </form>
     </div>
   </div>
 </div>
