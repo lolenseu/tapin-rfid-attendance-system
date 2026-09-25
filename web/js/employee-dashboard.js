@@ -2,7 +2,7 @@ const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 let currentUser = null;
 let allEmployees = [];
-let myLeaveRequests = [];
+let myWorkStatusRequests = [];
 let dtrMonthsLoaded = false;
 
 /* ---------------- AUTH / SESSION ---------------- */
@@ -260,9 +260,9 @@ async function verifyEmployeeSession() {
     populateAccountInfo();
     populateProfileCard();
 
-    // IMPORTANT: Load leave requests FIRST so the stats calculation can
-    // exclude approved leave days from the "absent" count.
-    await loadMyLeaveRequests();
+    // IMPORTANT: Load work status requests FIRST so the stats calculation can
+    // exclude approved work status days from the "absent" count.
+    await loadMyWorkStatusRequests();
 
     // Now compute this month's stats using the DTR record for this user.
     await loadMyMonthlyStats();
@@ -297,7 +297,7 @@ async function loadDashboardUsers() {
 /* ---------------- MONTHLY STATS (driven by DTR record) ---------------- */
 
 // Pulls this month's DTR record for the logged-in user and derives the
-// Present / Absent / Hours / Leave stats from it. The DTR endpoint is the
+// Present / Absent / Hours / Work Status stats from it. The DTR endpoint is the
 // authoritative source of hours and per-day attendance, so we use it here
 // instead of the raw dashboard scans list.
 //
@@ -329,9 +329,9 @@ async function loadMyMonthlyStats() {
     const record = result.data.record;
     const dtr = record.dtr || [];
 
-    // Approved leave dates for this month (used to exclude from "absent").
-    const approvedLeaveDates = new Set();
-    myLeaveRequests.filter(r => (r.status || '').toLowerCase() === 'approved').forEach(r => {
+    // Approved work status dates for this month (used to exclude from "absent").
+    const approvedWorkStatusDates = new Set();
+    myWorkStatusRequests.filter(r => (r.status || '').toLowerCase() === 'approved').forEach(r => {
       const startStr = r.start_date;
       const endStr = r.end_date;
       if (!startStr || !endStr) return;
@@ -344,7 +344,7 @@ async function loadMyMonthlyStats() {
       const rangeEnd = end > monthEnd ? monthEnd : end;
       for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
         const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        approvedLeaveDates.add(key);
+        approvedWorkStatusDates.add(key);
       }
     });
 
@@ -364,14 +364,14 @@ async function loadMyMonthlyStats() {
 
     // Walk the DTR rows and compute everything from them.
     let totalPresent = 0;      // days with at least one In/Out, EXCLUDING holidays
-    let totalAbsent = 0;       // past weekdays with no scan, not on leave, not holiday, not future
+    let totalAbsent = 0;       // past weekdays with no scan, not on work status, not holiday, not future
     let totalHours = 0;        // hours are only added on non-holiday days with scans
     const today = new Date();
 
     dtr.forEach(day => {
       const dayName = day.day || '';
       const isWeekend = dayName === 'Sat' || dayName === 'Sun';
-      const isLeave = day.status === 'on_leave';
+      const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
       const holiday = isHolidayRow(day);
       const dateStr = (day.date || '').slice(0, 10);
 
@@ -387,7 +387,7 @@ async function loadMyMonthlyStats() {
 
       if (hasScan) {
         totalPresent += 1;
-      } else if (!isWeekend && !isLeave && !isFuture && dateStr && !approvedLeaveDates.has(dateStr)) {
+      } else if (!isWeekend && !isWorkStatus && !isFuture && dateStr && !approvedWorkStatusDates.has(dateStr)) {
         totalAbsent += 1;
       }
 
@@ -395,10 +395,10 @@ async function loadMyMonthlyStats() {
       if (!Number.isNaN(hoursVal)) totalHours += hoursVal;
     });
 
-    // Leave count for this month (approved + pending overlapping this month).
+    // Work status count for this month (approved + pending overlapping this month).
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const leaveCount = myLeaveRequests.filter(r => {
+    const leaveCount = myWorkStatusRequests.filter(r => {
       const status = (r.status || '').toLowerCase();
       if (status !== 'approved' && status !== 'pending') return false;
       const start = new Date(r.start_date || '');
@@ -408,7 +408,7 @@ async function loadMyMonthlyStats() {
     }).length;
 
     // Working days in this month (used for bar percentages).
-    // Skip weekends, approved leaves, AND holidays so the bars stay accurate.
+    // Skip weekends, approved work status, AND holidays so the bars stay accurate.
     const holidayDates = new Set();
     dtr.forEach(day => {
       if (isHolidayRow(day)) {
@@ -422,7 +422,7 @@ async function loadMyMonthlyStats() {
       const wd = d.getDay();
       if (wd === 0 || wd === 6) continue; // skip weekends
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (approvedLeaveDates.has(key)) continue; // skip approved leave
+      if (approvedWorkStatusDates.has(key)) continue; // skip approved work status
       if (holidayDates.has(key)) continue;       // skip holidays
       workingDaysInMonth++;
     }
@@ -640,18 +640,24 @@ async function loadMyDTR() {
 
     tbody.innerHTML = dtr.map(day => {
       const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-      const isLeave = day.status === 'on_leave';
+      const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
       const isHoliday = (String(day.status || '').toLowerCase() === 'holiday')
         || day.is_holiday === true
         || !!day.holiday_name;
       let rowStyle = '';
       let statusText = day.status || '';
+      
       if (isHoliday) {
         rowStyle = 'background-color:#FCE7F3;';
         statusText = 'HOLIDAY';
-      } else if (isLeave) {
+      } else if (isWorkStatus) {
         rowStyle = 'background-color:#FEF3C7;';
-        statusText = 'ON LEAVE';
+        if (day.work_status) {
+          const wsLabel = day.work_status.label || day.work_status.type || 'Work Status';
+          statusText = `${wsLabel}`;
+        } else {
+          statusText = 'WORK STATUS';
+        }
       } else if (isWeekend) {
         rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
         statusText = 'Weekend';
@@ -727,19 +733,19 @@ async function loadMyAttendance() {
   }
 }
 
-/* ---------------- LEAVE REQUESTS ---------------- */
+/* ---------------- WORK STATUS REQUESTS ---------------- */
 
-async function loadMyLeaveRequests() {
+async function loadMyWorkStatusRequests() {
   if (!currentUser) return;
-  const tbody = document.getElementById('leaveRequestsBody');
+  const tbody = document.getElementById('workStatusRequestsBody');
   if (!tbody) return;
 
   try {
     const rfid = currentUser.rfid || '';
-    // FIXED: use the per-employee route /api/leave-requests/<rfid>,
+    // Use the per-employee route /api/work-status-requests/<rfid>,
     // which filters by the employee's UID on the backend and returns
     // { requests, approved, rejected } for that employee only.
-    const res = await fetch(`${dashboardApiBaseUrl}/api/leave-requests/${encodeURIComponent(rfid)}`, {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/work-status-requests/${encodeURIComponent(rfid)}`, {
       method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
     });
     if (res.status === 401) { redirectToLogin(); return; }
@@ -751,91 +757,118 @@ async function loadMyLeaveRequests() {
       const pending = result.data?.requests || [];
       const approved = result.data?.approved || [];
       const rejected = result.data?.rejected || [];
-      myLeaveRequests = [...pending, ...approved, ...rejected];
+      myWorkStatusRequests = [...pending, ...approved, ...rejected];
     } else {
-      myLeaveRequests = [];
+      myWorkStatusRequests = [];
     }
   } catch (err) {
-    myLeaveRequests = [];
+    myWorkStatusRequests = [];
   }
 
-  if (!myLeaveRequests.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">
+  if (!myWorkStatusRequests.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text-muted);">
       <i class="fa-solid fa-inbox" style="font-size:20px;display:block;margin-bottom:10px;"></i>
-      No leave requests yet.
+      No work status requests yet.
     </td></tr>`;
     return;
   }
 
-  tbody.innerHTML = myLeaveRequests.map((r, i) => {
+  tbody.innerHTML = myWorkStatusRequests.map((r, i) => {
     const status = (r.status || 'pending').toLowerCase();
     const badge = status === 'approved' ? 'badge-approved'
                : status === 'rejected' ? 'badge-rejected'
                : 'badge-pending';
     const canCancel = status === 'pending';
-    return `<tr class="leave-row-clickable" onclick="openMyLeaveDetailModal(${i})" style="cursor:pointer;">
+    const wsLabel = r.work_status_label || (r.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const periodLabel = (r.period || 'whole_day').replace('_', ' ').toUpperCase();
+    
+    return `<tr class="work-status-row-clickable" onclick="openMyWorkStatusDetailModal(${i})" style="cursor:pointer;">
       <td>${escapeHtml(r.filed_at || r.requested_at || '--')}</td>
-      <td>${escapeHtml((r.leave_type || '').toUpperCase())}</td>
+      <td>${escapeHtml(wsLabel)}</td>
+      <td>${escapeHtml(periodLabel)}</td>
       <td>${escapeHtml(r.start_date || '--')}</td>
       <td>${escapeHtml(r.end_date || '--')}</td>
       <td>${escapeHtml(r.reason || '--')}</td>
       <td><span class="badge ${badge}">${escapeHtml(status.toUpperCase())}</span></td>
-      <td onclick="event.stopPropagation();">${canCancel ? `<button class="btn btn-outline btn-sm" onclick="cancelLeaveRequest(${i})"><i class="fa-solid fa-times"></i> Cancel</button>` : `<button class="btn btn-outline btn-sm" onclick="openMyLeaveDetailModal(${i})"><i class="fa-solid fa-eye"></i> View</button>`}</td>
+      <td onclick="event.stopPropagation();">${canCancel ? `<button class="btn btn-outline btn-sm" onclick="cancelWorkStatusRequest(${i})"><i class="fa-solid fa-times"></i> Cancel</button>` : `<button class="btn btn-outline btn-sm" onclick="openMyWorkStatusDetailModal(${i})"><i class="fa-solid fa-eye"></i> View</button>`}</td>
     </tr>`;
   }).join('');
 }
 
-function openLeaveModal() {
-  const modal = document.getElementById('leaveModal');
+function openWorkStatusModal() {
+  const modal = document.getElementById('workStatusModal');
   if (modal) modal.style.display = 'flex';
-  const form = document.getElementById('leaveRequestForm');
+  const form = document.getElementById('workStatusRequestForm');
   if (form) form.reset();
-  const msg = document.getElementById('leaveMessage');
+  const msg = document.getElementById('workStatusMessage');
   if (msg) msg.style.display = 'none';
 }
 
-function closeLeaveModal() {
-  const modal = document.getElementById('leaveModal');
+function closeWorkStatusModal() {
+  const modal = document.getElementById('workStatusModal');
   if (modal) modal.style.display = 'none';
 }
 
-async function submitLeaveRequest(event) {
+async function submitWorkStatusRequest(event) {
   event.preventDefault();
   if (!currentUser) return false;
 
   const formData = new FormData();
   formData.append('rfid', currentUser.rfid);
   formData.append('employeeid', currentUser.employeeid || '');
-  formData.append('leave_type', document.getElementById('leaveType').value);
-  formData.append('start_date', document.getElementById('leaveStart').value);
-  formData.append('end_date', document.getElementById('leaveEnd').value);
-  // Reason is optional — we still send whatever the user typed, even if empty.
-  formData.append('reason', document.getElementById('leaveReason').value.trim());
+  formData.append('work_status_type', document.getElementById('workStatusType').value);
+  formData.append('period', document.getElementById('workStatusPeriod').value);
+  formData.append('start_date', document.getElementById('workStatusStart').value);
+  formData.append('end_date', document.getElementById('workStatusEnd').value);
+  // Reason is required
+  formData.append('reason', document.getElementById('workStatusReason').value.trim());
+
+  // Handle optional specific times
+  const startTime = document.getElementById('workStatusStartTime').value;
+  const endTime = document.getElementById('workStatusEndTime').value;
+  if (startTime) formData.append('start_time', startTime);
+  if (endTime) formData.append('end_time', endTime);
 
   // Handle file upload
-  const attachmentInput = document.getElementById('leaveAttachment');
+  const attachmentInput = document.getElementById('workStatusAttachment');
   if (attachmentInput.files && attachmentInput.files[0]) {
     formData.append('attachment', attachmentInput.files[0]);
   }
 
-  // Only start/end dates are required; reason is optional.
-  if (!formData.get('start_date') || !formData.get('end_date')) {
-    showLeaveMessage('Please fill in all required fields.', 'warning');
-    return false;
-  }
-  if (new Date(formData.get('start_date')) > new Date(formData.get('end_date'))) {
-    showLeaveMessage('Start date cannot be after end date.', 'warning');
+  // Validate required fields
+  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('work_status_type') || !formData.get('reason')) {
+    showWorkStatusMessage('Please fill in all required fields.', 'warning');
     return false;
   }
 
-  showLeaveMessage('<i class="fa-solid fa-spinner fa-spin"></i> Submitting...', 'info');
+  // Validate dates using string comparison to avoid timezone issues
+  const startDateStr = formData.get('start_date');
+  const endDateStr = formData.get('end_date');
+  const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+  if (startDateStr < todayStr) {
+    showWorkStatusMessage('Work status requests cannot be submitted for past dates.', 'warning');
+    return false;
+  }
+
+  if (endDateStr < todayStr) {
+    showWorkStatusMessage('Work status requests cannot be submitted for past dates.', 'warning');
+    return false;
+  }
+
+  if (startDateStr > endDateStr) {
+    showWorkStatusMessage('Start date cannot be after end date.', 'warning');
+    return false;
+  }
+
+  showWorkStatusMessage('<i class="fa-solid fa-spinner fa-spin"></i> Submitting...', 'info');
 
   try {
-    // FIXED: the backend POST route is /api/request-leave, not /api/leave-requests.
-    // Also — for FormData we MUST NOT set Content-Type: application/json,
+    // The backend POST route is /api/request-work-status.
+    // For FormData we MUST NOT set Content-Type: application/json,
     // because the browser needs to add its own multipart boundary. So we
     // only send the Authorization header here, not getAuthHeaders().
-    const res = await fetch(`${dashboardApiBaseUrl}/api/request-leave`, {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/request-work-status`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${localStorage.getItem('tapinToken')}` },
       body: formData,
@@ -846,23 +879,23 @@ async function submitLeaveRequest(event) {
 
     const result = await res.json().catch(() => ({}));
     if (!res.ok) {
-      showLeaveMessage(result.message || 'Failed to submit request.', 'error');
+      showWorkStatusMessage(result.message || 'Failed to submit request.', 'error');
       return false;
     }
 
-    showLeaveMessage('Leave request submitted successfully!', 'success');
-    await loadMyLeaveRequests();
+    showWorkStatusMessage('Work status request submitted successfully!', 'success');
+    await loadMyWorkStatusRequests();
     await loadMyMonthlyStats();
-    setTimeout(() => closeLeaveModal(), 1200);
+    setTimeout(() => closeWorkStatusModal(), 1200);
   } catch (err) {
-    console.error('Leave submit error:', err);
-    showLeaveMessage('Network error. Please try again.', 'error');
+    console.error('Work status submit error:', err);
+    showWorkStatusMessage('Network error. Please try again.', 'error');
   }
   return false;
 }
 
-function showLeaveMessage(msg, type = 'info') {
-  const el = document.getElementById('leaveMessage');
+function showWorkStatusMessage(msg, type = 'info') {
+  const el = document.getElementById('workStatusMessage');
   if (!el) return;
   const colors = { success: '#10B981', error: '#EF4444', warning: '#F59E0B', info: '#3B82F6' };
   el.innerHTML = typeof msg === 'string' && msg.startsWith('<i') ? msg : `<i class="fa-solid fa-circle-info"></i> ${msg}`;
@@ -870,48 +903,48 @@ function showLeaveMessage(msg, type = 'info') {
   el.style.display = 'block';
 }
 
-async function cancelLeaveRequest(index) {
-  const r = myLeaveRequests[index];
+async function cancelWorkStatusRequest(index) {
+  const r = myWorkStatusRequests[index];
   if (!r) return;
-  if (!confirm('Cancel this leave request?')) return;
+  if (!confirm('Cancel this work status request?')) return;
 
   try {
-    const res = await fetch(`${dashboardApiBaseUrl}/api/leave-requests/${r.id || r.uid || index}`, {
+    const res = await fetch(`${dashboardApiBaseUrl}/api/work-status-requests/${r.id || r.uid || index}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
       credentials: 'include'
     });
     if (res.status === 401) { redirectToLogin(); return; }
     if (!res.ok) { alert('Failed to cancel request.'); return; }
-    await loadMyLeaveRequests();
+    await loadMyWorkStatusRequests();
     await loadMyMonthlyStats();
   } catch (err) {
-    console.error('Cancel leave error:', err);
+    console.error('Cancel work status error:', err);
     alert('Network error.');
   }
 }
 
-/* ---------------- MY LEAVE DETAIL MODAL ---------------- */
+/* ---------------- MY WORK STATUS DETAIL MODAL ---------------- */
 
-// Open the leave detail modal for the currently signed-in employee's
-// own leave request. Receives an index into the `myLeaveRequests` array
+// Open the work status detail modal for the currently signed-in employee's
+// own work status request. Receives an index into the `myWorkStatusRequests` array
 // (rather than an id) so we don't need to re-query the API just to show
 // the data we already have in memory.
-function openMyLeaveDetailModal(index) {
-  const req = myLeaveRequests[index];
+function openMyWorkStatusDetailModal(index) {
+  const req = myWorkStatusRequests[index];
   if (!req) {
-    alert('Leave request not found.');
+    alert('Work status request not found.');
     return;
   }
 
-  const modal = document.getElementById('myLeaveDetailModal');
+  const modal = document.getElementById('myWorkStatusDetailModal');
   if (!modal) return;
 
   // Populate header
-  const titleEl = document.getElementById('myLeaveDetailTitle');
-  const subtitleEl = document.getElementById('myLeaveDetailSubtitle');
-  if (titleEl) titleEl.textContent = `Leave Request #${escapeHtml(req.id || req.uid || (index + 1))}`;
-  if (subtitleEl) subtitleEl.textContent = `${escapeHtml((req.leave_type || '').toUpperCase())} · ${escapeHtml((req.status || '').toUpperCase())}`;
+  const titleEl = document.getElementById('myWorkStatusDetailTitle');
+  const subtitleEl = document.getElementById('myWorkStatusDetailSubtitle');
+  if (titleEl) titleEl.textContent = `Work Status Request #${escapeHtml(req.id || req.uid || (index + 1))}`;
+  if (subtitleEl) subtitleEl.textContent = `${escapeHtml((req.work_status_label || req.work_status_type || '').toUpperCase())} · ${escapeHtml((req.status || '').toUpperCase())}`;
 
   // Status colors
   const statusColors = {
@@ -942,6 +975,9 @@ function openMyLeaveDetailModal(index) {
     }
   }
 
+  const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const periodLabel = (req.period || 'whole_day').replace('_', ' ').toUpperCase();
+
   // Attachment preview (if any)
   let attachmentHTML = '';
   if (req.attachment_path) {
@@ -965,7 +1001,7 @@ function openMyLeaveDetailModal(index) {
             </a>
           </div>
         </div>
-        <div id="myLeaveDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
+        <div id="myWorkStatusDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
           <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
             <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
           </div>
@@ -980,7 +1016,7 @@ function openMyLeaveDetailModal(index) {
     `;
   }
 
-  const body = document.getElementById('myLeaveDetailBody');
+  const body = document.getElementById('myWorkStatusDetailBody');
   if (body) {
     body.innerHTML = `
       <div class="detail-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
@@ -997,8 +1033,12 @@ function openMyLeaveDetailModal(index) {
           <span class="detail-value">${escapeHtml(req.department || currentUser?.department || 'N/A')}</span>
         </div>
         <div class="detail-item">
-          <span class="detail-label"><i class="fa-solid fa-tag"></i> Leave Type</span>
-          <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(req.leave_type || 'N/A')}</span>
+          <span class="detail-label"><i class="fa-solid fa-briefcase"></i> Work Status Type</span>
+          <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(wsLabel)}</span>
+        </div>
+        <div class="detail-item">
+          <span class="detail-label"><i class="fa-solid fa-clock"></i> Time Period</span>
+          <span class="detail-value">${escapeHtml(periodLabel)}</span>
         </div>
         <div class="detail-item">
           <span class="detail-label"><i class="fa-solid fa-calendar-plus"></i> Start Date</span>
@@ -1043,11 +1083,11 @@ function openMyLeaveDetailModal(index) {
   }
 
   // Populate footer actions — only pending requests can be cancelled
-  const footerLeft = document.getElementById('myLeaveDetailFooterLeft');
+  const footerLeft = document.getElementById('myWorkStatusDetailFooterLeft');
   if (footerLeft) {
     if (statusKey === 'pending') {
       footerLeft.innerHTML = `
-        <button class="btn btn-outline btn-sm" onclick="closeMyLeaveDetailModal(); cancelLeaveRequest(${index});">
+        <button class="btn btn-outline btn-sm" onclick="closeMyWorkStatusDetailModal(); cancelWorkStatusRequest(${index});">
           <i class="fa-solid fa-times"></i> Cancel Request
         </button>
       `;
@@ -1062,21 +1102,21 @@ function openMyLeaveDetailModal(index) {
 
   // If there's an attachment, load its preview
   if (req.attachment_path) {
-    loadMyLeaveAttachmentPreview(req.attachment_path, 'myLeaveDetailAttachmentPreview');
+    loadMyWorkStatusAttachmentPreview(req.attachment_path, 'myWorkStatusDetailAttachmentPreview');
   }
 }
 
-// Close the leave detail modal
-function closeMyLeaveDetailModal() {
-  const modal = document.getElementById('myLeaveDetailModal');
+// Close the work status detail modal
+function closeMyWorkStatusDetailModal() {
+  const modal = document.getElementById('myWorkStatusDetailModal');
   if (modal) modal.style.display = 'none';
   document.body.style.overflow = '';
 }
 
-// Render an inline preview of a leave attachment into the given container id.
+// Render an inline preview of a work status attachment into the given container id.
 // Handles images, PDFs, and plain text; falls back to a download card for
 // anything the browser can't preview natively.
-async function loadMyLeaveAttachmentPreview(attachmentPath, containerId) {
+async function loadMyWorkStatusAttachmentPreview(attachmentPath, containerId) {
   const container = document.getElementById(containerId);
   if (!container) return;
 
@@ -1540,7 +1580,7 @@ function buildMyDtrHTML(record, dtr, employee) {
   const { from: fromDate, to: toDate } = resolveDTRDateRange(record, dtr);
 
   // Calculate total working days (A)
-  const workingDays = dtr.filter(day => day.status !== 'on_leave' && day.day !== 'Sat' && day.day !== 'Sun').length;
+  const workingDays = dtr.filter(day => day.status !== 'on_work_status' && day.day !== 'Sat' && day.day !== 'Sun').length;
   const totalWorkingDays = Number(workingDays) || 0;
   const totalUndertime = totalUt;
 
@@ -1548,21 +1588,27 @@ function buildMyDtrHTML(record, dtr, employee) {
     // exactly like the two side-by-side originals on the reference form.
     const tableRows = dtr.map(day => {
         const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-        const isLeave = day.status === 'on_leave';
-        const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
+        const workStatus = day.work_status || {};
+        const isWorkStatusActive = workStatus.is_active || false;
+        const workStatusPeriod = workStatus.period || '';
         const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
         const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
 
+        // Determine cell-specific styles for work status highlighting
+        const weekendStyle = 'background-color:#f2f2f2;';
+        const workStatusCellStyle = 'background-color:#fef3c7;'; // Yellow highlighting
+
+        // Build row with individual cell styling
         return `
-            <tr style="${rowStyle}">
-                <td class="c-date">${formatDTRDate(day.date)}</td>
-                <td class="c-day">${day.day || ''}</td>
-                <td class="c-time">${day.am_in || ''}</td>
-                <td class="c-time">${day.am_out || ''}</td>
-                <td class="c-time">${day.pm_in || ''}</td>
-                <td class="c-time">${day.pm_out || ''}</td>
-                <td class="c-small">${ut}</td>
-                <td class="c-small">${ot}</td>
+            <tr>
+                <td class="c-date" style="${isWeekend ? weekendStyle : ''}">${formatDTRDate(day.date)}</td>
+                <td class="c-day" style="${isWeekend ? weekendStyle : ''}">${day.day || ''}</td>
+                <td class="c-time" style="${isWorkStatusActive && (workStatusPeriod === 'am' || workStatusPeriod === 'whole_day') ? workStatusCellStyle : (isWeekend ? weekendStyle : '')}">${day.am_in || ''}</td>
+                <td class="c-time" style="${isWorkStatusActive && (workStatusPeriod === 'am' || workStatusPeriod === 'whole_day') ? workStatusCellStyle : (isWeekend ? weekendStyle : '')}">${day.am_out || ''}</td>
+                <td class="c-time" style="${isWorkStatusActive && (workStatusPeriod === 'pm' || workStatusPeriod === 'whole_day') ? workStatusCellStyle : (isWeekend ? weekendStyle : '')}">${day.pm_in || ''}</td>
+                <td class="c-time" style="${isWorkStatusActive && (workStatusPeriod === 'pm' || workStatusPeriod === 'whole_day') ? workStatusCellStyle : (isWeekend ? weekendStyle : '')}">${day.pm_out || ''}</td>
+                <td class="c-small" style="${isWeekend ? weekendStyle : ''}">${ut}</td>
+                <td class="c-small" style="${isWeekend ? weekendStyle : ''}">${ot}</td>
             </tr>`;
     }).join('');
 
@@ -2055,19 +2101,19 @@ async function loadMyActivityTimeline() {
               bgColor = 'var(--primary-light)';
             }
             break;
-          case 'leave':
-            if (activity.action === 'leave_approved') {
+          case 'work_status':
+            if (activity.action === 'work_status_approved') {
               icon = 'fa-solid fa-check-circle';
               color = 'var(--success)';
               bgColor = 'var(--success-light)';
-            } else if (activity.action === 'leave_rejected') {
+            } else if (activity.action === 'work_status_rejected') {
               icon = 'fa-solid fa-times-circle';
               color = 'var(--danger)';
               bgColor = 'var(--danger-light)';
             } else {
-              icon = 'fa-solid fa-umbrella-beach';
-              color = 'var(--leave)';
-              bgColor = 'var(--leave-light)';
+              icon = 'fa-solid fa-briefcase';
+              color = 'var(--work-status)';
+              bgColor = 'var(--work-status-light)';
             }
             break;
           case 'employee':

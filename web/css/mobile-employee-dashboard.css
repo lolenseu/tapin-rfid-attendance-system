@@ -15,8 +15,8 @@
   --warning-light: #FEF3C7;
   --danger:        #EF4444;
   --danger-light:  #FEE2E2;
-  --leave:         #8B5CF6;
-  --leave-light:   #EDE9FE;
+  --work-status:         #8B5CF6;
+  --work-status-light:   #EDE9FE;
 
   --bg:            #F1F5F9;
   --nav-bg:        #2C0A12;
@@ -197,7 +197,7 @@ img { max-width: 100%; display: block; }
 .stat-green .mini-icon { background: var(--success-light); color: var(--success); }
 .stat-red .mini-icon   { background: var(--danger-light);  color: var(--danger); }
 .stat-cyan .mini-icon  { background: var(--accent-light);  color: var(--accent); }
-.stat-purple .mini-icon{ background: var(--leave-light);   color: var(--leave); }
+.stat-purple .mini-icon{ background: var(--work-status-light);   color: var(--work-status); }
 
 /* ============ QUICK TILES ============ */
 .quick-grid {
@@ -365,7 +365,7 @@ textarea.form-control { resize: vertical; min-height: 70px; font-family: inherit
 .tot b { font-size: 15px; color: var(--primary); font-weight: 800; }
 
 /* ============ ATTENDANCE LIST ============ */
-.attendance-list, .leave-list { display: flex; flex-direction: column; }
+.attendance-list, .work-status-list { display: flex; flex-direction: column; }
 .list-item-empty {
   padding: 30px 20px;
   text-align: center;
@@ -394,16 +394,16 @@ textarea.form-control { resize: vertical; min-height: 70px; font-family: inherit
 .att-sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
 
 /* ============ LEAVE LIST ============ */
-.leave-item {
+.work-status-item {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
-.leave-item:last-child { border-bottom: none; }
-.leave-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.leave-type { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--primary); }
-.leave-dates { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
-.leave-reason { font-size: 12px; color: var(--text); margin-top: 5px; line-height: 1.4; }
-.leave-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
+.work-status-item:last-child { border-bottom: none; }
+.work-status-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.work-status-type { font-size: 13px; font-weight: 700; text-transform: uppercase; color: var(--primary); }
+.work-status-dates { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+.work-status-reason { font-size: 12px; color: var(--text); margin-top: 5px; line-height: 1.4; }
+.work-status-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
 
 .badge {
   font-size: 10px; font-weight: 700;

@@ -292,7 +292,7 @@ function renderEmployee(emp, attendance, scannedAtTime) {
     // Build status badge if on leave
     let statusBadge = '';
     if (status === 'on_leave') {
-        statusBadge = `<span class="status-badge leave">On Leave</span>`;
+        statusBadge = `<span class="status-badge work-status">On Leave (Work Status)</span>`;
     }
 
     const currentHtml = employeeCard.innerHTML;

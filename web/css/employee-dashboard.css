@@ -13,8 +13,8 @@
   --danger-light:  #FEE2E2;
   --info:          #A32638;
   --info-light:    #F5E6EA;
-  --leave:         #8B5CF6;
-  --leave-light:   #EDE9FE;
+  --work-status:         #8B5CF6;
+  --work-status-light:   #EDE9FE;
 
   --bg:            #F1F5F9;
   --sidebar-bg:    #2C0A12;
@@ -532,8 +532,8 @@ body.sidebar-collapsed .sidebar .nav-item:not(#tapinLogout) .nav-icon i { color:
 .stat-red .stat-progress-bar { background: linear-gradient(90deg, var(--danger), #F87171); }
 .stat-cyan .stat-icon-wrap { background: var(--accent-light); color: var(--accent); }
 .stat-cyan .stat-progress-bar { background: linear-gradient(90deg, var(--accent), #A32638); }
-.stat-purple .stat-icon-wrap { background: var(--leave-light); color: var(--leave); }
-.stat-purple .stat-progress-bar { background: linear-gradient(90deg, var(--leave), #A78BFA); }
+.stat-purple .stat-icon-wrap { background: var(--work-status-light); color: var(--work-status); }
+.stat-purple .stat-progress-bar { background: linear-gradient(90deg, var(--work-status), #A78BFA); }
 
 
 /* ============ GRIDS ============ */
@@ -597,7 +597,7 @@ body.sidebar-collapsed .sidebar .nav-item:not(#tapinLogout) .nav-icon i { color:
 .badge-rejected { background: var(--danger-light); color: #B91C1C; }
 .badge-approved { background: var(--success-light); color: #15803D; }
 .badge-absent { background: var(--danger-light); color: #B91C1C; }
-.badge-leave { background: var(--leave-light); color: #6D28D9; }
+.badge-work-status { background: var(--work-status-light); color: #6D28D9; }
 
 /* ============ DTR FORM ============ */
 .dtr-wrap { max-width: 900px; margin: 0 auto; }

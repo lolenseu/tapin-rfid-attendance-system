@@ -67,9 +67,9 @@
         </div>
       </div>
       <div class="mini-stat stat-purple">
-        <div class="mini-icon"><i class="fa-solid fa-house"></i></div>
+        <div class="mini-icon"><i class="fa-solid fa-briefcase"></i></div>
         <div class="mini-info">
-          <div class="mini-label">Leaves</div>
+          <div class="mini-label">Work Status</div>
           <div class="mini-value" id="statLeaveCount">0</div>
         </div>
       </div>
@@ -158,47 +158,47 @@
     </div>
   </section>
 
-  <!-- ======== LEAVE ======== -->
-  <section class="page" id="page-leave">
+  <!-- ======== WORK STATUS ======== -->
+  <section class="page" id="page-work-status">
     <div class="page-header">
-      <h1>Leave Management</h1>
-      <p>Request, track, and approve leave applications</p>
+      <h1>Work Status</h1>
+      <p>Request, track, and approve work status applications</p>
     </div>
 
-    <!-- Leave Request Button (for all employees) -->
-    <button class="btn btn-primary w-full" onclick="openLeaveModal()" style="margin-bottom:12px;">
-      <i class="fa-solid fa-plus"></i> Request Leave
+    <!-- Work Status Request Button (for all employees) -->
+    <button class="btn btn-primary w-full" onclick="openWorkStatusModal()" style="margin-bottom:12px;">
+      <i class="fa-solid fa-plus"></i> Request Work Status
     </button>
 
-    <!-- Tabs for Leave Requests vs Approval -->
-    <div class="tab-container" id="leaveTabs">
-      <button class="tab-btn active" onclick="showLeaveTab('requests')" id="leaveRequestsTab">
-        My Leave Requests
+    <!-- Tabs for Work Status Requests vs Approval -->
+    <div class="tab-container" id="workStatusTabs">
+      <button class="tab-btn active" onclick="showWorkStatusTab('requests')" id="workStatusRequestsTab">
+        My Work Status Requests
       </button>
-      <button class="tab-btn" onclick="showLeaveTab('approval')" id="leaveApprovalTab">
-        Leave Approval
+      <button class="tab-btn" onclick="showWorkStatusTab('approval')" id="workStatusApprovalTab">
+        Work Status Approval
       </button>
     </div>
 
-    <!-- Leave Requests Content -->
-    <div class="tab-content active" id="leaveRequestsContent">
+    <!-- Work Status Requests Content -->
+    <div class="tab-content active" id="workStatusRequestsContent">
       <div class="section-card" style="padding:0;">
-        <div class="list-item-empty" id="leaveEmpty" style="display:none;">
+        <div class="list-item-empty" id="workStatusEmpty" style="display:none;">
           <i class="fa-solid fa-inbox"></i>
-          <p>No leave requests yet</p>
+          <p>No work status requests yet</p>
         </div>
-        <div class="leave-list" id="leaveList"></div>
+        <div class="work-status-list" id="workStatusList"></div>
       </div>
     </div>
 
-    <!-- Leave Approval Content (HR/Admin only) -->
-    <div class="tab-content" id="leaveApprovalContent">
+    <!-- Work Status Approval Content (HR/Admin only) -->
+    <div class="tab-content" id="workStatusApprovalContent">
       <div class="section-card" style="padding:0;">
-        <div class="list-item-empty" id="leaveApprovalEmpty" style="display:none;">
+        <div class="list-item-empty" id="workStatusApprovalEmpty" style="display:none;">
           <i class="fa-solid fa-check-circle"></i>
-          <p>No leave requests pending approval</p>
+          <p>No work status requests pending approval</p>
         </div>
-        <div class="leave-approval-list" id="leaveApprovalList"></div>
+        <div class="work-status-approval-list" id="workStatusApprovalList"></div>
       </div>
     </div>
   </section>
@@ -266,9 +266,9 @@
     <i class="fa-solid fa-calendar-check"></i>
     <span>Attendance</span>
   </a>
-  <a href="#page-leave" class="bottom-nav-item" data-nav="page-leave">
-    <i class="fa-solid fa-envelope-open-text"></i>
-    <span>Leave</span>
+  <a href="#page-work-status" class="bottom-nav-item" data-nav="page-work-status">
+    <i class="fa-solid fa-briefcase"></i>
+    <span>Work Status</span>
   </a>
   <a href="#page-profile" class="bottom-nav-item" data-nav="page-profile">
     <i class="fa-solid fa-circle-user"></i>
@@ -305,31 +305,55 @@
   </div>
 </div>
 
-<!-- ============ LEAVE REQUEST MODAL (bottom sheet) ============ -->
-<div class="sheet-backdrop" id="leaveModal">
-  <div class="sheet">
+<!-- ============ WORK STATUS REQUEST MODAL (bottom sheet) ============ -->
+<div class="sheet-backdrop" id="workStatusModal" onclick="if(event.target===this) closeWorkStatusModal()">
+  <div class="sheet" onclick="event.stopPropagation()">
     <div class="sheet-handle"></div>
     <div class="sheet-header">
-      <h2>Request Leave</h2>
-      <button class="sheet-close" onclick="closeLeaveModal()"><i class="fa-solid fa-xmark"></i></button>
+      <h2>Request Work Status</h2>
+      <button class="sheet-close" onclick="closeWorkStatusModal()"><i class="fa-solid fa-xmark"></i></button>
     </div>
-    <form id="leaveRequestForm" onsubmit="return submitLeaveRequest(event)" style="padding: 4px 18px 18px;">
+    <form id="workStatusRequestForm" onsubmit="return submitWorkStatusRequest(event)" style="padding: 4px 18px 18px;">
       <div class="form-row">
-        <label>Leave Type</label>
-        <select class="form-control" id="leaveType" required>
-          <option value="vacation">Vacation Leave</option>
-          <option value="sick">Sick Leave</option>
-          <option value="emergency">Emergency Leave</option>
-          <option value="maternity">Maternity Leave</option>
-          <option value="paternity">Paternity Leave</option>
-          <option value="others">Others</option>
+        <label>Work Status Type</label>
+        <select class="form-control" id="workStatusType" required>
+          <option value="">-- Select Work Status Type --</option>
+          <option value="on_leave">On Leave (Work Status) — approved vacation, sick, emergency, etc.</option>
+          <option value="official_travel">Official Travel — traveling for work</option>
+          <option value="official_business">Official Business — working outside the regular workplace</option>
+          <option value="work_from_home">Work From Home (WFH) — working remotely</option>
+          <option value="field_work">Field Work — assigned to work at another location</option>
+          <option value="training">Training — attending an official training/seminar</option>
+          <option value="conference_seminar">Conference / Seminar — attending an official event</option>
+          <option value="work_assignment">Work Assignment — temporarily assigned elsewhere</option>
+          <option value="offsite_duty">Offsite Duty — performing work outside the office</option>
+          <option value="client_visit">Client Visit — visiting a client or partner</option>
+          <option value="meeting_outside_office">Meeting Outside Office — attending an external meeting</option>
+          <option value="special_assignment">Special Assignment — temporary special work assignment</option>
+          <option value="suspended_work">Suspended Work — work suspended due to an official reason</option>
+          <option value="holiday_non_working">Holiday / Non-Working Day — no regular work scheduled</option>
+          <option value="rest_day">Rest Day — scheduled day off</option>
         </select>
       </div>
-      <div class="form-row"><label>Start Date</label><input class="form-control" type="date" id="leaveStart" required /></div>
-      <div class="form-row"><label>End Date</label><input class="form-control" type="date" id="leaveEnd" required /></div>
-      <div class="form-row"><label>Reason</label><textarea class="form-control" id="leaveReason" rows="3"></textarea></div>
-      <div class="form-row"><label>Attachment</label><input class="form-control" type="file" id="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt"><small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small></div>
-      <div id="leaveMessage" class="msg" style="display:none;"></div>
+      <div class="form-row">
+        <label>Time Period</label>
+        <select class="form-control" id="workStatusPeriod" required>
+          <option value="whole_day">Whole Day</option>
+          <option value="am">Morning (AM) Only</option>
+          <option value="pm">Afternoon (PM) Only</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Start Date</label><input class="form-control" type="date" id="workStatusStart" required /></div>
+      <div class="form-row"><label>End Date</label><input class="form-control" type="date" id="workStatusEnd" required /></div>
+      <div class="form-row" id="workStatusTimeFields" style="display:none;">
+        <label>Start Time (Optional)</label><input class="form-control" type="time" id="workStatusStartTime" />
+      </div>
+      <div class="form-row" id="workStatusTimeFieldsEnd" style="display:none;">
+        <label>End Time (Optional)</label><input class="form-control" type="time" id="workStatusEndTime" />
+      </div>
+      <div class="form-row"><label>Reason</label><textarea class="form-control" id="workStatusReason" rows="3" required></textarea></div>
+      <div class="form-row"><label>Attachment</label><input class="form-control" type="file" id="workStatusAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt"><small class="form-text text-muted">Supported formats: PDF, DOC, DOCX, JPG, PNG, GIF, WEBP, TXT (Max 10MB)</small></div>
+      <div id="workStatusMessage" class="msg" style="display:none;"></div>
       <button type="submit" class="btn btn-primary w-full" style="margin-top:10px;"><i class="fa-solid fa-paper-plane"></i> Submit</button>
     </form>
   </div>
@@ -396,7 +420,7 @@
           </div>
         </div>
         <div class="form-row">
-          <label>Notify on Leave Approval</label>
+          <label>Notify on Work Status Approval</label>
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="notifyLeaveApproval" />
           </div>

@@ -13,8 +13,8 @@
   --danger-light:  #FEE2E2;
   --info:          #A32638;
   --info-light:    #F5E6EA;
-  --leave:         #8B5CF6;
-  --leave-light:   #EDE9FE;
+  --work-status:         #8B5CF6;
+  --work-status-light:   #EDE9FE;
   --orange:        #F97316;
   --orange-light:  #FFEDD5;
 
@@ -977,9 +977,9 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .stat-yellow .stat-progress-bar { background: linear-gradient(90deg, var(--warning), #FCD34D); }
 .stat-yellow::before { background: var(--warning); }
 
-.stat-purple .stat-icon-wrap { background: var(--leave-light); color: var(--leave); }
-.stat-purple .stat-progress-bar { background: linear-gradient(90deg, var(--leave), #A78BFA); }
-.stat-purple::before { background: var(--leave); }
+.stat-purple .stat-icon-wrap { background: var(--work-status-light); color: var(--work-status); }
+.stat-purple .stat-progress-bar { background: linear-gradient(90deg, var(--work-status), #A78BFA); }
+.stat-purple::before { background: var(--work-status); }
 
 .stat-orange .stat-icon-wrap { background: var(--orange-light); color: var(--orange); }
 .stat-orange .stat-progress-bar { background: linear-gradient(90deg, var(--orange), #FB923C); }
@@ -1095,13 +1095,13 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .badge-absent   { background: var(--danger-light); color: #B91C1C; }
 .badge-absent .badge-dot { background: var(--danger); }
 
-.badge-leave    { background: var(--leave-light); color: #6D28D9; }
-.badge-leave .badge-dot { background: var(--leave); }
+.badge-work-status    { background: var(--work-status-light); color: #6D28D9; }
+.badge-work-status .badge-dot { background: var(--work-status); }
 
 .badge-regular  { background: var(--primary-light); color: var(--primary-dark); }
 .badge-contract { background: var(--warning-light); color: #B45309; }
 .badge-casual   { background: var(--accent-light); color: #A32638; }
-.badge-job      { background: var(--leave-light); color: #6D28D9; }
+.badge-job      { background: var(--work-status-light); color: #6D28D9; }
 
 .badge-approved { background: var(--success-light); color: #15803D; }
 .badge-pending  { background: var(--warning-light); color: #B45309; }
@@ -2517,13 +2517,13 @@ body.sidebar-collapsed .main {
     margin-top: 16px;
   }
 
-  /* Leave Detail modal optimizations */
-  .leave-detail-modal .detail-item {
+  /* Work Status Detail modal optimizations */
+  .work-status-detail-modal .detail-item {
     padding: 4px 0;
   }
 
-  .leave-detail-modal .detail-label,
-  .leave-detail-modal .detail-value {
+  .work-status-detail-modal .detail-label,
+  .work-status-detail-modal .detail-value {
     font-size: 12px;
   }
 }
@@ -2856,7 +2856,7 @@ body.sidebar-collapsed .main {
 }
 
 .stat-purple .stat-progress-bar {
-    background: linear-gradient(90deg, var(--leave), #A78BFA);
+    background: linear-gradient(90deg, var(--work-status), #A78BFA);
 }
 
 .stat-cyan .stat-progress-bar {
@@ -3328,7 +3328,7 @@ body.sidebar-collapsed .main {
 }
 .notif-icon.type-system     { background: var(--primary-light); color: var(--primary); }
 .notif-icon.type-attendance { background: var(--success-light); color: var(--success); }
-.notif-icon.type-leave      { background: var(--leave-light);    color: var(--leave); }
+.notif-icon.type-work-status      { background: var(--work-status-light);    color: var(--work-status); }
 .notif-icon.type-employee   { background: var(--accent-light);   color: var(--accent); }
 
 .notif-body {
@@ -3414,10 +3414,10 @@ body.sidebar-collapsed .main {
   }
 }
 
-/* ===== LEAVE REQUEST MODAL SPECIFIC STYLES ===== */
+/* ===== WORK STATUS REQUEST MODAL SPECIFIC STYLES ===== */
 
-/* Improve modal sizing for leave request modals to reduce scrolling */
-.modal-content.leave-detail-modal,
+/* Improve modal sizing for work status request modals to reduce scrolling */
+.modal-content.work-status-detail-modal,
 .modal-content#leaveRequestModal,
 .modal-content#leaveAttachmentModal {
   /* Allow modals to grow with content but cap at reasonable height */
@@ -3447,17 +3447,17 @@ body.sidebar-collapsed .main {
   resize: vertical;
 }
 
-/* Specific styles for leave detail modal to optimize space */
-.leave-detail-modal .modal-body {
+/* Specific styles for work status detail modal to optimize space */
+.work-status-detail-modal .modal-body {
   padding: 20px;
 }
 
-.leave-detail-modal .detail-item {
+.work-status-detail-modal .detail-item {
   padding: 6px 0;
 }
 
-.leave-detail-modal .detail-label,
-.leave-detail-modal .detail-value {
+.work-status-detail-modal .detail-label,
+.work-status-detail-modal .detail-value {
   font-size: 13px;
 }
 
@@ -3495,13 +3495,13 @@ body.sidebar-collapsed .main {
     margin-top: 16px;
   }
 
-  /* Optimize leave detail modal spacing */
-  .leave-detail-modal .detail-item {
+  /* Optimize work status detail modal spacing */
+  .work-status-detail-modal .detail-item {
     padding: 4px 0;
   }
 
-  .leave-detail-modal .detail-label,
-  .leave-detail-modal .detail-value {
+  .work-status-detail-modal .detail-label,
+  .work-status-detail-modal .detail-value {
     font-size: 12px;
   }
 }

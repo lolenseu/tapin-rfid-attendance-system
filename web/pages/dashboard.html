@@ -42,9 +42,9 @@
         <span class="nav-icon"><i class="fa-solid fa-chart-pie"></i></span>
         Reports
       </a>
-      <a href="#leave-requests" class="nav-item">
-        <span class="nav-icon"><i class="fa-solid fa-calendar-check"></i></span>
-        Leave Requests
+      <a href="#work-status" class="nav-item">
+        <span class="nav-icon"><i class="fa-solid fa-briefcase"></i></span>
+        Work Status
       </a>
       <a href="#dtr" class="nav-item">
         <span class="nav-icon"><i class="fa-solid fa-file-lines"></i></span>
@@ -141,14 +141,14 @@
             <div class="stat-value" id="statAbsentToday">0</div>
           </div>
           <div class="stat-card stat-orange">
-            <div class="stat-icon-wrap"><i class="fa-solid fa-calendar-check"></i></div>
-            <div class="stat-label">Leave Requests</div>
-            <div class="stat-value" id="statLeaveRequests">0</div>
+            <div class="stat-icon-wrap"><i class="fa-solid fa-briefcase"></i></div>
+            <div class="stat-label">Work Status Requests</div>
+            <div class="stat-value" id="statWorkStatusRequests">0</div>
           </div>
           <div class="stat-card stat-purple">
             <div class="stat-icon-wrap"><i class="fa-solid fa-house"></i></div>
-            <div class="stat-label">On Leave</div>
-            <div class="stat-value" id="statOnLeave">0</div>
+            <div class="stat-label">On Work Status</div>
+            <div class="stat-value" id="statOnWorkStatus">0</div>
           </div>
           <!-- Attendance Rate card removed to simplify dashboard -->
           <div class="stat-card stat-blue">
@@ -270,11 +270,11 @@
 
           <div class="report-card" data-report="yearly">
             <div class="report-card-header">
-              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-calendar-xmark"></i></div>
-              <div><div class="report-card-title">Yearly Attendance</div><div class="report-card-desc">Annual attendance summary for performance reviews and leave entitlement computation.</div></div>
+              <div class="report-icon" style="background:var(--work-status-light);color:var(--work-status);"><i class="fa-solid fa-calendar-xmark"></i></div>
+              <div><div class="report-card-title">Yearly Attendance</div><div class="report-card-desc">Annual attendance summary for performance reviews and work status entitlement computation.</div></div>
             </div>
             <div class="report-card-preview">
-              <div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
+              <div class="preview-bar" style="height:60%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:80%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:70%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:95%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:75%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div>
             </div>
             <div class="report-card-footer">
               <button class="btn btn-report" onclick="printReport('yearly')"><i class="fa-solid fa-print"></i> Print</button>
@@ -316,19 +316,19 @@
             </div>
           </div>
 
-          <div class="report-card" data-report="leave">
+          <div class="report-card" data-report="work-status">
             <div class="report-card-header">
-              <div class="report-icon" style="background:var(--leave-light);color:var(--leave);"><i class="fa-solid fa-house"></i></div>
-              <div><div class="report-card-title">Leave Report</div><div class="report-card-desc">Summary of leave applications, approvals, rejections, and leave balance per employee.</div></div>
+              <div class="report-icon" style="background:var(--work-status-light);color:var(--work-status);"><i class="fa-solid fa-briefcase"></i></div>
+              <div><div class="report-card-title">Work Status Report</div><div class="report-card-desc">Summary of work status applications, approvals, rejections, and work status balance per employee.</div></div>
             </div>
             <div class="report-card-preview">
-              <div class="preview-bar" style="height:55%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:40%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div><div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--leave),#A78BFA);"></div>
+              <div class="preview-bar" style="height:55%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:40%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:65%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:35%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div><div class="preview-bar" style="height:50%;background:linear-gradient(180deg,var(--work-status),#A78BFA);"></div>
             </div>
             <div class="report-card-footer">
-              <button class="btn btn-report" onclick="printReport('leave')"><i class="fa-solid fa-print"></i> Print</button>
-              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('leave')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
-              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('leave')"><i class="fa-solid fa-file-excel"></i> Excel</button>
-              <button class="btn btn-report btn-report-gen" onclick="generateReport('leave')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
+              <button class="btn btn-report" onclick="printReport('work-status')"><i class="fa-solid fa-print"></i> Print</button>
+              <button class="btn btn-report btn-report-pdf" onclick="downloadReportPDF('work-status')"><i class="fa-solid fa-file-pdf"></i> PDF</button>
+              <button class="btn btn-report btn-report-excel" onclick="downloadReportExcel('work-status')"><i class="fa-solid fa-file-excel"></i> Excel</button>
+              <button class="btn btn-report btn-report-gen" onclick="generateReport('work-status')"><i class="fa-solid fa-wand-sparkles"></i> Generate</button>
             </div>
           </div>
 
@@ -351,27 +351,27 @@
         </div>
       </section>
 
-      <!-- Leave Requests Section -->
-      <section class="page-section" id="leave-requests">
+      <!-- Work Status Section -->
+      <section class="page-section" id="work-status">
         <div class="section-actions">
           <div>
-            <h1 class="section-title" style="margin-top:6px;">Leave Requests</h1>
-            <p class="section-subtitle">Manage employee leave requests and approvals.</p>
+            <h1 class="section-title" style="margin-top:6px;">Work Status</h1>
+            <p class="section-subtitle">Manage employee work status requests and approvals.</p>
           </div>
           <div class="flex gap-2">
             <!-- This will be populated dynamically based on user role -->
-            <div id="leaveRequestActions"></div>
+            <div id="workStatusRequestActions"></div>
           </div>
         </div>
 
-        <!-- Leave Request Form (for employees) -->
-        <div id="leaveRequestFormSection">
-          <!-- Leave request form will be loaded here -->
+        <!-- Work Status Request Form (for employees) -->
+        <div id="workStatusRequestFormSection">
+          <!-- Work status request form will be loaded here -->
         </div>
 
-        <!-- Leave Requests Table (for HR/Admin) -->
-        <div id="leaveRequestTableSection">
-          <!-- Leave requests table will be loaded here -->
+        <!-- Work Status Requests Table (for HR/Admin) -->
+        <div id="workStatusRequestTableSection">
+          <!-- Work status requests table will be loaded here -->
         </div>
       </section>
 
@@ -669,8 +669,8 @@
                   <div class="progress-track"><div class="progress-fill" id="absentFill" style="width:0%;background:var(--danger);"></div></div>
                 </div>
                 <div class="progress-wrap">
-                  <div class="progress-label"><span>On Leave</span><span id="leaveCount">0</span></div>
-                  <div class="progress-track"><div class="progress-fill" id="leaveFill" style="width:0%;background:var(--leave);"></div></div>
+                  <div class="progress-label"><span>On Work Status</span><span id="workStatusCount">0</span></div>
+                  <div class="progress-track"><div class="progress-fill" id="workStatusFill" style="width:0%;background:var(--work-status);"></div></div>
                 </div>
               </div>
             </div>
@@ -689,7 +689,7 @@
                 <option value="all">All Status</option>
                 <option value="present">Present</option>
                 <option value="absent">Absent</option>
-                <option value="leave">On Leave</option>
+                <option value="work_status">On Work Status</option>
               </select>
             </div>
           </div>
@@ -876,55 +876,80 @@
   </div>
 </div>
 
-<!-- ============ LEAVE REQUEST MODAL ============ -->
-<div class="modal-overlay hidden" id="leaveRequestModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeLeaveRequestModal()">
-  <div class="modal-content">
+<!-- ============ WORK STATUS REQUEST MODAL ============ -->
+<div class="modal-overlay hidden" id="workStatusRequestModal" role="dialog" aria-modal="true" onclick="if(event.target===this) closeWorkStatusRequestModal()">
+  <div class="modal-content" onclick="event.stopPropagation()">
     <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
-      <div class="modal-avatar"><i class="fa-solid fa-calendar-plus"></i></div>
+      <div class="modal-avatar"><i class="fa-solid fa-briefcase"></i></div>
       <div class="modal-user-info">
-        <h2>Submit Leave Request</h2>
-        <span style="font-size:13px;opacity:0.85;">Request time off for approval</span>
+        <h2>Submit Work Status Request</h2>
+        <span style="font-size:13px;opacity:0.85;">Request work status for approval</span>
       </div>
-      <button class="modal-close" onclick="closeLeaveRequestModal()">&times;</button>
+      <button class="modal-close" onclick="closeWorkStatusRequestModal()">&times;</button>
     </div>
     <div class="modal-body">
-      <form id="leaveRequestForm" onsubmit="return handleLeaveRequestFormSubmit(event)">
+      <form id="workStatusRequestForm" onsubmit="return handleWorkStatusRequestFormSubmit(event)">
         <div class="grid-2">
           <div class="form-group">
-            <label for="leaveType">Leave Type</label>
-            <select class="form-control" id="leaveType" name="leaveType" required>
-              <option value="">-- Select Leave Type --</option>
-              <option value="vacation">Vacation</option>
-              <option value="sick">Sick Leave</option>
-              <option value="emergency">Emergency Leave</option>
-              <option value="personal">Personal Leave</option>
-              <option value="maternity">Maternity Leave</option>
-              <option value="paternity">Paternity Leave</option>
-              <option value="bereavement">Bereavement Leave</option>
-              <option value="other">Other</option>
+            <label for="workStatusType">Work Status Type</label>
+            <select class="form-control" id="workStatusType" name="workStatusType" required>
+              <option value="">-- Select Work Status Type --</option>
+              <option value="on_leave">On Leave — approved vacation, sick, emergency, etc.</option>
+              <option value="official_travel">Official Travel — traveling for work</option>
+              <option value="official_business">Official Business — working outside the regular workplace</option>
+              <option value="work_from_home">Work From Home (WFH) — working remotely</option>
+              <option value="field_work">Field Work — assigned to work at another location</option>
+              <option value="training">Training — attending an official training/seminar</option>
+              <option value="conference_seminar">Conference / Seminar — attending an official event</option>
+              <option value="work_assignment">Work Assignment — temporarily assigned elsewhere</option>
+              <option value="offsite_duty">Offsite Duty — performing work outside the office</option>
+              <option value="client_visit">Client Visit — visiting a client or partner</option>
+              <option value="meeting_outside_office">Meeting Outside Office — attending an external meeting</option>
+              <option value="special_assignment">Special Assignment — temporary special work assignment</option>
+              <option value="suspended_work">Suspended Work — work suspended due to an official reason</option>
+              <option value="holiday_non_working">Holiday / Non-Working Day — no regular work scheduled</option>
+              <option value="rest_day">Rest Day — scheduled day off</option>
             </select>
           </div>
           <div class="form-group">
-            <label for="startDate">Start Date</label>
-            <input class="form-control" type="date" id="startDate" name="startDate" required>
+            <label for="workStatusPeriod">Time Period</label>
+            <select class="form-control" id="workStatusPeriod" name="workStatusPeriod" required>
+              <option value="whole_day">Whole Day</option>
+              <option value="am">Morning (AM) Only</option>
+              <option value="pm">Afternoon (PM) Only</option>
+            </select>
           </div>
         </div>
         <div class="grid-2">
           <div class="form-group">
-            <label for="endDate">End Date</label>
-            <input class="form-control" type="date" id="endDate" name="endDate" required>
+            <label for="workStatusStartDate">Start Date</label>
+            <input class="form-control" type="date" id="workStatusStartDate" name="startDate" required>
+          </div>
+          <div class="form-group">
+            <label for="workStatusEndDate">End Date</label>
+            <input class="form-control" type="date" id="workStatusEndDate" name="endDate" required>
+          </div>
+        </div>
+        <div class="grid-2" id="workStatusTimeFields" style="display:none;">
+          <div class="form-group">
+            <label for="workStatusStartTime">Start Time (Optional)</label>
+            <input class="form-control" type="time" id="workStatusStartTime" name="startTime">
+          </div>
+          <div class="form-group">
+            <label for="workStatusEndTime">End Time (Optional)</label>
+            <input class="form-control" type="time" id="workStatusEndTime" name="endTime">
           </div>
         </div>
         <div class="form-group">
-          <label for="leaveReason">Reason</label>
-          <textarea class="form-control" id="leaveReason" name="leaveReason" rows="3" placeholder="Please provide a brief reason for your leave request..." required></textarea>
+          <label for="workStatusReason">Reason</label>
+          <textarea class="form-control" id="workStatusReason" name="reason" rows="3" placeholder="Please provide a brief reason for your work status request..." required></textarea>
         </div>
         <div class="form-group">
-          <label for="leaveAttachment">Attachment (Optional)</label>
-          <input class="form-control" type="file" id="leaveAttachment" name="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
+          <label for="workStatusAttachment">Attachment (Optional)</label>
+          <input class="form-control" type="file" id="workStatusAttachment" name="attachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
           <small class="form-text text-muted">Allowed formats: PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, TXT (Max 5MB)</small>
         </div>
-        <div id="leaveRequestMessage" style="margin-top:16px;display:none;"></div>
+        <div id="workStatusRequestMessage" style="margin-top:16px;display:none;"></div>
         <div style="display:flex;justify-content:center;margin-top:24px;">
           <button type="submit" class="btn btn-primary">
             <i class="fa-solid fa-paper-plane"></i> Submit Request
@@ -935,36 +960,36 @@
   </div>
 </div>
 
-<!-- ============ LEAVE DETAIL MODAL ============ -->
+<!-- ============ WORK STATUS DETAIL MODAL ============ -->
 <!--
-     Opened by the "View" button in the Leave Requests table.
-     Shows every field stored on the leave request record, plus an inline
+     Opened by the "View" button in the Work Status table.
+     Shows every field stored on the work status request record, plus an inline
      preview / download link for the attachment (if any).
 -->
-<div class="modal-overlay hidden" id="leaveDetailModal" role="dialog" aria-modal="true"
-     aria-labelledby="leaveDetailTitle"
-     onclick="if(event.target===this) closeLeaveDetailModal()">
-  <div class="modal-content leave-detail-modal" style="max-width:780px;width:100%;">
+<div class="modal-overlay hidden" id="workStatusDetailModal" role="dialog" aria-modal="true"
+     aria-labelledby="workStatusDetailTitle"
+     onclick="if(event.target===this) closeWorkStatusDetailModal()">
+  <div class="modal-content work-status-detail-modal" style="max-width:780px;width:100%;">
     <div class="modal-header" style="background:linear-gradient(135deg,#8B5CF6,#A78BFA);">
-      <div class="modal-avatar"><i class="fa-solid fa-house" style="font-size:22px;"></i></div>
+      <div class="modal-avatar"><i class="fa-solid fa-briefcase" style="font-size:22px;"></i></div>
       <div class="modal-user-info">
-        <h2 id="leaveDetailTitle">Leave Request Detail</h2>
-        <span id="leaveDetailSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
+        <h2 id="workStatusDetailTitle">Work Status Request Detail</h2>
+        <span id="workStatusDetailSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
       </div>
-      <button class="modal-close" onclick="closeLeaveDetailModal()" aria-label="Close">&times;</button>
+      <button class="modal-close" onclick="closeWorkStatusDetailModal()" aria-label="Close">&times;</button>
     </div>
 
-    <div class="modal-body" id="leaveDetailBody">
-      <!-- Filled dynamically by renderLeaveDetail() -->
+    <div class="modal-body" id="workStatusDetailBody">
+      <!-- Filled dynamically by renderWorkStatusDetail() -->
       <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
-        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading leave details…
+        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading work status details…
       </div>
     </div>
 
     <div class="modal-footer" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-      <div id="leaveDetailFooterLeft" style="display:flex;gap:8px;"></div>
+      <div id="workStatusDetailFooterLeft" style="display:flex;gap:8px;"></div>
       <div style="display:flex;gap:8px;">
-        <button type="button" class="btn btn-outline" onclick="closeLeaveDetailModal()">
+        <button type="button" class="btn btn-outline" onclick="closeWorkStatusDetailModal()">
           <i class="fa-solid fa-times"></i> Close
         </button>
       </div>
@@ -972,43 +997,43 @@
   </div>
 </div>
 
-<!-- ============ LEAVE ATTACHMENT PREVIEW MODAL ============ -->
+<!-- ============ WORK STATUS ATTACHMENT PREVIEW MODAL ============ -->
 <!--
-     Opened by "View Attachment" either from the leave-requests table or
-     from inside the Leave Detail modal. Renders images inline, embeds PDFs
+     Opened by "View Attachment" either from the work-status table or
+     from inside the Work Status Detail modal. Renders images inline, embeds PDFs
      in an <iframe>, shows plain text in a pre, and offers Open / Download
      buttons for anything the browser can't render.
 -->
-<div class="modal-overlay hidden" id="leaveAttachmentModal" role="dialog" aria-modal="true"
-     aria-labelledby="leaveAttachmentTitle"
-     onclick="if(event.target===this) closeLeaveAttachmentModal()">
+<div class="modal-overlay hidden" id="workStatusAttachmentModal" role="dialog" aria-modal="true"
+     aria-labelledby="workStatusAttachmentTitle"
+     onclick="if(event.target===this) closeWorkStatusAttachmentModal()">
   <div class="modal-content" style="max-width:900px;width:100%;">
     <div class="modal-header" style="background:linear-gradient(135deg,#2563EB,#06B6D4);">
       <div class="modal-avatar"><i class="fa-solid fa-paperclip" style="font-size:22px;"></i></div>
       <div class="modal-user-info">
-        <h2 id="leaveAttachmentTitle">Attachment Preview</h2>
-        <span id="leaveAttachmentSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
+        <h2 id="workStatusAttachmentTitle">Attachment Preview</h2>
+        <span id="workStatusAttachmentSubtitle" style="font-size:13px;opacity:0.85;">Loading…</span>
       </div>
-      <button class="modal-close" onclick="closeLeaveAttachmentModal()" aria-label="Close">&times;</button>
+      <button class="modal-close" onclick="closeWorkStatusAttachmentModal()" aria-label="Close">&times;</button>
     </div>
 
-    <div class="modal-body" id="leaveAttachmentBody" style="min-height:260px;">
-      <!-- Filled dynamically by openLeaveAttachmentPreview() -->
+    <div class="modal-body" id="workStatusAttachmentBody" style="min-height:260px;">
+      <!-- Filled dynamically by openWorkStatusAttachmentPreview() -->
       <div style="display:flex;justify-content:center;align-items:center;padding:60px 0;color:var(--text-muted);font-size:13px;">
         <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
       </div>
     </div>
 
     <div class="modal-footer" style="justify-content:space-between;align-items:center;gap:8px;">
-      <div id="leaveAttachmentMeta" style="font-size:12px;color:var(--text-muted);"></div>
+      <div id="workStatusAttachmentMeta" style="font-size:12px;color:var(--text-muted);"></div>
       <div style="display:flex;gap:8px;">
-        <button type="button" class="btn btn-outline" onclick="closeLeaveAttachmentModal()">
+        <button type="button" class="btn btn-outline" onclick="closeWorkStatusAttachmentModal()">
           <i class="fa-solid fa-times"></i> Close
         </button>
-        <a id="leaveAttachmentOpenBtn" class="btn btn-outline" href="#" target="_blank" rel="noopener">
+        <a id="workStatusAttachmentOpenBtn" class="btn btn-outline" href="#" target="_blank" rel="noopener">
           <i class="fa-solid fa-up-right-from-square"></i> Open in New Tab
         </a>
-        <a id="leaveAttachmentDownloadBtn" class="btn btn-primary" href="#" download>
+        <a id="workStatusAttachmentDownloadBtn" class="btn btn-primary" href="#" download>
           <i class="fa-solid fa-download"></i> Download
         </a>
       </div>

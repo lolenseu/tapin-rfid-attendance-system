@@ -3,28 +3,28 @@ const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 // The logged-in admin's own user record, populated once the session is verified
 let currentAdminUser = null;
 
-/* ============ LEAVE REQUEST STATE (declared up front) ============ */
+/* ============ WORK STATUS REQUEST STATE (declared up front) ============ */
 
-// Store leave requests (pending + approved + rejected) and derived state.
+// Store work status requests (pending + approved + rejected) and derived state.
 // These MUST be declared before any function that reads them runs — otherwise
-// loadLeaveRequests() throws "Cannot access 'leaveRequests' before initialization"
-// and the whole leave pipeline silently dies.
-let leaveRequests = [];
-let filteredLeaveRequests = [];
-let leaveRequestsCurrentPage = 1;
-const LEAVE_REQUESTS_PER_PAGE = 5;
-let leaveRequestFilters = {
+// loadWorkStatusRequests() throws "Cannot access 'workStatusRequests' before initialization"
+// and the whole work status pipeline silently dies.
+let workStatusRequests = [];
+let filteredWorkStatusRequests = [];
+let workStatusRequestsCurrentPage = 1;
+const WORK_STATUS_REQUESTS_PER_PAGE = 5;
+let workStatusRequestFilters = {
     employeeSearch: ''
 };
-let leaveRequestSort = {
+let workStatusRequestSort = {
     field: 'start_date',
     direction: 'asc'
 };
 
-// Leave Request employee search dropdown state
-let leaveRequestSelectedSuggestionIndex = -1;
+// Work Status Request employee search dropdown state
+let workStatusRequestSelectedSuggestionIndex = -1;
 
-/* ============ END LEAVE REQUEST STATE ============ */
+/* ============ END WORK STATUS REQUEST STATE ============ */
 
 function redirectToLogin() {
     localStorage.removeItem('tapinUser');
@@ -247,7 +247,7 @@ function updateDashboardStatistics(stats) {
         statPresentToday: stats.present_today,
         statAbsentToday: stats.absent_today,
         statEmployeesLate: stats.employees_late,
-        statOnLeave: stats.on_leave,
+        statOnWorkStatus: stats.on_work_status,
         statAttendanceRate: `${stats.attendance_rate}%`,
         statRfidScans: stats.rfid_scans_today,
         statDepartments: stats.departments
@@ -266,7 +266,7 @@ function updateStatProgressBars(stats) {
     const total = stats.total_employees || 1;
     const present = stats.present_today || 0;
     const absent = stats.absent_today || 0;
-    const onLeave = stats.on_leave || 0;
+    const onWorkStatus = stats.on_work_status || 0;
     const attendanceRate = stats.attendance_rate || 0;
     const rfidScans = stats.rfid_scans_today || 0;
     
@@ -288,11 +288,11 @@ function updateStatProgressBars(stats) {
         absentBar.style.width = `${Math.min(pct, 100)}%`;
     }
     
-    // On Leave bar
-    const leaveBar = document.querySelector('.stat-purple .stat-progress-bar');
-    if (leaveBar) {
-        const pct = total > 0 ? (onLeave / total) * 100 : 0;
-        leaveBar.style.width = `${Math.min(pct, 100)}%`;
+    // On Work Status bar
+    const workStatusBar = document.querySelector('.stat-purple .stat-progress-bar');
+    if (workStatusBar) {
+        const pct = total > 0 ? (onWorkStatus / total) * 100 : 0;
+        workStatusBar.style.width = `${Math.min(pct, 100)}%`;
     }
     
     // Attendance Rate bar
@@ -1423,7 +1423,6 @@ function editEmployee(uid) {
                                 <label>RFID</label>
                                 <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required maxlength="8" pattern="^[0-9]{8}$" placeholder="XXXXXXXX" />
                             </div>
-                            <div class="form-text text-muted small">RFID must be exactly 8 digits</div>
                             <div class="form-group">
                                 <label>First Name</label>
                                 <input class="form-control" type="text" id="editFirstname" value="${escapeHtml(employee.firstname || '')}" required />
@@ -1440,7 +1439,6 @@ function editEmployee(uid) {
                                 <label>Contact Number</label>
                                 <input class="form-control" type="text" id="editCpnumber" value="${escapeHtml(employee.cpnumber || '')}" required placeholder="+63XXXXXXXXXX" pattern="^\+63[0-9]{10,11}$" />
                             </div>
-                            <div class="form-text text-muted small">Contact number must start with +63 followed by 10-11 digits</div>
                             <div class="form-group">
                                 <label>Address</label>
                                 <input class="form-control" type="text" id="editAddress" value="${escapeHtml(employee.address || '')}" required />
@@ -1713,18 +1711,18 @@ function applyAttendanceFilters() {
             matchesDept = empDept.toLowerCase() === dept.toLowerCase();
         }
         
-        // Status filter - only filter by present/absent/leave
+        // Status filter - only filter by present/absent/work_status
         let matchesStatus = true;
         if (status !== 'all') {
             const isPresent = employee ? true : false;
-            const isOnLeave = false; // We don't have leave status in scan data
+            const isOnWorkStatus = false; // We don't have work status in scan data
             
             if (status === 'present') {
                 matchesStatus = isPresent;
             } else if (status === 'absent') {
                 matchesStatus = !isPresent;
-            } else if (status === 'leave') {
-                matchesStatus = isOnLeave;
+            } else if (status === 'work_status') {
+                matchesStatus = isOnWorkStatus;
             }
         }
         
@@ -1969,19 +1967,19 @@ function updateActivityTimeline(activities) {
                     bgColor = 'var(--primary-light)';
                 }
                 break;
-            case 'leave':
-                if (activity.action === 'leave_approved') {
+            case 'work_status':
+                if (activity.action === 'work_status_approved') {
                     icon = 'fa-solid fa-check-circle';
                     color = 'var(--success)';
                     bgColor = 'var(--success-light)';
-                } else if (activity.action === 'leave_rejected') {
+                } else if (activity.action === 'work_status_rejected') {
                     icon = 'fa-solid fa-times-circle';
                     color = 'var(--danger)';
                     bgColor = 'var(--danger-light)';
                 } else {
-                    icon = 'fa-solid fa-umbrella-beach';
-                    color = 'var(--leave)';
-                    bgColor = 'var(--leave-light)';
+                    icon = 'fa-solid fa-briefcase';
+                    color = 'var(--work-status)';
+                    bgColor = 'var(--work-status-light)';
                 }
                 break;
             case 'employee':
@@ -2475,13 +2473,19 @@ async function loadDTRRecord() {
             // Display all days
             tbody.innerHTML = dtr.map(day => {
                 const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-                const isLeave = day.status === 'on_leave';
+                const isWorkStatus = day.status === 'on_work_status';
+                const hasWorkStatus = day.work_status && day.work_status.is_active;
                 let rowStyle = '';
                 let statusText = day.status || '';
                 
-                if (isLeave) {
+                if (isWorkStatus || hasWorkStatus) {
                     rowStyle = 'background-color:#FEF3C7;';
-                    statusText = 'ON LEAVE';
+                    if (day.work_status) {
+                        const wsLabel = day.work_status.label || day.work_status.type || 'Work Status';
+                        statusText = `${wsLabel}`;
+                    } else {
+                        statusText = 'WORK STATUS';
+                    }
                 } else if (isWeekend) {
                     rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
                     statusText = 'Weekend';
@@ -2576,7 +2580,7 @@ function buildDTRHTML(record, dtr, employee) {
     const { from: fromDate, to: toDate } = resolveDTRDateRange(record, dtr);
 
     // Calculate total working days (A)
-    const workingDays = dtr.filter(day => day.status !== 'on_leave' && day.day !== 'Sat' && day.day !== 'Sun').length;
+    const workingDays = dtr.filter(day => day.status !== 'on_work_status' && day.day !== 'Sat' && day.day !== 'Sun').length;
     const totalWorkingDays = Number(workingDays) || 0;
     const totalUndertime = totalUt;
 
@@ -2584,10 +2588,19 @@ function buildDTRHTML(record, dtr, employee) {
     // exactly like the two side-by-side originals on the reference form.
     const tableRows = dtr.map(day => {
         const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-        const isLeave = day.status === 'on_leave';
-        const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isLeave ? 'background-color:#fef3c7;' : '');
+        const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
+        const rowStyle = isWeekend ? 'background-color:#f2f2f2;' : (isWorkStatus ? 'background-color:#fef3c7;' : '');
         const ut = day.ut && day.ut !== '0.00' && day.ut !== 0 ? day.ut : '';
         const ot = day.ot && day.ot !== '0.00' && day.ot !== 0 ? day.ot : '';
+        
+        // Build status text for work status
+        let statusText = day.status || '';
+        if (day.work_status && day.work_status.is_active) {
+            const wsLabel = day.work_status.label || day.work_status.type || 'Work Status';
+            statusText = `${wsLabel}`;
+        } else if (isWorkStatus) {
+            statusText = 'WORK STATUS';
+        }
 
         return `
             <tr style="${rowStyle}">
@@ -3106,7 +3119,7 @@ const REPORT_LABELS = {
     'yearly': 'Yearly Attendance',
     'summary': 'Attendance Summary',
     'absent': 'Absent Employees',
-    'leave': 'Leave Report',
+    'work-status': 'Work Status Report',
     'rfid-logs': 'RFID Scan Logs'
 };
 
@@ -3282,7 +3295,7 @@ async function generateReport(reportType) {
 
 // Generate all reports in one click
 async function generateAllReports() {
-    const reportTypes = ['daily', 'weekly', 'monthly', 'yearly', 'summary', 'absent', 'leave', 'rfid-logs'];
+    const reportTypes = ['daily', 'weekly', 'monthly', 'yearly', 'summary', 'absent', 'work-status', 'rfid-logs'];
     
     showNotification('Generating all reports...', 'info');
     
@@ -3517,7 +3530,7 @@ function updateAttendanceRate(stats) {
     const total = stats.total_employees || 0;
     const present = stats.present_today || 0;
     const absent = stats.absent_today || 0;
-    const onLeave = stats.on_leave || 0;
+    const onWorkStatus = stats.on_work_status || 0;
     const rate = stats.attendance_rate || 0;
     
     // Update rate circle
@@ -3539,38 +3552,38 @@ function updateAttendanceRate(stats) {
     const presentFill = document.getElementById('presentFill');
     const lateFill = document.getElementById('lateFill');
     const absentFill = document.getElementById('absentFill');
-    const leaveFill = document.getElementById('leaveFill');
-    
+    const workStatusFill = document.getElementById('workStatusFill');
+
     const presentCount = document.getElementById('presentCount');
     const lateCount = document.getElementById('lateCount');
     const absentCount = document.getElementById('absentCount');
-    const leaveCount = document.getElementById('leaveCount');
-    
+    const workStatusCount = document.getElementById('workStatusCount');
+
     if (total > 0) {
         const presentPct = (present / total) * 100;
         const latePct = 0; // No late data from API yet
         const absentPct = (absent / total) * 100;
-        const leavePct = (onLeave / total) * 100;
-        
+        const workStatusPct = (onWorkStatus / total) * 100;
+
         if (presentFill) presentFill.style.width = `${Math.min(presentPct, 100)}%`;
         if (lateFill) lateFill.style.width = `${Math.min(latePct, 100)}%`;
         if (absentFill) absentFill.style.width = `${Math.min(absentPct, 100)}%`;
-        if (leaveFill) leaveFill.style.width = `${Math.min(leavePct, 100)}%`;
-        
+        if (workStatusFill) workStatusFill.style.width = `${Math.min(workStatusPct, 100)}%`;
+
         if (presentCount) presentCount.textContent = present;
         if (lateCount) lateCount.textContent = 0;
         if (absentCount) absentCount.textContent = absent;
-        if (leaveCount) leaveCount.textContent = onLeave;
+        if (workStatusCount) workStatusCount.textContent = onWorkStatus;
     } else {
         if (presentFill) presentFill.style.width = '0%';
         if (lateFill) lateFill.style.width = '0%';
         if (absentFill) absentFill.style.width = '0%';
-        if (leaveFill) leaveFill.style.width = '0%';
-        
+        if (workStatusFill) workStatusFill.style.width = '0%';
+
         if (presentCount) presentCount.textContent = 0;
         if (lateCount) lateCount.textContent = 0;
         if (absentCount) absentCount.textContent = 0;
-        if (leaveCount) leaveCount.textContent = 0;
+        if (workStatusCount) workStatusCount.textContent = 0;
     }
 }
 
@@ -3852,12 +3865,12 @@ async function saveSettings() {
 
 // ============ END SETTINGS FUNCTIONS ============
 
-// ============ LEAVE REQUEST FUNCTIONS ============
+// ============ WORK STATUS REQUEST FUNCTIONS ============
 
-// Load leave requests from API
-async function loadLeaveRequests() {
+// Load work status requests from API
+async function loadWorkStatusRequests() {
     try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/leave-requests`, {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/work-status-requests`, {
             method: 'GET',
             headers: getAuthHeaders(),
             credentials: 'include',
@@ -3870,7 +3883,7 @@ async function loadLeaveRequests() {
         }
 
         if (!response.ok) {
-            console.error('Failed to load leave requests:', response.status);
+            console.error('Failed to load work status requests:', response.status);
             return;
         }
 
@@ -3893,88 +3906,88 @@ async function loadLeaveRequests() {
                 status: (r.status || 'rejected').toLowerCase()
             }));
 
-            // Store all leave requests (pending + approved + rejected)
+            // Store all work status requests (pending + approved + rejected)
             const allRequests = [...pending, ...approved, ...rejected];
-            leaveRequests = allRequests;
-            filteredLeaveRequests = [...leaveRequests];
-            leaveRequestsCurrentPage = 1;
+            workStatusRequests = allRequests;
+            filteredWorkStatusRequests = [...workStatusRequests];
+            workStatusRequestsCurrentPage = 1;
 
             // Update dashboard statistics
-            updateLeaveRequestStatistics({
+            updateWorkStatusRequestStatistics({
                 pending: pending.length,
                 approved: approved.length,
                 rejected: rejected.length,
                 total: allRequests.length,
                 // Pass the actual approved request records so the
-                // "On Leave" card can count employees on leave today.
+                // "On Work Status" card can count employees on work status today.
                 approvedRequests: approved
             });
 
-            // Render leave requests table (for HR/Admin)
-            renderLeaveRequestTable();
+            // Render work status requests table (for HR/Admin)
+            renderWorkStatusRequestTable();
 
-            // Render leave request form (for employees only)
+            // Render work status request form (for employees only)
             const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
             if (userRole !== 'admin' && userRole !== 'hr') {
-                renderLeaveRequestForm();
+                renderWorkStatusRequestForm();
             }
 
             // Render filter controls
-            renderLeaveRequestFilterControls();
+            renderWorkStatusRequestFilterControls();
         }
     } catch (error) {
-        console.error('Error loading leave requests:', error);
+        console.error('Error loading work status requests:', error);
     }
 }
 
-// Update leave request statistics in dashboard
-function updateLeaveRequestStatistics(stats) {
-    const pendingEl = document.getElementById('statLeaveRequests');
+// Update work status request statistics in dashboard
+function updateWorkStatusRequestStatistics(stats) {
+    const pendingEl = document.getElementById('statWorkStatusRequests');
     if (pendingEl) {
         pendingEl.textContent = stats.pending || 0;
     }
 
-    // Update on leave stat based on approved requests
-    const onLeaveEl = document.getElementById('statOnLeave');
-    if (onLeaveEl) {
-        // Count unique employees on leave today from approved requests
+    // Update on work status stat based on approved requests
+    const onWorkStatusEl = document.getElementById('statOnWorkStatus');
+    if (onWorkStatusEl) {
+        // Count unique employees on work status today from approved requests
         const today = new Date().toISOString().split('T')[0];
-        const employeesOnLeave = new Set();
+        const employeesOnWorkStatus = new Set();
 
         (stats.approvedRequests || []).forEach(req => {
             if (req.days && req.days.includes(today)) {
-                employeesOnLeave.add(req.uid);
+                employeesOnWorkStatus.add(req.uid);
             }
         });
 
-        onLeaveEl.textContent = employeesOnLeave.size;
+        onWorkStatusEl.textContent = employeesOnWorkStatus.size;
     }
 }
 
-// Filter leave requests based on current filters
-function filterLeaveRequests() {
-    if (!leaveRequests || leaveRequests.length === 0) {
-        filteredLeaveRequests = [];
+// Filter work status requests based on current filters
+function filterWorkStatusRequests() {
+    if (!workStatusRequests || workStatusRequests.length === 0) {
+        filteredWorkStatusRequests = [];
         return;
     }
 
-    filteredLeaveRequests = leaveRequests.filter(req => {
+    filteredWorkStatusRequests = workStatusRequests.filter(req => {
         // Employee search filter (matches name or ID)
-        const matchesEmployeeSearch = !leaveRequestFilters.employeeSearch ||
+        const matchesEmployeeSearch = !workStatusRequestFilters.employeeSearch ||
             `${req.fullname || ''} ${req.employeeid || ''}`.toLowerCase().includes(
-                leaveRequestFilters.employeeSearch.toLowerCase()
+                workStatusRequestFilters.employeeSearch.toLowerCase()
             );
 
         return matchesEmployeeSearch;
     });
 
     // Reset to first page when filtering
-    leaveRequestsCurrentPage = 1;
+    workStatusRequestsCurrentPage = 1;
 }
 
-// Render leave request filter controls (for HR/Admin)
-function renderLeaveRequestFilterControls() {
-    const actionsContainer = document.getElementById('leaveRequestActions');
+// Render work status request filter controls (for HR/Admin)
+function renderWorkStatusRequestFilterControls() {
+    const actionsContainer = document.getElementById('workStatusRequestActions');
     if (!actionsContainer) return;
 
     // Check if user is HR/Admin (safe fallback to 'employee' if currentAdminUser
@@ -3983,8 +3996,8 @@ function renderLeaveRequestFilterControls() {
     if (userRole !== 'admin' && userRole !== 'hr') {
         // Employees see the request form button
         actionsContainer.innerHTML = `
-            <button class="btn btn-primary" onclick="openLeaveRequestModal()">
-                <i class="fa-solid fa-plus"></i> Request Leave
+            <button class="btn btn-primary" onclick="openWorkStatusRequestModal()">
+                <i class="fa-solid fa-plus"></i> Request Work Status
             </button>
         `;
         return;
@@ -3992,59 +4005,74 @@ function renderLeaveRequestFilterControls() {
 
     // HR/Admin see the toggle button for filters
     actionsContainer.innerHTML = `
-        <button class="btn btn-outline" id="leaveRequestHideFilterBtn" onclick="toggleLeaveRequestFilter()">
+        <button class="btn btn-outline" id="workStatusRequestHideFilterBtn" onclick="toggleWorkStatusRequestFilter()">
             <i class="fa-solid fa-eye-slash"></i> Hide Filter
         </button>
     `;
 }
 
-// Render leave request form in the page
-function renderLeaveRequestForm() {
-    const formSection = document.getElementById('leaveRequestFormSection');
+// Render work status request form in the page
+function renderWorkStatusRequestForm() {
+    const formSection = document.getElementById('workStatusRequestFormSection');
     if (!formSection) return;
 
     // Check if user is HR/Admin or employee (everyone can submit requests)
     const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
 
-    // Both employees and HR/Admin can see and use the leave request form
+    // Both employees and HR/Admin can see and use the work status request form
     formSection.innerHTML = `
-        <form id="leaveRequestFormPage" onsubmit="return handleLeaveRequestFormSubmit(event)">
+        <form id="workStatusRequestFormPage" onsubmit="return handleWorkStatusRequestFormSubmit(event)">
             <div class="grid-2">
                 <div class="form-group">
-                    <label for="leaveType">Leave Type</label>
-                    <select class="form-control" id="leaveType" name="leaveType" required>
-                        <option value="">-- Select Leave Type --</option>
-                        <option value="vacation">Vacation</option>
-                        <option value="sick">Sick Leave</option>
-                        <option value="emergency">Emergency Leave</option>
-                        <option value="personal">Personal Leave</option>
-                        <option value="maternity">Maternity Leave</option>
-                        <option value="paternity">Paternity Leave</option>
-                        <option value="bereavement">Bereavement Leave</option>
-                        <option value="other">Other</option>
+                    <label for="workStatusType">Work Status Type</label>
+                    <select class="form-control" id="workStatusType" name="workStatusType" required>
+                        <option value="">-- Select Work Status Type --</option>
+                        <option value="on_leave">On Leave (Work Status) — approved vacation, sick, emergency, etc.</option>
+                        <option value="official_travel">Official Travel — traveling for work</option>
+                        <option value="official_business">Official Business — working outside the regular workplace</option>
+                        <option value="work_from_home">Work From Home (WFH) — working remotely</option>
+                        <option value="field_work">Field Work — assigned to work at another location</option>
+                        <option value="training">Training — attending an official training/seminar</option>
+                        <option value="conference_seminar">Conference / Seminar — attending an official event</option>
+                        <option value="work_assignment">Work Assignment — temporarily assigned elsewhere</option>
+                        <option value="offsite_duty">Offsite Duty — performing work outside the office</option>
+                        <option value="client_visit">Client Visit — visiting a client or partner</option>
+                        <option value="meeting_outside_office">Meeting Outside Office — attending an external meeting</option>
+                        <option value="special_assignment">Special Assignment — temporary special work assignment</option>
+                        <option value="suspended_work">Suspended Work — work suspended due to an official reason</option>
+                        <option value="holiday_non_working">Holiday / Non-Working Day — no regular work scheduled</option>
+                        <option value="rest_day">Rest Day — scheduled day off</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="startDate">Start Date</label>
-                    <input class="form-control" type="date" id="startDate" name="startDate" required>
+                    <label for="workStatusPeriod">Time Period</label>
+                    <select class="form-control" id="workStatusPeriod" name="workStatusPeriod" required>
+                        <option value="whole_day">Whole Day</option>
+                        <option value="am">Morning (AM) Only</option>
+                        <option value="pm">Afternoon (PM) Only</option>
+                    </select>
                 </div>
             </div>
             <div class="grid-2">
                 <div class="form-group">
-                    <label for="endDate">End Date</label>
-                    <input class="form-control" type="date" id="endDate" name="endDate" required>
+                    <label for="workStatusStartDate">Start Date</label>
+                    <input class="form-control" type="date" id="workStatusStartDate" name="startDate" required>
                 </div>
                 <div class="form-group">
-                    <label for="leaveReason">Reason</label>
-                    <textarea class="form-control" id="leaveReason" name="leaveReason" rows="4" placeholder="Please provide a brief reason for your leave request..." required></textarea>
+                    <label for="workStatusEndDate">End Date</label>
+                    <input class="form-control" type="date" id="workStatusEndDate" name="endDate" required>
                 </div>
             </div>
-            <div class="form-group>
-                <label for="leaveAttachment">Attachment (Optional)</label>
-                <input class="form-control" type="file" id="leaveAttachment" name="leaveAttachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
+            <div class="form-group">
+                <label for="workStatusReason">Reason</label>
+                <textarea class="form-control" id="workStatusReason" name="reason" rows="4" placeholder="Please provide a brief reason for your work status request..." required></textarea>
+            </div>
+            <div class="form-group">
+                <label for="workStatusAttachment">Attachment (Optional)</label>
+                <input class="form-control" type="file" id="workStatusAttachment" name="attachment" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.gif,.webp,.txt">
                 <small class="form-text text-muted">Allowed formats: PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, TXT (Max 5MB)</small>
             </div>
-            <div id="leaveRequestMessagePage" style="margin-top:16px;display:none;"></div>
+            <div id="workStatusRequestMessagePage" style="margin-top:16px;display:none;"></div>
             <div style="display:flex;justify-content:center;margin-top:24px;">
                 <button type="submit" class="btn btn-primary">
                     <i class="fa-solid fa-paper-plane"></i> Submit Request
@@ -4052,85 +4080,20 @@ function renderLeaveRequestForm() {
             </div>
         </form>
     `;
-
-    // Add form submission handling
-    const form = document.getElementById('leaveRequestFormPage');
-    if (form) {
-        // Prevent double submission handling - the onsubmit attribute will handle it
-        // We could add additional validation here if needed
-    }
-
-    // Add attachment preview functionality
-    const attachmentInput = document.getElementById('leaveAttachment');
-    if (attachmentInput) {
-        attachmentInput.addEventListener('change', function() {
-            const fileName = this.value.split('\\').pop().split('/').pop();
-            if (fileName) {
-                // Show file name next to input or in a small label
-                // For simplicity, we'll just log it - in a real app you might show a preview
-                console.log('Attachment selected:', fileName);
-            }
-        });
-    }
 }
 
-// Clear all leave request filters
-function clearLeaveRequestFilters() {
-    leaveRequestFilters = {
+// Clear all work status request filters
+function clearWorkStatusRequestFilters() {
+    workStatusRequestFilters = {
         employeeSearch: ''
     };
-    filterLeaveRequests();
+    filterWorkStatusRequests();
 }
 
-// Check if a leave request is active during the current month
-function isLeaveRequestCurrentMonth(req) {
-    if (!req) return false;
-
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth(); // 0-11
-
-    // Check start date
-    if (req.start_date) {
-        const startDate = new Date(req.start_date);
-        if (startDate.getFullYear() === currentYear && startDate.getMonth() === currentMonth) {
-            return true;
-        }
-    }
-
-    // Check end date
-    if (req.end_date) {
-        const endDate = new Date(req.end_date);
-        if (endDate.getFullYear() === currentYear && endDate.getMonth() === currentMonth) {
-            return true;
-        }
-    }
-
-    // Check if the leave period spans the current month
-    if (req.start_date && req.end_date) {
-        const startDate = new Date(req.start_date);
-        const endDate = new Date(req.end_date);
-
-        // Create date objects for the first and last day of current month
-        const monthStart = new Date(currentYear, currentMonth, 1);
-        const monthEnd = new Date(currentYear, currentMonth + 1, 0); // Last day of month
-
-        // Check if the leave period overlaps with the current month
-        return !(startDate > monthEnd || endDate < monthStart);
-    }
-
-    return false;
-}
-
-// Apply leave request filters (called when Apply button clicked)
-function applyLeaveRequestFilters() {
-    filterLeaveRequests();
-}
-
-// Toggle leave request filter visibility
-function toggleLeaveRequestFilter() {
-    const filterArea = document.getElementById('leaveRequestFilterArea');
-    const btn = document.getElementById('leaveRequestHideFilterBtn');
+// Toggle work status request filter visibility
+function toggleWorkStatusRequestFilter() {
+    const filterArea = document.getElementById('workStatusRequestFilterArea');
+    const btn = document.getElementById('workStatusRequestHideFilterBtn');
     if (!filterArea) return;
     const isVisible = filterArea.style.display !== 'none';
     filterArea.style.display = isVisible ? 'none' : 'block';
@@ -4141,139 +4104,534 @@ function toggleLeaveRequestFilter() {
     }
 }
 
-// Filter the leave request employee list as the user types and show matching
-// suggestions in the dropdown (similar to DTR employee search).
-function filterLeaveRequestEmployees() {
-    const input = document.getElementById('leaveRequestEmployeeSearch');
-    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
-    const clearBtn = document.getElementById('leaveRequestSearchClear');
-    if (!input || !dropdown) return;
+// Render work status requests table (for HR/Admin)
+function renderWorkStatusRequestTable() {
+    const tableSection = document.getElementById('workStatusRequestTableSection');
+    if (!tableSection) return;
 
-    const term = input.value.trim().toLowerCase();
-    if (clearBtn) clearBtn.style.display = term ? 'flex' : 'none';
-    leaveRequestSelectedSuggestionIndex = -1;
-
-    if (!term) {
-        dropdown.style.display = 'none';
+    // Check if user is HR/Admin
+    const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
+    if (userRole !== 'admin' && userRole !== 'hr') {
+        // Employees don't see the management table
+        tableSection.innerHTML = '';
         return;
     }
 
-    const matches = allEmployees.filter(emp => {
-        const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
-        const employeeId = (emp.employeeid || '').toLowerCase();
-        const email = (emp.email || '').toLowerCase();
-        return fullname.includes(term) || employeeId.includes(term) || email.includes(term);
-    }).slice(0, 8);
+    // Apply filters first
+    filterWorkStatusRequests();
 
-    dropdown.innerHTML = matches.length === 0
-        ? '<div class="dtr-suggestion-empty">No employees found</div>'
-        : matches.map((emp) => {
-            const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
-            const role = (emp.role || 'employee').toLowerCase();
-            return `
-                <div class="dtr-suggestion" onclick="selectLeaveRequestEmployee('${escapeHtml(emp.uid)}')">
-                    <div class="dtr-suggestion-avatar">${initials(emp)}</div>
-                    <div class="dtr-suggestion-body">
-                        <div class="dtr-suggestion-name">${highlightMatchText(fullname, term)}</div>
-                        <div class="dtr-suggestion-meta">${escapeHtml(emp.employeeid || 'N/A')}${emp.department ? ' &bull; ' + escapeHtml(emp.department) : ''}</div>
-                    </div>
-                    <span class="dtr-suggestion-badge role-${escapeHtml(role)}">${escapeHtml(role)}</span>
-                </div>`;
-        }).join('');
+    // Filter to only show pending requests for management (if no status filter is set)
+    let displayRequests = [...filteredWorkStatusRequests];
 
-    dropdown.style.display = 'block';
-}
+    // Apply sorting
+    displayRequests.sort((a, b) => {
+        let valueA = a[workStatusRequestSort.field];
+        let valueB = b[workStatusRequestSort.field];
 
-// Picking a suggestion narrows the search box to that person and re-filters
-function selectLeaveRequestEmployee(uid) {
-    const emp = getEmployeeByUid(uid);
-    if (!emp) return;
+        // Handle the "employee" pseudo-field — sort by fullname instead
+        // because req.employee doesn't exist on the record.
+        if (workStatusRequestSort.field === 'employee') {
+            valueA = a.fullname || '';
+            valueB = b.fullname || '';
+        }
 
-    const input = document.getElementById('leaveRequestEmployeeSearch');
-    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
-    const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.trim();
+        // Handle date fields
+        if (workStatusRequestSort.field.includes('date')) {
+            valueA = new Date(valueA);
+            valueB = new Date(valueB);
+        }
 
-    if (input) input.value = fullname;
-    if (dropdown) dropdown.style.display = 'none';
-    filterLeaveRequests();
-}
+        if (valueA < valueB) return workStatusRequestSort.direction === 'asc' ? -1 : 1;
+        if (valueA > valueB) return workStatusRequestSort.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
 
-// Clear the Leave Request search box
-function clearLeaveRequestSearch() {
-    const input = document.getElementById('leaveRequestEmployeeSearch');
-    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
-    const clearBtn = document.getElementById('leaveRequestSearchClear');
-
-    if (input) input.value = '';
-    if (dropdown) dropdown.style.display = 'none';
-    if (clearBtn) clearBtn.style.display = 'none';
-    leaveRequestSelectedSuggestionIndex = -1;
-    filterLeaveRequests();
-}
-
-// Keyboard navigation (arrows/enter/escape) for the Leave Request search dropdown
-function handleLeaveRequestSearchKeydown(event) {
-    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
-    if (!dropdown || dropdown.style.display === 'none') return;
-    const items = dropdown.querySelectorAll('.dtr-suggestion');
-    if (!items.length) return;
-
-    if (event.key === 'ArrowDown') {
-        event.preventDefault();
-        leaveRequestSelectedSuggestionIndex = Math.min(leaveRequestSelectedSuggestionIndex + 1, items.length - 1);
-    } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        leaveRequestSelectedSuggestionIndex = Math.max(leaveRequestSelectedSuggestionIndex - 1, 0);
-    } else if (event.key === 'Enter') {
-        event.preventDefault();
-        const target = leaveRequestSelectedSuggestionIndex >= 0 ? items[leaveRequestSelectedSuggestionIndex] : items[0];
-        target.click();
+    if (displayRequests.length === 0) {
+        tableSection.innerHTML = `
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><i class="fa-solid fa-briefcase"></i> Work Status Requests</div>
+                </div>
+                <div class="card-body">
+                    <p class="text-center">No work status requests matching your filters.</p>
+                </div>
+            </div>
+        `;
         return;
-    } else if (event.key === 'Escape') {
-        dropdown.style.display = 'none';
-        return;
+    }
+
+    // Calculate pagination
+    const totalPages = Math.ceil(displayRequests.length / WORK_STATUS_REQUESTS_PER_PAGE);
+    const startIndex = (workStatusRequestsCurrentPage - 1) * WORK_STATUS_REQUESTS_PER_PAGE;
+    const endIndex = Math.min(startIndex + WORK_STATUS_REQUESTS_PER_PAGE, displayRequests.length);
+    const pageRequests = displayRequests.slice(startIndex, endIndex);
+
+    tableSection.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-briefcase"></i> Work Status Requests (${filteredWorkStatusRequests.filter(r => r.status === 'pending').length} pending)</div>
+            </div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortWorkStatusRequests('employee')">
+                                    Employee
+                                    ${workStatusRequestSort.field === 'employee' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
+                                     workStatusRequestSort.field === 'employee' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortWorkStatusRequests('work_status_type')">
+                                    Work Status Type
+                                    ${workStatusRequestSort.field === 'work_status_type' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
+                                     workStatusRequestSort.field === 'work_status_type' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th onclick="sortWorkStatusRequests('start_date')">
+                                    Dates
+                                    ${workStatusRequestSort.field === 'start_date' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
+                                     workStatusRequestSort.field === 'start_date' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th>Period</th>
+                                <th>Days</th>
+                                <th onclick="sortWorkStatusRequests('status')">
+                                    Status
+                                    ${workStatusRequestSort.field === 'status' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
+                                     workStatusRequestSort.field === 'status' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
+                                </th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${pageRequests.map(req => {
+                                const startDate = new Date(req.start_date);
+                                const endDate = new Date(req.end_date);
+                                const formattedStart = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                const formattedEnd = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                const dateRange = formattedStart === formattedEnd ? formattedStart : `${formattedStart} - ${formattedEnd}`;
+
+                                // Calculate working days (excluding weekends)
+                                const workDays = req.days ? req.days.filter(day => {
+                                    const date = new Date(day);
+                                    return date.getDay() !== 0 && date.getDay() !== 6; // Not Sunday (0) or Saturday (6)
+                                }).length : 0;
+
+                                // Get work status label
+                                const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                                // Optional attachment link — the backend saves it under
+                                // storage/work-status/<RFID>/<filename> and returns the
+                                // relative path in req.attachment_path.
+                                const attachmentLink = req.attachment_path
+                                    ? `<div style="margin-top:4px;font-size:11px;">
+                                         <a href="javascript:void(0)" onclick="openWorkStatusAttachmentModal('${escapeHtml(req.attachment_path)}', '${escapeHtml(req.attachment_path.split('/').pop() || 'attachment')}')" style="color:var(--primary);text-decoration:underline;">
+                                           <i class="fa-solid fa-paperclip"></i> Attachment
+                                         </a>
+                                       </div>`
+                                    : '';
+                                return `
+                                    <tr>
+                                        <td>
+                                            <div class="emp-info">
+                                                <div>${escapeHtml(req.fullname)}</div>
+                                                <small class="text-muted">${escapeHtml(req.employeeid || req.uid)}</small>
+                                                ${attachmentLink}
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="badge" style="background:var(--work-status-light);color:var(--work-status);">
+                                                ${escapeHtml(wsLabel)}
+                                            </span>
+                                        </td>
+                                        <td>${dateRange}</td>
+                                        <td>${(req.period || 'whole_day').replace('_', ' ').toUpperCase()}</td>
+                                        <td>${workDays}</td>
+                                        <td>
+                                            <span class="badge ${req.status === 'approved' ? 'badge-approved' :
+                                                            req.status === 'rejected' ? 'badge-rejected' : 'badge-pending'}">
+                                                ${escapeHtml((req.status || '').toUpperCase())}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div class="action-buttons" style="display:flex;gap:4px;flex-wrap:wrap;">
+                                                <button class="btn btn-outline btn-sm" onclick="openWorkStatusDetailModal('${req.id}')">
+                                                    <i class="fa-solid fa-eye"></i> View
+                                                </button>
+                                                ${req.status === 'pending' ? `
+                                                    <button class="btn btn-outline btn-sm" onclick="approveWorkStatusRequest('${req.id}')">
+                                                        <i class="fa-solid fa-check"></i> Approve
+                                                    </button>
+                                                    <button class="btn btn-outline btn-sm" onclick="rejectWorkStatusRequest('${req.id}')">
+                                                        <i class="fa-solid fa-times"></i> Reject
+                                                    </button>
+                                                ` : ''}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // Add pagination controls
+    const paginationContainer = document.createElement('div');
+    paginationContainer.className = 'pagination-footer';
+    paginationContainer.style.display = 'flex';
+    paginationContainer.style.justifyContent = 'center';
+    paginationContainer.style.alignItems = 'center';
+    paginationContainer.style.gap = '8px';
+    paginationContainer.style.marginTop = '16px';
+
+    let paginationHTML = '';
+
+    // Previous button
+    paginationHTML += `
+        <button class="btn btn-outline btn-sm pagination-btn"
+                onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage - 1})"
+                ${workStatusRequestsCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+            Prev
+        </button>
+    `;
+
+    // Page numbers
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, workStatusRequestsCurrentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    if (startPage > 1) {
+        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeWorkStatusRequestPage(1)">1</button>`;
+        if (startPage > 2) {
+            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
+        const isActive = i === workStatusRequestsCurrentPage;
+        paginationHTML += `
+            <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
+                    onclick="changeWorkStatusRequestPage(${i})"
+                    ${isActive ? 'style="font-weight:700;"' : ''}>
+                ${i}
+            </button>
+        `;
+    }
+
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+        }
+        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn"
+                                onclick="changeWorkStatusRequestPage(${totalPages})">${totalPages}</button>`;
+    }
+
+    // Next button
+    paginationHTML += `
+        <button class="btn btn-outline btn-sm pagination-btn"
+                onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage + 1})"
+                ${workStatusRequestsCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+            Next
+        </button>
+    `;
+
+    paginationContainer.innerHTML = paginationHTML;
+    tableSection.appendChild(paginationContainer);
+}
+
+// Change work status request page
+function changeWorkStatusRequestPage(page) {
+    const totalPages = Math.ceil(filteredWorkStatusRequests.length / WORK_STATUS_REQUESTS_PER_PAGE);
+    if (page < 1 || page > totalPages) return;
+    workStatusRequestsCurrentPage = page;
+    renderWorkStatusRequestTable();
+}
+
+// Sort work status requests by field
+function sortWorkStatusRequests(field) {
+    // Toggle direction if clicking the same field
+    if (workStatusRequestSort.field === field) {
+        workStatusRequestSort.direction = workStatusRequestSort.direction === 'asc' ? 'desc' : 'asc';
     } else {
+        // Sort ascending by default for new field
+        workStatusRequestSort.field = field;
+        workStatusRequestSort.direction = 'asc';
+    }
+
+    // Reset to first page when sorting
+    workStatusRequestsCurrentPage = 1;
+    renderWorkStatusRequestTable();
+}
+
+// Approve work status request
+async function approveWorkStatusRequest(requestId) {
+    if (!confirm('Approve this work status request?')) return;
+
+    try {
+        // The backend route is POST /api/approve-work-status/<request_id>
+        const response = await fetch(`${dashboardApiBaseUrl}/api/approve-work-status/${encodeURIComponent(requestId)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to approve work status request.', 'error');
+            return;
+        }
+
+        showNotification('Work status request approved successfully!', 'success');
+        await loadWorkStatusRequests();
+    } catch (error) {
+        console.error('Error approving work status request:', error);
+        showNotification('Network error. Please try again.', 'error');
+    }
+}
+
+// Reject work status request
+async function rejectWorkStatusRequest(requestId) {
+    if (!confirm('Reject this work status request?')) return;
+
+    try {
+        // The backend route is POST /api/reject-work-status/<request_id>
+        const response = await fetch(`${dashboardApiBaseUrl}/api/reject-work-status/${encodeURIComponent(requestId)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({}));
+            showNotification(err.message || 'Failed to reject work status request.', 'error');
+            return;
+        }
+
+        showNotification('Work status request rejected successfully!', 'success');
+        await loadWorkStatusRequests();
+    } catch (error) {
+        console.error('Error rejecting work status request:', error);
+        showNotification('Network error. Please try again.', 'error');
+    }
+}
+
+// Open work status request modal (for employees)
+function openWorkStatusRequestModal() {
+    const modal = document.getElementById('workStatusRequestModal');
+    if (modal) {
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        const form = document.getElementById('workStatusRequestForm');
+        if (form) form.reset();
+    }
+}
+
+// Close work status request modal
+function closeWorkStatusRequestModal() {
+    const modal = document.getElementById('workStatusRequestModal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.style.display = 'none';
+    }
+}
+
+// Handle work status request form submission
+async function handleWorkStatusRequestFormSubmit(event) {
+    event.preventDefault();
+
+    const form = event.target;
+
+    // Read fields by id — FormData only captures inputs that have `name`
+    // attributes, and these inputs use `id` only. So read directly.
+    const workStatusType = document.getElementById('workStatusType').value;
+    const workStatusPeriod = document.getElementById('workStatusPeriod').value;
+    const startDate = document.getElementById('workStatusStartDate').value;
+    const endDate = document.getElementById('workStatusEndDate').value;
+    const reason = document.getElementById('workStatusReason').value.trim();
+    const attachmentFile = document.getElementById('workStatusAttachment').files[0];
+
+    // Basic validation
+    if (!workStatusType || !startDate || !endDate || !reason) {
+        showWorkStatusRequestMessage('Please fill in all required fields.', 'error');
         return;
     }
 
-    items.forEach(i => i.classList.remove('active'));
-    items[leaveRequestSelectedSuggestionIndex].classList.add('active');
-    items[leaveRequestSelectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+    // Validate dates are not in the past
+    const startDateObj = new Date(startDate);
+    const endDateObj = new Date(endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to midnight to compare dates only
+
+    if (startDateObj < today) {
+        showWorkStatusRequestMessage('Work status requests cannot be submitted for past dates.', 'error');
+        return;
+    }
+
+    if (endDateObj < today) {
+        showWorkStatusRequestMessage('Work status requests cannot be submitted for past dates.', 'error');
+        return;
+    }
+
+    if (startDateObj > endDateObj) {
+        showWorkStatusRequestMessage('Start date cannot be after end date.', 'error');
+        return;
+    }
+
+    // Validate attachment if provided
+    if (attachmentFile) {
+        // FIXED: this MUST be an Array (square brackets) — not an object literal.
+        // Objects do not have an .includes() method, so the old `{...}` version
+        // would throw "allowedExtensions.includes is not a function" at runtime.
+        const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.txt'];
+        const extension = attachmentFile.name.substring(attachmentFile.name.lastIndexOf('.')).toLowerCase();
+        if (!allowedExtensions.includes(extension)) {
+            showWorkStatusRequestMessage('File must be PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, or TXT', 'error');
+            return;
+        }
+
+        // Check file size (5MB limit)
+        if (attachmentFile.size > 5 * 1024 * 1024) {
+            showWorkStatusRequestMessage('File size must be less than 5MB', 'error');
+            return;
+        }
+    }
+
+    // Get current user's RFID
+    const rfid = currentAdminUser ? currentAdminUser.rfid : '';
+    if (!rfid) {
+        showWorkStatusRequestMessage('Unable to identify employee. Please log in again.', 'error');
+        return;
+    }
+
+    // Show loading state
+    showWorkStatusRequestMessage('Submitting work status request...', 'info');
+
+    try {
+        // Prepare form data for API
+        const apiFormData = new FormData();
+        apiFormData.append('rfid', rfid);
+        apiFormData.append('start_date', startDate);
+        apiFormData.append('end_date', endDate);
+        apiFormData.append('reason', reason);
+        apiFormData.append('work_status_type', workStatusType);
+        apiFormData.append('period', workStatusPeriod);
+
+        if (attachmentFile) {
+            apiFormData.append('attachment', attachmentFile);
+        }
+
+        const response = await fetch(`${dashboardApiBaseUrl}/api/request-work-status`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
+                // Don't set Content-Type for FormData
+            },
+            body: apiFormData,
+            credentials: 'include'
+        });
+
+        const result = await response.json();
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        if (!response.ok) {
+            showWorkStatusRequestMessage(result.message || 'Failed to submit work status request.', 'error');
+            return;
+        }
+
+        // Success
+        showWorkStatusRequestMessage('Work status request submitted successfully!', 'success');
+
+        // Reset form
+        form.reset();
+        document.getElementById('workStatusAttachment').value = '';
+
+        // Reload work status requests to update the list
+        setTimeout(() => {
+            loadWorkStatusRequests();
+        }, 1000);
+
+    } catch (error) {
+        console.error('Error submitting work status request:', error);
+        showWorkStatusRequestMessage('Network error. Please try again.', 'error');
+    }
 }
 
-// Hide the Leave Request search dropdown when clicking anywhere else on the page
-document.addEventListener('click', (event) => {
-    const input = document.getElementById('leaveRequestEmployeeSearch');
-    const dropdown = document.getElementById('leaveRequestEmployeeDropdown');
-    if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
-        dropdown.style.display = 'none';
+// Show work status request form message
+function showWorkStatusRequestMessage(message, type = 'info') {
+    const msgEl = document.getElementById('workStatusRequestMessage') || document.getElementById('workStatusRequestMessagePage');
+    if (!msgEl) return;
+
+    const colors = {
+        success: '#10B981',
+        error: '#EF4444',
+        warning: '#F59E0B',
+        info: '#3B82F6'
+    };
+
+    const icons = {
+        success: 'fa-check-circle',
+        error: 'fa-exclamation-circle',
+        warning: 'fa-exclamation-triangle',
+        info: 'fa-info-circle'
+    };
+
+    msgEl.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${message}`;
+    msgEl.style.color = colors[type] || colors.info;
+    msgEl.style.display = 'block';
+
+    // Auto hide after 5 seconds for success messages
+    if (type === 'success') {
+        setTimeout(() => {
+            msgEl.style.display = 'none';
+        }, 5000);
     }
-});
+}
 
-// ============ LEAVE DETAIL MODAL ============
+// ============ END WORK STATUS REQUEST FUNCTIONS ============
 
-// Open the leave detail modal for a specific leave request ID.
+// ============ WORK STATUS DETAIL MODAL ============
+
+// Open the work status detail modal for a specific request ID.
 // Shows every field stored on the record and, if the request has an
 // attachment, renders an inline preview (image / PDF / text) plus
 // "Open in New Tab" and "Download" buttons.
-function openLeaveDetailModal(leaveId) {
-    const req = leaveRequests.find(r => String(r.id) === String(leaveId));
+function openWorkStatusDetailModal(requestId) {
+    const req = workStatusRequests.find(r => String(r.id) === String(requestId));
     if (!req) {
-        showNotification('Leave request not found.', 'error');
+        showNotification('Work status request not found.', 'error');
         return;
     }
 
-    const modal = document.getElementById('leaveDetailModal');
+    const modal = document.getElementById('workStatusDetailModal');
     if (!modal) return;
 
     // Populate header
-    const titleEl = document.getElementById('leaveDetailTitle');
-    const subtitleEl = document.getElementById('leaveDetailSubtitle');
-    if (titleEl) titleEl.textContent = `Leave Request #${escapeHtml(req.id)}`;
-    if (subtitleEl) subtitleEl.textContent = `${escapeHtml(req.fullname || 'Unknown')} · ${escapeHtml((req.leave_type || '').toUpperCase())}`;
+    const titleEl = document.getElementById('workStatusDetailTitle');
+    const subtitleEl = document.getElementById('workStatusDetailSubtitle');
+    if (titleEl) titleEl.textContent = `Work Status Request #${escapeHtml(req.id)}`;
+    if (subtitleEl) subtitleEl.textContent = `${escapeHtml(req.fullname || 'Unknown')} · ${escapeHtml((req.work_status_label || req.work_status_type || '').toUpperCase())}`;
 
     // Build the detail body
-    const body = document.getElementById('leaveDetailBody');
+    const body = document.getElementById('workStatusDetailBody');
     if (!body) return;
 
     const statusColors = {
@@ -4293,6 +4651,9 @@ function openLeaveDetailModal(leaveId) {
         const d = new Date(day);
         return d.getDay() !== 0 && d.getDay() !== 6;
     }).length;
+
+    const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const periodLabel = (req.period || 'whole_day').replace('_', ' ').toUpperCase();
 
     // Render attachment area if present
     let attachmentHTML = '';
@@ -4318,7 +4679,7 @@ function openLeaveDetailModal(leaveId) {
                         </a>
                     </div>
                 </div>
-                <div id="leaveDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
+                <div id="workStatusDetailAttachmentPreview" style="margin-top:12px;min-height:120px;">
                     <div style="display:flex;justify-content:center;align-items:center;padding:40px 0;color:var(--text-muted);font-size:13px;">
                         <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading preview…
                     </div>
@@ -4348,8 +4709,12 @@ function openLeaveDetailModal(leaveId) {
                 <span class="detail-value">${escapeHtml(req.department || 'N/A')}</span>
             </div>
             <div class="detail-item">
-                <span class="detail-label"><i class="fa-solid fa-tag"></i> Leave Type</span>
-                <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(req.leave_type || 'N/A')}</span>
+                <span class="detail-label"><i class="fa-solid fa-briefcase"></i> Work Status Type</span>
+                <span class="detail-value" style="text-transform:capitalize;">${escapeHtml(wsLabel)}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label"><i class="fa-solid fa-clock"></i> Time Period</span>
+                <span class="detail-value">${escapeHtml(periodLabel)}</span>
             </div>
             <div class="detail-item">
                 <span class="detail-label"><i class="fa-solid fa-calendar-plus"></i> Start Date</span>
@@ -4393,14 +4758,14 @@ function openLeaveDetailModal(leaveId) {
     `;
 
     // Populate footer actions
-    const footerLeft = document.getElementById('leaveDetailFooterLeft');
+    const footerLeft = document.getElementById('workStatusDetailFooterLeft');
     if (footerLeft) {
         if (req.status === 'pending') {
             footerLeft.innerHTML = `
-                <button class="btn btn-outline btn-sm" onclick="approveLeaveRequest('${escapeHtml(req.id)}'); closeLeaveDetailModal();">
+                <button class="btn btn-outline btn-sm" onclick="approveWorkStatusRequest('${escapeHtml(req.id)}'); closeWorkStatusDetailModal();">
                     <i class="fa-solid fa-check"></i> Approve
                 </button>
-                <button class="btn btn-outline btn-sm" onclick="rejectLeaveRequest('${escapeHtml(req.id)}'); closeLeaveDetailModal();">
+                <button class="btn btn-outline btn-sm" onclick="rejectWorkStatusRequest('${escapeHtml(req.id)}'); closeWorkStatusDetailModal();">
                     <i class="fa-solid fa-times"></i> Reject
                 </button>
             `;
@@ -4415,22 +4780,22 @@ function openLeaveDetailModal(leaveId) {
 
     // If there's an attachment, load its preview
     if (req.attachment_path) {
-        loadLeaveAttachmentPreview(req.attachment_path, 'leaveDetailAttachmentPreview');
+        loadWorkStatusAttachmentPreview(req.attachment_path, 'workStatusDetailAttachmentPreview');
     }
 }
 
-// Close the leave detail modal
-function closeLeaveDetailModal() {
-    const modal = document.getElementById('leaveDetailModal');
+// Close the work status detail modal
+function closeWorkStatusDetailModal() {
+    const modal = document.getElementById('workStatusDetailModal');
     if (modal) modal.classList.add('hidden');
     document.body.style.overflow = '';
 }
 
-// Load and render an inline preview of a leave attachment into a given
-// container element ID. Uses the /api/leave-attachment/meta endpoint to
+// Load and render an inline preview of a work status attachment into a given
+// container element ID. Uses the /api/work-status-attachment/meta endpoint to
 // decide how to render (image, PDF, text) and falls back to a download
 // card for anything the browser can't preview natively.
-async function loadLeaveAttachmentPreview(attachmentPath, containerId) {
+async function loadWorkStatusAttachmentPreview(attachmentPath, containerId) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
@@ -4488,20 +4853,20 @@ async function loadLeaveAttachmentPreview(attachmentPath, containerId) {
     }
 }
 
-// ============ LEAVE ATTACHMENT PREVIEW MODAL ============
+// ============ WORK STATUS ATTACHMENT PREVIEW MODAL ============
 
-// Open the standalone leave attachment preview modal.
-// This is what the small "Attachment" link in the leave table calls.
-function openLeaveAttachmentModal(attachmentPath, fileName) {
-    const modal = document.getElementById('leaveAttachmentModal');
+// Open the standalone work status attachment preview modal.
+// This is what the small "Attachment" link in the work status table calls.
+function openWorkStatusAttachmentModal(attachmentPath, fileName) {
+    const modal = document.getElementById('workStatusAttachmentModal');
     if (!modal) return;
 
-    const titleEl = document.getElementById('leaveAttachmentTitle');
-    const subtitleEl = document.getElementById('leaveAttachmentSubtitle');
-    const body = document.getElementById('leaveAttachmentBody');
-    const metaEl = document.getElementById('leaveAttachmentMeta');
-    const openBtn = document.getElementById('leaveAttachmentOpenBtn');
-    const downloadBtn = document.getElementById('leaveAttachmentDownloadBtn');
+    const titleEl = document.getElementById('workStatusAttachmentTitle');
+    const subtitleEl = document.getElementById('workStatusAttachmentSubtitle');
+    const body = document.getElementById('workStatusAttachmentBody');
+    const metaEl = document.getElementById('workStatusAttachmentMeta');
+    const openBtn = document.getElementById('workStatusAttachmentOpenBtn');
+    const downloadBtn = document.getElementById('workStatusAttachmentDownloadBtn');
 
     const inlineUrl = `${dashboardApiBaseUrl}/${attachmentPath}?inline=1`;
     const downloadUrl = `${dashboardApiBaseUrl}/${attachmentPath}`;
@@ -4579,7 +4944,7 @@ function openLeaveAttachmentModal(attachmentPath, fileName) {
     // Fetch and show file metadata in the footer
     if (metaEl) {
         const rfid = attachmentPath.split('/').slice(-2, -1)[0] || '';
-        fetch(`${dashboardApiBaseUrl}/api/leave-attachment/meta/${encodeURIComponent(rfid)}/${encodeURIComponent(fileName)}`, {
+        fetch(`${dashboardApiBaseUrl}/api/work-status-attachment/meta/${encodeURIComponent(rfid)}/${encodeURIComponent(fileName)}`, {
             headers: getAuthHeaders(),
             credentials: 'include'
         })
@@ -4595,520 +4960,14 @@ function openLeaveAttachmentModal(attachmentPath, fileName) {
     }
 }
 
-// Close the standalone leave attachment preview modal
-function closeLeaveAttachmentModal() {
-    const modal = document.getElementById('leaveAttachmentModal');
+// Close the standalone work status attachment preview modal
+function closeWorkStatusAttachmentModal() {
+    const modal = document.getElementById('workStatusAttachmentModal');
     if (modal) modal.classList.add('hidden');
     document.body.style.overflow = '';
 }
 
-// ============ END LEAVE ATTACHMENT PREVIEW MODAL ============
-
-// Render leave requests table (for HR/Admin)
-function renderLeaveRequestTable() {
-    const tableSection = document.getElementById('leaveRequestTableSection');
-    if (!tableSection) return;
-
-    // Check if user is HR/Admin
-    const userRole = (currentAdminUser && currentAdminUser.role) || 'employee';
-    if (userRole !== 'admin' && userRole !== 'hr') {
-        // Employees don't see the management table
-        tableSection.innerHTML = '';
-        return;
-    }
-
-    // Apply filters first
-    filterLeaveRequests();
-
-    // Filter to only show pending requests for management (if no status filter is set)
-    let displayRequests = [...filteredLeaveRequests];
-    if (!leaveRequestFilters.status) {
-        // Show all leave requests active during the current month when no specific status is filtered
-        displayRequests = filteredLeaveRequests.filter(req => isLeaveRequestCurrentMonth(req));
-    }
-
-    // Apply sorting
-    displayRequests.sort((a, b) => {
-        let valueA = a[leaveRequestSort.field];
-        let valueB = b[leaveRequestSort.field];
-
-        // Handle the "employee" pseudo-field — sort by fullname instead
-        // because req.employee doesn't exist on the record.
-        if (leaveRequestSort.field === 'employee') {
-            valueA = a.fullname || '';
-            valueB = b.fullname || '';
-        }
-
-        // Handle date fields
-        if (leaveRequestSort.field.includes('date')) {
-            valueA = new Date(valueA);
-            valueB = new Date(valueB);
-        }
-
-        if (valueA < valueB) return leaveRequestSort.direction === 'asc' ? -1 : 1;
-        if (valueA > valueB) return leaveRequestSort.direction === 'asc' ? 1 : -1;
-        return 0;
-    });
-
-    if (displayRequests.length === 0) {
-        tableSection.innerHTML = `
-            <div class="card">
-                <div class="card-header">
-                    <div class="card-title"><i class="fa-solid fa-home"></i> Pending Leave Requests</div>
-                </div>
-                <div class="card-body">
-                    <p class="text-center">No pending leave requests matching your filters.</p>
-                </div>
-            </div>
-        `;
-        return;
-    }
-
-    // Calculate pagination
-    const totalPages = Math.ceil(displayRequests.length / LEAVE_REQUESTS_PER_PAGE);
-    const startIndex = (leaveRequestsCurrentPage - 1) * LEAVE_REQUESTS_PER_PAGE;
-    const endIndex = Math.min(startIndex + LEAVE_REQUESTS_PER_PAGE, displayRequests.length);
-    const pageRequests = displayRequests.slice(startIndex, endIndex);
-
-    tableSection.innerHTML = `
-        <div class="card">
-            <div class="card-header">
-                <div class="card-title"><i class="fa-solid fa-home"></i> Pending Leave Requests (${filteredLeaveRequests.filter(r => r.status === 'pending').length})</div>
-            </div>
-            <div class="card-body">
-                <div class="table-wrap">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th onclick="sortLeaveRequests('employee')">
-                                    Employee
-                                    ${leaveRequestSort.field === 'employee' && leaveRequestSort.direction === 'asc' ? ' ↑' :
-                                     leaveRequestSort.field === 'employee' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
-                                </th>
-                                <th onclick="sortLeaveRequests('leave_type')">
-                                    Leave Type
-                                    ${leaveRequestSort.field === 'leave_type' && leaveRequestSort.direction === 'asc' ? ' ↑' :
-                                     leaveRequestSort.field === 'leave_type' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
-                                </th>
-                                <th onclick="sortLeaveRequests('start_date')">
-                                    Dates
-                                    ${leaveRequestSort.field === 'start_date' && leaveRequestSort.direction === 'asc' ? ' ↑' :
-                                     leaveRequestSort.field === 'start_date' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
-                                </th>
-                                <th onclick="sortLeaveRequestDays()">
-                                    Days
-                                    ${leaveRequestSort.field === 'workDays' && leaveRequestSort.direction === 'asc' ? ' ↑' :
-                                     leaveRequestSort.field === 'workDays' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
-                                </th>
-                                <th onclick="sortLeaveRequests('status')">
-                                    Status
-                                    ${leaveRequestSort.field === 'status' && leaveRequestSort.direction === 'asc' ? ' ↑' :
-                                     leaveRequestSort.field === 'status' && leaveRequestSort.direction === 'desc' ? ' ↓' : ''}
-                                </th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${pageRequests.map(req => {
-                                const startDate = new Date(req.start_date);
-                                const endDate = new Date(req.end_date);
-                                const formattedStart = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                                const formattedEnd = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-                                const dateRange = formattedStart === formattedEnd ? formattedStart : `${formattedStart} - ${formattedEnd}`;
-
-                                // Calculate working days (excluding weekends)
-                                const workDays = req.days ? req.days.filter(day => {
-                                    const date = new Date(day);
-                                    return date.getDay() !== 0 && date.getDay() !== 6; // Not Sunday (0) or Saturday (6)
-                                }).length : 0;
-
-
-// Optional attachment link — the backend saves it under
-// storage/leave-request/<RFID>/<filename> and returns the
-// relative path in req.attachment_path.
-                                const attachmentLink = req.attachment_path
-                                    ? `<div style="margin-top:4px;font-size:11px;">
-                                         <a href="javascript:void(0)" onclick="openLeaveAttachmentModal('${escapeHtml(req.attachment_path)}', '${escapeHtml(req.attachment_path.split('/').pop() || 'attachment')}')" style="color:var(--primary);text-decoration:underline;">
-                                           <i class="fa-solid fa-paperclip"></i> Attachment
-                                         </a>
-                                       </div>`
-                                    : '';
-                                return `
-                                    <tr>
-                                        <td>
-                                            <div class="emp-info">
-                                                <div>${escapeHtml(req.fullname)}</div>
-                                                <small class="text-muted">${escapeHtml(req.employeeid || req.uid)}</small>
-                                                ${attachmentLink}
-                                            </div>
-                                        </td>
-                                        <td>
-                                            <span class="badge" style="background:var(--leave-light);color:var(--leave);">
-                                                ${escapeHtml((req.leave_type || '').charAt(0).toUpperCase() + (req.leave_type || '').slice(1))}
-                                            </span>
-                                        </td>
-                                        <td>${dateRange}</td>
-                                        <td>${workDays}</td>
-                                        <td>
-                                            <span class="badge ${req.status === 'approved' ? 'badge-approved' :
-                                                            req.status === 'rejected' ? 'badge-rejected' : 'badge-pending'}">
-                                                ${escapeHtml((req.status || '').toUpperCase())}
-                                            </span>
-                                        </td>
-                                        <td>
-                                            <div class="action-buttons" style="display:flex;gap:4px;flex-wrap:wrap;">
-                                                <button class="btn btn-outline btn-sm" onclick="openLeaveDetailModal('${req.id}')">
-                                                    <i class="fa-solid fa-eye"></i> View
-                                                </button>
-                                                ${req.status === 'pending' ? `
-                                                    <button class="btn btn-outline btn-sm" onclick="approveLeaveRequest('${req.id}')">
-                                                        <i class="fa-solid fa-check"></i> Approve
-                                                    </button>
-                                                    <button class="btn btn-outline btn-sm" onclick="rejectLeaveRequest('${req.id}')">
-                                                        <i class="fa-solid fa-times"></i> Reject
-                                                    </button>
-                                                ` : ''}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                `;
-                            }).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    `;
-
-    // Add pagination controls
-    const paginationContainer = document.createElement('div');
-    paginationContainer.className = 'pagination-footer';
-    paginationContainer.style.display = 'flex';
-    paginationContainer.style.justifyContent = 'center';
-    paginationContainer.style.alignItems = 'center';
-    paginationContainer.style.gap = '8px';
-    paginationContainer.style.marginTop = '16px';
-
-    let paginationHTML = '';
-
-    // Previous button
-    paginationHTML += `
-        <button class="btn btn-outline btn-sm pagination-btn"
-                onclick="changeLeaveRequestPage(${leaveRequestsCurrentPage - 1})"
-                ${leaveRequestsCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-            Prev
-        </button>
-    `;
-
-    // Page numbers
-    const maxVisiblePages = 5;
-    let startPage = Math.max(1, leaveRequestsCurrentPage - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-    if (endPage - startPage < maxVisiblePages - 1) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-
-    if (startPage > 1) {
-        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeLeaveRequestPage(1)">1</button>`;
-        if (startPage > 2) {
-            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
-        }
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-        const isActive = i === leaveRequestsCurrentPage;
-        paginationHTML += `
-            <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
-                    onclick="changeLeaveRequestPage(${i})"
-                    ${isActive ? 'style="font-weight:700;"' : ''}>
-                ${i}
-            </button>
-        `;
-    }
-
-    if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
-        }
-        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn"
-                                onclick="changeLeaveRequestPage(${totalPages})">${totalPages}</button>`;
-    }
-
-    // Next button
-    paginationHTML += `
-        <button class="btn btn-outline btn-sm pagination-btn"
-                onclick="changeLeaveRequestPage(${leaveRequestsCurrentPage + 1})"
-                ${leaveRequestsCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-            Next
-        </button>
-    `;
-
-    paginationContainer.innerHTML = paginationHTML;
-    tableSection.appendChild(paginationContainer);
-}
-
-// Change leave request page
-function changeLeaveRequestPage(page) {
-    const totalPages = Math.ceil((leaveRequestFilters.status ? filteredLeaveRequests :
-                                filteredLeaveRequests.filter(r => r.status === 'pending')).length / LEAVE_REQUESTS_PER_PAGE);
-    if (page < 1 || page > totalPages) return;
-    leaveRequestsCurrentPage = page;
-    renderLeaveRequestTable();
-}
-
-// Sort leave requests by field
-function sortLeaveRequests(field) {
-    // Toggle direction if clicking the same field
-    if (leaveRequestSort.field === field) {
-        leaveRequestSort.direction = leaveRequestSort.direction === 'asc' ? 'desc' : 'asc';
-    } else {
-        // Sort ascending by default for new field
-        leaveRequestSort.field = field;
-        leaveRequestSort.direction = 'asc';
-    }
-
-    // Reset to first page when sorting
-    leaveRequestsCurrentPage = 1;
-    renderLeaveRequestTable();
-}
-
-// Special function for sorting by calculated work days
-function sortLeaveRequestDays() {
-    // Toggle direction if clicking the same field
-    if (leaveRequestSort.field === 'workDays') {
-        leaveRequestSort.direction = leaveRequestSort.direction === 'asc' ? 'desc' : 'asc';
-    } else {
-        // Sort ascending by default for new field
-        leaveRequestSort.field = 'workDays';
-        leaveRequestSort.direction = 'asc';
-    }
-
-    // Reset to first page when sorting
-    leaveRequestsCurrentPage = 1;
-    renderLeaveRequestTable();
-}
-
-// Approve leave request
-async function approveLeaveRequest(leaveId) {
-    if (!confirm('Approve this leave request?')) return;
-
-    try {
-        // The backend route is POST /api/approve-leave/<request_id>,
-        // not PUT /api/leave-requests/<id>/approve. We also pass the
-        // leave request's own id (not the employee's uid).
-        const response = await fetch(`${dashboardApiBaseUrl}/api/approve-leave/${encodeURIComponent(leaveId)}`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            credentials: 'include'
-        });
-
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            showNotification(err.message || 'Failed to approve leave request.', 'error');
-            return;
-        }
-
-        showNotification('Leave request approved successfully!', 'success');
-        await loadLeaveRequests();
-    } catch (error) {
-        console.error('Error approving leave request:', error);
-        showNotification('Network error. Please try again.', 'error');
-    }
-}
-
-// Reject leave request
-async function rejectLeaveRequest(leaveId) {
-    if (!confirm('Reject this leave request?')) return;
-
-    try {
-        // The backend route is POST /api/reject-leave/<request_id>,
-        // not PUT /api/leave-requests/<id>/reject. We also pass the
-        // leave request's own id (not the employee's uid).
-        const response = await fetch(`${dashboardApiBaseUrl}/api/reject-leave/${encodeURIComponent(leaveId)}`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            credentials: 'include'
-        });
-
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            showNotification(err.message || 'Failed to reject leave request.', 'error');
-            return;
-        }
-
-        showNotification('Leave request rejected successfully!', 'success');
-        await loadLeaveRequests();
-    } catch (error) {
-        console.error('Error rejecting leave request:', error);
-        showNotification('Network error. Please try again.', 'error');
-    }
-}
-
-// Open leave request modal (for employees)
-function openLeaveRequestModal() {
-    const modal = document.getElementById('leaveRequestModal');
-    if (modal) {
-        modal.classList.remove('hidden');
-        modal.style.display = 'flex';
-        const form = document.getElementById('leaveRequestForm');
-        if (form) form.reset();
-    }
-}
-
-// Close leave request modal
-function closeLeaveRequestModal() {
-    const modal = document.getElementById('leaveRequestModal');
-    if (modal) {
-        modal.classList.add('hidden');
-        modal.style.display = 'none';
-    }
-}
-
-// Handle leave request form submission
-async function handleLeaveRequestFormSubmit(event) {
-    event.preventDefault();
-
-    const form = event.target;
-
-    // Read fields by id — FormData only captures inputs that have `name`
-    // attributes, and these inputs use `id` only. So read directly.
-    const leaveType = document.getElementById('leaveType').value;
-    const startDate = document.getElementById('startDate').value;
-    const endDate = document.getElementById('endDate').value;
-    const reason = document.getElementById('leaveReason').value.trim();
-    const attachmentFile = document.getElementById('leaveAttachment').files[0];
-
-    // Basic validation
-    if (!leaveType || !startDate || !endDate || !reason) {
-        showLeaveRequestMessage('Please fill in all required fields.', 'error');
-        return;
-    }
-
-    // Validate attachment if provided
-    if (attachmentFile) {
-        // FIXED: this MUST be an Array (square brackets) — not an object literal.
-        // Objects do not have an .includes() method, so the old `{...}` version
-        // would throw "allowedExtensions.includes is not a function" at runtime.
-        const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.txt'];
-        const extension = attachmentFile.name.substring(attachmentFile.name.lastIndexOf('.')).toLowerCase();
-        if (!allowedExtensions.includes(extension)) {
-            showLeaveRequestMessage('File must be PDF, DOC, DOCX, JPG, JPEG, PNG, GIF, WEBP, or TXT', 'error');
-            return;
-        }
-
-        // Check file size (5MB limit)
-        if (attachmentFile.size > 5 * 1024 * 1024) {
-            showLeaveRequestMessage('File size must be less than 5MB', 'error');
-            return;
-        }
-    }
-
-    // Get current user's RFID
-    const rfid = currentAdminUser ? currentAdminUser.rfid : '';
-    if (!rfid) {
-        showLeaveRequestMessage('Unable to identify employee. Please log in again.', 'error');
-        return;
-    }
-
-    // Show loading state
-    showLeaveRequestMessage('Submitting leave request...', 'info');
-
-    try {
-        // Prepare form data for API
-        const apiFormData = new FormData();
-        apiFormData.append('rfid', rfid);
-        apiFormData.append('start_date', startDate);
-        apiFormData.append('end_date', endDate);
-        apiFormData.append('reason', reason);
-        apiFormData.append('leave_type', leaveType);
-
-        if (attachmentFile) {
-            apiFormData.append('attachment', attachmentFile);
-        }
-
-        const response = await fetch(`${dashboardApiBaseUrl}/api/request-leave`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
-                // Don't set Content-Type for FormData
-            },
-            body: apiFormData,
-            credentials: 'include'
-        });
-
-        const result = await response.json();
-
-        if (response.status === 401) {
-            redirectToLogin();
-            return;
-        }
-
-        if (!response.ok) {
-            showLeaveRequestMessage(result.message || 'Failed to submit leave request.', 'error');
-            return;
-        }
-
-        // Success
-        showLeaveRequestMessage('Leave request submitted successfully!', 'success');
-
-        // Reset form
-        form.reset();
-        document.getElementById('leaveAttachment').value = '';
-
-        // Reload leave requests to update the list
-        setTimeout(() => {
-            loadLeaveRequests();
-        }, 1000);
-
-    } catch (error) {
-        console.error('Error submitting leave request:', error);
-        showLeaveRequestMessage('Network error. Please try again.', 'error');
-    }
-}
-
-// Show leave request form message
-function showLeaveRequestMessage(message, type = 'info') {
-    const msgEl = document.getElementById('leaveRequestMessage');
-    if (!msgEl) return;
-
-    const colors = {
-        success: '#10B981',
-        error: '#EF4444',
-        warning: '#F59E0B',
-        info: '#3B82F6'
-    };
-
-    const icons = {
-        success: 'fa-check-circle',
-        error: 'fa-exclamation-circle',
-        warning: 'fa-exclamation-triangle',
-        info: 'fa-info-circle'
-    };
-
-    msgEl.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}"></i> ${message}`;
-    msgEl.style.color = colors[type] || colors.info;
-    msgEl.style.display = 'block';
-
-    // Auto hide after 5 seconds for success messages
-    if (type === 'success') {
-        setTimeout(() => {
-            msgEl.style.display = 'none';
-        }, 5000);
-    }
-}
-
-// ============ END LEAVE REQUEST FUNCTIONS ============
+// ============ END WORK STATUS ATTACHMENT PREVIEW MODAL ============
 
 // ============ SESSION VERIFICATION ============
 
@@ -5142,8 +5001,8 @@ async function verifyDashboardSession() {
         await loadDTRMonths();
         // Load settings (which auto-checks version)
         await loadSettings();
-        // Load leave requests
-        await loadLeaveRequests();
+        // Load work status requests
+        await loadWorkStatusRequests();
         // Initialize search functionality
         initSearch();
     } catch (error) {
@@ -5247,10 +5106,10 @@ const pageHeaderMap = {
         title: 'Attendance Reports',
         subtitle: 'Generate, print, and export all attendance and HR reports.'
     },
-    '#leave-requests': {
-        breadcrumb: 'Leave Requests',
-        title: 'Leave Requests',
-        subtitle: 'Manage employee leave requests and approvals.'
+    '#work-status': {
+        breadcrumb: 'Work Status',
+        title: 'Work Status',
+        subtitle: 'Manage employee work status requests and approvals.'
     },
     '#employees': {
         breadcrumb: 'IPO — Employees Personal Info',

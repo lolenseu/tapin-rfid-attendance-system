@@ -7,7 +7,7 @@ const apiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 let currentUser = null;
 let allEmployees = [];
-let myLeaveRequests = [];
+let myWorkStatusRequests = [];
 
 /* ---------- Auth ---------- */
 
@@ -122,9 +122,9 @@ async function verifySession() {
     const enriched = allEmployees.find(e => e.rfid === currentUser?.rfid || e.uid === currentUser?.uid);
     if (enriched) currentUser = { ...currentUser, ...enriched };
 
-    // Load leave requests BEFORE monthly stats so the "Leaves" counter
+    // Load work status requests BEFORE monthly stats so the "Work Status" counter
     // and the "Absent" calc both have the right data to work with.
-    await loadLeaveRequests();
+    await loadWorkStatusRequests();
 
     // Load attendance data early so we have latest scan for paintUserInfo
     await loadAttendance();
@@ -219,9 +219,9 @@ async function loadMonthlyStats() {
     if (!record) return;
     const dtr = record.dtr || [];
 
-    // Approved leave dates for this month
-    const approvedLeaveDates = new Set();
-    myLeaveRequests.filter(r => (r.status || '').toLowerCase() === 'approved').forEach(r => {
+    // Approved work status dates for this month
+    const approvedWorkStatusDates = new Set();
+    myWorkStatusRequests.filter(r => (r.status || '').toLowerCase() === 'approved').forEach(r => {
       const s = r.start_date ? new Date(r.start_date) : null;
       const e = r.end_date ? new Date(r.end_date) : null;
       if (!s || !e || isNaN(s) || isNaN(e)) return;
@@ -230,7 +230,7 @@ async function loadMonthlyStats() {
       const from = s < mStart ? mStart : s;
       const to = e > mEnd ? mEnd : e;
       for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-        approvedLeaveDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+        approvedWorkStatusDates.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
       }
     });
 
@@ -247,7 +247,7 @@ async function loadMonthlyStats() {
 
     dtr.forEach(day => {
       const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-      const isLeave = day.status === 'on_leave';
+      const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
       const holiday = isHolidayRow(day);
       const dateStr = (day.date || '').slice(0, 10);
       const dayDate = dateStr ? new Date(dateStr) : null;
@@ -257,17 +257,17 @@ async function loadMonthlyStats() {
       if (holiday) return;
 
       if (hasScan) present++;
-      else if (!isWeekend && !isLeave && !isFuture && dateStr && !approvedLeaveDates.has(dateStr)) absent++;
+      else if (!isWeekend && !isWorkStatus && !isFuture && dateStr && !approvedWorkStatusDates.has(dateStr)) absent++;
 
       const h = Number.parseFloat(day.hours);
       if (!Number.isNaN(h)) hours += h;
     });
 
-    // "Leaves" counter — count approved + pending leaves that overlap the
+    // "Work Status" counter — count approved + pending work status that overlap the
     // current calendar month, matching the desktop dashboard logic.
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-    const leaveCount = myLeaveRequests.filter(r => {
+    const leaveCount = myWorkStatusRequests.filter(r => {
       const status = (r.status || '').toLowerCase();
       if (status !== 'approved' && status !== 'pending') return false;
       const start = new Date(r.start_date || '');
@@ -343,9 +343,9 @@ async function loadMyDTR() {
 
     tbody.innerHTML = dtr.map(day => {
       const isWeekend = day.day === 'Sat' || day.day === 'Sun';
-      const isLeave = day.status === 'on_leave';
+      const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
       let rowStyle = '';
-      if (isLeave) rowStyle = 'background:#FEF3C7;';
+      if (isWorkStatus) rowStyle = 'background:#FEF3C7;';
       else if (isWeekend) rowStyle = 'background:#F3F4F6;color:#94A3B8;';
 
       return `<tr style="${rowStyle}">
@@ -421,54 +421,56 @@ async function loadAttendance() {
   } catch (err) { console.error(err); }
 }
 
-/* ---------- Leave ---------- */
+/* ---------- Work Status ---------- */
 
-async function loadLeaveRequests() {
+async function loadWorkStatusRequests() {
   if (!currentUser) return;
-  const list = document.getElementById('leaveList');
-  const empty = document.getElementById('leaveEmpty');
+  const list = document.getElementById('workStatusList');
+  const empty = document.getElementById('workStatusEmpty');
   if (!list) return;
 
   try {
-    // FIXED: use the per-employee route. The plain /api/leave-requests
-    // endpoint returns EVERY employee's leave records (HR/Admin view).
-    // We only want this employee's requests, so we hit /api/leave-requests/<rfid>.
-    const res = await fetch(`${apiBaseUrl}/api/leave-requests/${encodeURIComponent(currentUser.rfid || '')}`, {
+    // Use the per-employee route. The plain /api/work-status-requests
+    // endpoint returns EVERY employee's work status records (HR/Admin view).
+    // We only want this employee's requests, so we hit /api/work-status-requests/<rfid>.
+    const res = await fetch(`${apiBaseUrl}/api/work-status-requests/${encodeURIComponent(currentUser.rfid || '')}`, {
       method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
     });
     if (res.ok) {
       const result = await res.json();
       // Show ALL of this employee's requests (pending + approved + rejected)
-      // so the "My Leave Requests" list is a complete history, not just
+      // so the "My Work Status Requests" list is a complete history, not just
       // the still-pending ones.
       const pending = result.data?.requests || [];
       const approved = result.data?.approved || [];
       const rejected = result.data?.rejected || [];
-      myLeaveRequests = [...pending, ...approved, ...rejected];
+      myWorkStatusRequests = [...pending, ...approved, ...rejected];
     } else {
-      myLeaveRequests = [];
+      myWorkStatusRequests = [];
     }
-  } catch (err) { myLeaveRequests = []; }
+  } catch (err) { myWorkStatusRequests = []; }
 
-  if (!myLeaveRequests.length) {
+  if (!myWorkStatusRequests.length) {
     list.innerHTML = '';
     if (empty) empty.style.display = 'block';
     return;
   }
   if (empty) empty.style.display = 'none';
 
-  list.innerHTML = myLeaveRequests.map((r, i) => {
+  list.innerHTML = myWorkStatusRequests.map((r, i) => {
     const status = (r.status || 'pending').toLowerCase();
     const cls = status === 'approved' ? 'badge-approved'
               : status === 'rejected' ? 'badge-rejected'
               : 'badge-pending';
     const canCancel = status === 'pending';
+    const wsLabel = r.work_status_label || (r.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const periodLabel = (r.period || 'whole_day').replace('_', ' ').toUpperCase();
 
     // If the backend saved an attachment for this request, render a link
     // so the user can open/download it. The file lives under
-    // storage/leave-request/<RFID>/<filename> and is served by the backend.
+    // storage/work-status/<RFID>/<filename> and is served by the backend.
     const attachmentLink = r.attachment_path
-      ? `<div class="leave-attachment" style="margin-top:6px;">
+      ? `<div class="work-status-attachment" style="margin-top:6px;">
            <a href="javascript:void(0)" onclick="viewAttachment('${encodeURIComponent(r.attachment_path)}')">
              <i class="fa-solid fa-paperclip"></i> View Attachment
            </a>
@@ -476,97 +478,116 @@ async function loadLeaveRequests() {
       : '';
 
     return `
-      <div class="leave-item">
-        <div class="leave-header">
-          <div class="leave-type">${escapeHtml((r.leave_type || '').toUpperCase())}</div>
+      <div class="work-status-item">
+        <div class="work-status-header">
+          <div class="work-status-type">${escapeHtml(wsLabel)}</div>
           <span class="badge ${cls}">${escapeHtml(status.toUpperCase())}</span>
         </div>
-        <div class="leave-dates">${escapeHtml(r.start_date || '--')} → ${escapeHtml(r.end_date || '--')}</div>
-        <div class="leave-reason">${escapeHtml(r.reason || '')}</div>
+        <div class="work-status-period">${escapeHtml(periodLabel)}</div>
+        <div class="work-status-dates">${escapeHtml(r.start_date || '--')} → ${escapeHtml(r.end_date || '--')}</div>
+        <div class="work-status-reason">${escapeHtml(r.reason || '')}</div>
         ${attachmentLink}
-        ${canCancel ? `<div class="leave-actions"><button class="btn btn-outline" onclick="cancelLeave(${i})"><i class="fa-solid fa-xmark"></i> Cancel</button></div>` : ''}
+        ${canCancel ? `<div class="work-status-actions"><button class="btn btn-outline" onclick="cancelWorkStatusRequest(${i})"><i class="fa-solid fa-xmark"></i> Cancel</button></div>` : ''}
       </div>`;
   }).join('');
 }
 
-function openLeaveModal() {
-  const m = document.getElementById('leaveModal');
+function openWorkStatusModal() {
+  const m = document.getElementById('workStatusModal');
   if (m) m.classList.add('show');
-  const f = document.getElementById('leaveRequestForm');
+  const f = document.getElementById('workStatusRequestForm');
   if (f) f.reset();
 }
-function closeLeaveModal() {
-  const m = document.getElementById('leaveModal');
+function closeWorkStatusModal() {
+  const m = document.getElementById('workStatusModal');
   if (m) m.classList.remove('show');
 }
 
-async function submitLeaveRequest(e) {
+async function submitWorkStatusRequest(e) {
   e.preventDefault();
   if (!currentUser) return false;
 
   const formData = new FormData();
   formData.append('rfid', currentUser.rfid);
   formData.append('employeeid', currentUser.employeeid || '');
-  formData.append('leave_type', document.getElementById('leaveType').value);
-  formData.append('start_date', document.getElementById('leaveStart').value);
-  formData.append('end_date', document.getElementById('leaveEnd').value);
-  // Reason is optional — we still send whatever the user typed, even if empty.
-  formData.append('reason', document.getElementById('leaveReason').value.trim());
+  formData.append('work_status_type', document.getElementById('workStatusType').value);
+  formData.append('period', document.getElementById('workStatusPeriod').value);
+  formData.append('start_date', document.getElementById('workStatusStart').value);
+  formData.append('end_date', document.getElementById('workStatusEnd').value);
+  // Reason is required
+  formData.append('reason', document.getElementById('workStatusReason').value.trim());
+
+  // Handle optional specific times
+  const startTime = document.getElementById('workStatusStartTime')?.value;
+  const endTime = document.getElementById('workStatusEndTime')?.value;
+  if (startTime) formData.append('start_time', startTime);
+  if (endTime) formData.append('end_time', endTime);
 
   // Handle file upload
-  const attachmentInput = document.getElementById('leaveAttachment');
+  const attachmentInput = document.getElementById('workStatusAttachment');
   if (attachmentInput.files && attachmentInput.files[0]) {
     formData.append('attachment', attachmentInput.files[0]);
   }
 
-  // Only start/end dates are required; reason is optional.
-  if (!formData.get('start_date') || !formData.get('end_date')) {
-    showMsg('leaveMessage', 'Please fill in all fields.', 'error'); return false;
-  }
-  if (new Date(formData.get('start_date')) > new Date(formData.get('end_date'))) {
-    showMsg('leaveMessage', 'Start date must be before end date.', 'error'); return false;
+  // Validate required fields
+  if (!formData.get('start_date') || !formData.get('end_date') || !formData.get('work_status_type') || !formData.get('reason')) {
+    showMsg('workStatusMessage', 'Please fill in all required fields.', 'error'); return false;
   }
 
-  showMsg('leaveMessage', 'Submitting…', 'info');
+  // Validate dates using string comparison to avoid timezone issues
+  const startDateStr = formData.get('start_date');
+  const endDateStr = formData.get('end_date');
+  const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+  if (startDateStr < todayStr) {
+    showMsg('workStatusMessage', 'Work status requests cannot be submitted for past dates.', 'error'); return false;
+  }
+
+  if (endDateStr < todayStr) {
+    showMsg('workStatusMessage', 'Work status requests cannot be submitted for past dates.', 'error'); return false;
+  }
+
+  if (startDateStr > endDateStr) {
+    showMsg('workStatusMessage', 'Start date must be before end date.', 'error'); return false;
+  }
+
+  showMsg('workStatusMessage', 'Submitting…', 'info');
 
   try {
-    // FIXED: the backend POST route is /api/request-leave, not /api/leave-requests.
-    // The plain /api/leave-requests route is GET-only and returns all employees'
-    // leave data, so posting there 405s. We also use getMultipartAuthHeaders()
-    // because FormData must NOT have Content-Type: application/json —
-    // the browser needs to add the multipart boundary itself.
-    const res = await fetch(`${apiBaseUrl}/api/request-leave`, {
+    // The backend POST route is /api/request-work-status.
+    // We also use getMultipartAuthHeaders() because FormData must NOT have
+    // Content-Type: application/json — the browser needs to add the
+    // multipart boundary itself.
+    const res = await fetch(`${apiBaseUrl}/api/request-work-status`, {
       method: 'POST',
       headers: getMultipartAuthHeaders(),
       body: formData,
       credentials: 'include'
     });
     const result = await res.json().catch(() => ({}));
-    if (!res.ok) { showMsg('leaveMessage', result.message || 'Failed.', 'error'); return false; }
-    showMsg('leaveMessage', 'Leave request submitted!', 'success');
-    await loadLeaveRequests();
+    if (!res.ok) { showMsg('workStatusMessage', result.message || 'Failed.', 'error'); return false; }
+    showMsg('workStatusMessage', 'Work status request submitted!', 'success');
+    await loadWorkStatusRequests();
     await loadMonthlyStats();
-    setTimeout(closeLeaveModal, 1200);
+    setTimeout(closeWorkStatusModal, 1200);
   } catch (err) {
-    showMsg('leaveMessage', 'Network error.', 'error');
+    showMsg('workStatusMessage', 'Network error.', 'error');
   }
   return false;
 }
 
-async function cancelLeave(index) {
-  const r = myLeaveRequests[index];
+async function cancelWorkStatusRequest(index) {
+  const r = myWorkStatusRequests[index];
   if (!r) return;
-  if (!confirm('Cancel this leave request?')) return;
+  if (!confirm('Cancel this work status request?')) return;
 
   try {
-    // FIXED: the backend DELETE route is /api/leave-requests/<id>,
-    // which we've added to app.py. The previous code hit the same URL
-    // but the route didn't exist yet, so it 404'd.
-    const res = await fetch(`${apiBaseUrl}/api/leave-requests/${encodeURIComponent(r.id || r.uid || index)}`, {
+    // The backend DELETE route is /api/work-status-requests/<id>.
+    const res = await fetch(`${apiBaseUrl}/api/work-status-requests/${encodeURIComponent(r.id || r.uid || index)}`, {
       method: 'DELETE', headers: getAuthHeaders(), credentials: 'include'
     });
     if (!res.ok) { alert('Failed to cancel.'); return; }
-    await loadLeaveRequests();
+    await loadWorkStatusRequests();
     await loadMonthlyStats();
   } catch (err) { alert('Network error.'); }
 }
@@ -1063,6 +1084,125 @@ function viewAttachment(filePath) {
 function closeAttachmentModal() {
   const modal = document.getElementById('attachmentModal');
   if (modal) modal.classList.remove('show');
+}
+
+/* ---------- Work Status Tab Switching ---------- */
+
+function showWorkStatusTab(tabName) {
+  document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+  if (tabName === 'requests') {
+    document.getElementById('workStatusRequestsContent')?.classList.add('active');
+    document.getElementById('workStatusRequestsTab')?.classList.add('active');
+  } else if (tabName === 'approval') {
+    document.getElementById('workStatusApprovalContent')?.classList.add('active');
+    document.getElementById('workStatusApprovalTab')?.classList.add('active');
+    loadWorkStatusApprovalList();
+  }
+}
+
+async function loadWorkStatusApprovalList() {
+  const list = document.getElementById('workStatusApprovalList');
+  const empty = document.getElementById('workStatusApprovalEmpty');
+  if (!list) return;
+
+  // Only HR/Admin should see approval list
+  const userRole = (currentUser && currentUser.role) || 'employee';
+  if (userRole !== 'admin' && userRole !== 'hr') {
+    list.innerHTML = '';
+    if (empty) {
+      empty.style.display = 'block';
+      empty.innerHTML = '<i class="fa-solid fa-lock"></i><p>Only HR/Admin can approve work status requests</p>';
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/work-status-requests`, {
+      method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
+    });
+    if (!res.ok) return;
+
+    const result = await res.json();
+    const pending = result.data?.requests || [];
+
+    if (!pending.length) {
+      list.innerHTML = '';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+
+    if (empty) empty.style.display = 'none';
+
+    list.innerHTML = pending.map(req => {
+      const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      const periodLabel = (req.period || 'whole_day').replace('_', ' ').toUpperCase();
+      
+      return `
+        <div class="work-status-approval-item">
+          <div class="work-status-approval-header">
+            <div class="work-status-approval-name">${escapeHtml(req.fullname || 'Unknown')}</div>
+            <span class="badge badge-pending">PENDING</span>
+          </div>
+          <div class="work-status-approval-detail">
+            <div><strong>${escapeHtml(wsLabel)}</strong> · ${escapeHtml(periodLabel)}</div>
+            <div>${escapeHtml(req.start_date || '--')} → ${escapeHtml(req.end_date || '--')}</div>
+            <div class="work-status-approval-reason">${escapeHtml(req.reason || '')}</div>
+          </div>
+          <div class="work-status-approval-actions">
+            <button class="btn btn-outline btn-sm" onclick="approveWorkStatusRequestMobile('${escapeHtml(req.id)}')">
+              <i class="fa-solid fa-check"></i> Approve
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="rejectWorkStatusRequestMobile('${escapeHtml(req.id)}')">
+              <i class="fa-solid fa-times"></i> Reject
+            </button>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    console.error('Load work status approval list error:', err);
+  }
+}
+
+async function approveWorkStatusRequestMobile(requestId) {
+  if (!confirm('Approve this work status request?')) return;
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/approve-work-status/${encodeURIComponent(requestId)}`, {
+      method: 'POST', headers: getAuthHeaders(), credentials: 'include'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.message || 'Failed to approve.');
+      return;
+    }
+    alert('Work status request approved successfully!');
+    await loadWorkStatusApprovalList();
+    await loadWorkStatusRequests();
+  } catch (err) {
+    alert('Network error.');
+  }
+}
+
+async function rejectWorkStatusRequestMobile(requestId) {
+  if (!confirm('Reject this work status request?')) return;
+
+  try {
+    const res = await fetch(`${apiBaseUrl}/api/reject-work-status/${encodeURIComponent(requestId)}`, {
+      method: 'POST', headers: getAuthHeaders(), credentials: 'include'
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      alert(err.message || 'Failed to reject.');
+      return;
+    }
+    alert('Work status request rejected successfully!');
+    await loadWorkStatusApprovalList();
+    await loadWorkStatusRequests();
+  } catch (err) {
+    alert('Network error.');
+  }
 }
 
 /* ---------- Init ---------- */

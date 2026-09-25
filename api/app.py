@@ -196,10 +196,10 @@ USER_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "users.json")
 # Store every received RFID scan and timestamp.
 ATTENDANCE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "attendance.json")
 
-# Persistent leave database (mirror of the feed, kept forever).
+# Persistent work status database (mirror of the feed, kept forever).
 # Structure: {"requests": [...], "approved": [...], "rejected": [...]}
-# This is the NEW leaves.json — it lives alongside users.json and is NEVER wiped.
-LEAVE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "leaves.json")
+# This is the NEW work-status.json — it lives alongside users.json and is NEVER wiped.
+WORK_STATUS_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "work-status.json")
 
 # Profile images storage
 PROFILE_STORAGE = os.path.join(BASE_DIR, "storage", "profiles")
@@ -210,13 +210,13 @@ SCAN_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_feed.json")
 # Scan events storage - keeps raw scan events (moved to feed)
 SCAN_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "feed", "scan_events.json")
 
-# Leave feed storage — this is the OLD leaves.json, renamed.
+# Work status feed storage — this is the OLD work-status.json, renamed.
 # Structure matches the persistent file: {"requests": [...], "approved": [...], "rejected": [...]}
 # It lives in storage/feed/ and IS wiped nightly at 12:00 AM.
-LEAVE_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "leaves_feed.json")
+WORK_STATUS_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "work-status_feed.json")
 
-# Leave request storage - stores uploaded files for leave requests
-LEAVE_REQUEST_STORAGE = os.path.join(BASE_DIR, "storage", "leave-request")
+# Work status request storage - stores uploaded files for work status requests
+WORK_STATUS_REQUEST_STORAGE = os.path.join(BASE_DIR, "storage", "work-status")
 
 # Activity feed storage - keeps all system activities for timeline
 ACTIVITY_FEED_FILE = os.path.join(BASE_DIR, "storage", "feed", "activity_feed.json")
@@ -242,32 +242,171 @@ NOTIFICATION_STORAGE = os.path.join(BASE_DIR, "storage", "notification")
 # Path: storage/settings/<RFID>.json
 EMPLOYEE_SETTINGS_STORAGE = os.path.join(BASE_DIR, "storage", "settings")
 
+# ============================================================================
+# WORK STATUS TYPES - Predefined choices for work status requests
+# ============================================================================
+# These are the available work status types that employees can choose from
+# when submitting a work status request. Each type has a code, label, and
+# whether it requires a specific time range or covers the whole day.
+
+WORK_STATUS_TYPES = {
+    "on_leave": {
+        "code": "on_leave",
+        "label": "On Leave",
+        "description": "Approved vacation, sick, emergency, etc.",
+        "requires_time": False,
+        "default_time_mode": "whole_day"
+    },
+    "official_travel": {
+        "code": "official_travel",
+        "label": "Official Travel",
+        "description": "Traveling for work",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "official_business": {
+        "code": "official_business",
+        "label": "Official Business",
+        "description": "Working outside the regular workplace",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "work_from_home": {
+        "code": "work_from_home",
+        "label": "Work From Home (WFH)",
+        "description": "Working remotely",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "field_work": {
+        "code": "field_work",
+        "label": "Field Work",
+        "description": "Assigned to work at another location",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "training": {
+        "code": "training",
+        "label": "Training",
+        "description": "Attending an official training/seminar",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "conference_seminar": {
+        "code": "conference_seminar",
+        "label": "Conference / Seminar",
+        "description": "Attending an official event",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "work_assignment": {
+        "code": "work_assignment",
+        "label": "Work Assignment",
+        "description": "Temporarily assigned elsewhere",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "offsite_duty": {
+        "code": "offsite_duty",
+        "label": "Offsite Duty",
+        "description": "Performing work outside the office",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "client_visit": {
+        "code": "client_visit",
+        "label": "Client Visit",
+        "description": "Visiting a client or partner",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "meeting_outside_office": {
+        "code": "meeting_outside_office",
+        "label": "Meeting Outside Office",
+        "description": "Attending an external meeting",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "special_assignment": {
+        "code": "special_assignment",
+        "label": "Special Assignment",
+        "description": "Temporary special work assignment",
+        "requires_time": True,
+        "default_time_mode": "whole_day"
+    },
+    "suspended_work": {
+        "code": "suspended_work",
+        "label": "Suspended Work",
+        "description": "Work suspended due to an official reason",
+        "requires_time": False,
+        "default_time_mode": "whole_day"
+    },
+    "holiday_non_working": {
+        "code": "holiday_non_working",
+        "label": "Holiday / Non-Working Day",
+        "description": "No regular work scheduled",
+        "requires_time": False,
+        "default_time_mode": "whole_day"
+    },
+    "rest_day": {
+        "code": "rest_day",
+        "label": "Rest Day",
+        "description": "Scheduled day off",
+        "requires_time": False,
+        "default_time_mode": "whole_day"
+    }
+}
+
+# ============================================================================
+# TIME PERIODS FOR SPECIFIC TIME WORK STATUS
+# ============================================================================
+# When a work status request is approved for specific time only, the
+# affected period(s) are stored. The DTR will show yellow highlighting
+# only for the affected period(s), not the whole day.
+#
+# Periods:
+#   - "am"       : Morning (AM time in/out)
+#   - "pm"       : Afternoon (PM time in/out)
+#   - "whole_day": Entire day (both AM and PM)
+#
+# For specific time, the exact time range can also be stored:
+#   - start_time: "08:00"
+#   - end_time:   "12:00"
+#   - period:     "am" | "pm" | "whole_day"
+
+WORK_STATUS_PERIODS = {
+    "am": "Morning (AM)",
+    "pm": "Afternoon (PM)",
+    "whole_day": "Whole Day"
+}
+
 # Ensure directories exist
 os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(WORK_STATUS_DATA_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(WORK_STATUS_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
 os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
 os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
 os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
-os.makedirs(LEAVE_REQUEST_STORAGE, exist_ok=True)
+os.makedirs(WORK_STATUS_REQUEST_STORAGE, exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
 print(f"USER_DATA_FILE: {USER_DATA_FILE}")
 print(f"ATTENDANCE_DATA_FILE: {ATTENDANCE_DATA_FILE}")
-print(f"LEAVE_DATA_FILE: {LEAVE_DATA_FILE}")
+print(f"WORK_STATUS_DATA_FILE: {WORK_STATUS_DATA_FILE}")
 print(f"PROFILE_STORAGE: {PROFILE_STORAGE}")
 print(f"SCAN_FEED_FILE: {SCAN_FEED_FILE}")
 print(f"SCAN_EVENTS_FILE: {SCAN_EVENTS_FILE}")
-print(f"LEAVE_FEED_FILE: {LEAVE_FEED_FILE}")
+print(f"WORK_STATUS_FEED_FILE: {WORK_STATUS_FEED_FILE}")
 print(f"ACTIVITY_FEED_FILE: {ACTIVITY_FEED_FILE}")
 print(f"SETTINGS_FILE: {SETTINGS_FILE}")
 print(f"NOTIFICATION_STORAGE: {NOTIFICATION_STORAGE}")
+print(f"WORK_STATUS_REQUEST_STORAGE: {WORK_STATUS_REQUEST_STORAGE}")
 print(f"REPORTLAB_AVAILABLE: {REPORTLAB_AVAILABLE}")
 print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
 print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
@@ -355,7 +494,7 @@ SCAN_COOLDOWN_SECONDS = 3 * 60
 #     storage/feed/scan_feed.json        <- recent scan entries
 #     storage/feed/scan_events.json      <- raw scan events
 #     storage/feed/activity_feed.json    <- system activity timeline
-#     storage/feed/leaves_feed.json      <- leave feed (mirror of leaves.json)
+#     storage/feed/work-status_feed.json <- work status feed (mirror of work-status.json)
 #
 # A background thread wakes up every 30 seconds and, when it detects that the
 # local clock has just crossed midnight, calls perform_nightly_feed_wipe()
@@ -367,7 +506,7 @@ SCAN_COOLDOWN_SECONDS = 3 * 60
 # Files NOT wiped (persistent, in storage/database/):
 #     - users.json           (employee records)
 #     - attendance.json      (DTR records)
-#     - leaves.json          (NEW mirror of the feed — kept forever)
+#     - work-status.json     (NEW mirror of the feed — kept forever)
 #     - settings.json        (config)
 _last_feed_wipe_date = None
 
@@ -375,12 +514,12 @@ def perform_nightly_feed_wipe(force=False):
     """Wipe all four feed files once per calendar day at 12:00 AM.
 
     Files cleared (all under storage/feed/):
-        - storage/feed/scan_feed.json      (scans list)
-        - storage/feed/scan_events.json    (scan_events list)
-        - storage/feed/activity_feed.json  (activities list)
-        - storage/feed/leaves_feed.json    (requests + approved + rejected)
+        - storage/feed/scan_feed.json          (scans list)
+        - storage/feed/scan_events.json        (scan_events list)
+        - storage/feed/activity_feed.json      (activities list)
+        - storage/feed/work-status_feed.json   (requests + approved + rejected)
 
-    The persistent mirror at storage/database/leaves.json is NEVER touched.
+    The persistent mirror at storage/database/work-status.json is NEVER touched.
 
     Also clears in-memory daily state (latest scan + per-RFID cooldown).
 
@@ -426,18 +565,18 @@ def perform_nightly_feed_wipe(force=False):
     except Exception as e:
         print(f"[Nightly] Failed to wipe activity_feed.json: {e}")
 
-    # --- 4) leaves_feed.json (the OLD leaves.json — same shape as the mirror) -
+    # --- 4) work-status_feed.json (the OLD work-status.json — same shape as the mirror) -
     # NOTE: We ONLY wipe the feed copy here. The mirror at
-    # storage/database/leaves.json is intentionally left alone.
+    # storage/database/work-status.json is intentionally left alone.
     try:
-        empty_leaves = {"requests": [], "approved": [], "rejected": []}
-        save_leave_feed_data(empty_leaves)
+        empty_work_status = {"requests": [], "approved": [], "rejected": []}
+        save_work_status_feed_data(empty_work_status)
         # Refresh the in-memory feed copy so the running app sees the empty state
-        leave_feed_data.clear()
-        leave_feed_data.update(empty_leaves)
-        print(f"[Nightly] Wiped leaves_feed.json")
+        work_status_feed_data.clear()
+        work_status_feed_data.update(empty_work_status)
+        print(f"[Nightly] Wiped work-status_feed.json")
     except Exception as e:
-        print(f"[Nightly] Failed to wipe leaves_feed.json: {e}")
+        print(f"[Nightly] Failed to wipe work-status_feed.json: {e}")
 
     # --- 5) In-memory daily state -------------------------------------------
     last_scan_tracking.clear()
@@ -1115,25 +1254,25 @@ def get_employee_setting(rfid, setting_key, default=None):
         return settings.get(setting_key, default)
 
 # ============================================================================
-# LEAVE STORAGE (TWO FILES, SAME SHAPE)
+# WORK STATUS STORAGE (TWO FILES, SAME SHAPE)
 # ============================================================================
 # Both files use the SAME structure:
 #     {"requests": [...], "approved": [...], "rejected": [...]}
 #
-# storage/feed/leaves_feed.json         <- OLD leaves.json, wiped nightly
-# storage/database/leaves.json          <- NEW mirror, never wiped
+# storage/feed/work-status_feed.json      <- OLD work-status.json, wiped nightly
+# storage/database/work-status.json       <- NEW mirror, never wiped
 #
 # Every write goes to BOTH files so they always match. Only the feed copy
 # is emptied at 12:00 AM by perform_nightly_feed_wipe().
 
-def _empty_leaves():
-    """Return a fresh empty leave structure."""
+def _empty_work_status():
+    """Return a fresh empty work status structure."""
     return {"requests": [], "approved": [], "rejected": []}
 
-def _normalize_leave_payload(data):
+def _normalize_work_status_payload(data):
     """Ensure the three top-level keys exist and are lists."""
     if not isinstance(data, dict):
-        return _empty_leaves()
+        return _empty_work_status()
     if "requests" not in data or not isinstance(data["requests"], list):
         data["requests"] = []
     if "approved" not in data or not isinstance(data["approved"], list):
@@ -1142,94 +1281,94 @@ def _normalize_leave_payload(data):
         data["rejected"] = []
     return data
 
-def load_leave_data():
-    """Load the persistent leave database from storage/database/leaves.json.
+def load_work_status_data():
+    """Load the persistent work status database from storage/database/work-status.json.
 
     Structure matches the feed: {requests, approved, rejected}.
     """
-    if not os.path.exists(LEAVE_DATA_FILE):
-        default_data = _empty_leaves()
-        with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
+    if not os.path.exists(WORK_STATUS_DATA_FILE):
+        default_data = _empty_work_status()
+        with open(WORK_STATUS_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
             f.write("\n")
-        print(f"Created new persistent leave file: {LEAVE_DATA_FILE}")
+        print(f"Created new persistent work status file: {WORK_STATUS_DATA_FILE}")
         return default_data
 
     try:
-        with open(LEAVE_DATA_FILE, "r", encoding="utf-8") as f:
+        with open(WORK_STATUS_DATA_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return _normalize_leave_payload(data)
+            return _normalize_work_status_payload(data)
     except (OSError, ValueError, json.JSONDecodeError) as e:
-        print(f"Error reading persistent leave file: {e}")
-        return _empty_leaves()
+        print(f"Error reading persistent work status file: {e}")
+        return _empty_work_status()
 
-def save_leave_data(leave_data):
-    """Save the persistent leave database to storage/database/leaves.json."""
-    os.makedirs(os.path.dirname(LEAVE_DATA_FILE), exist_ok=True)
-    with open(LEAVE_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(leave_data, f, indent=4)
+def save_work_status_data(work_status_data):
+    """Save the persistent work status database to storage/database/work-status.json."""
+    os.makedirs(os.path.dirname(WORK_STATUS_DATA_FILE), exist_ok=True)
+    with open(WORK_STATUS_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(work_status_data, f, indent=4)
         f.write("\n")
-    print(f"Leave data saved to {LEAVE_DATA_FILE}")
+    print(f"Work status data saved to {WORK_STATUS_DATA_FILE}")
 
-def load_leave_feed_data():
-    """Load the transient leave feed from storage/feed/leaves_feed.json.
+def load_work_status_feed_data():
+    """Load the transient work status feed from storage/feed/work-status_feed.json.
 
     Structure matches the persistent file: {requests, approved, rejected}.
     """
-    if not os.path.exists(LEAVE_FEED_FILE):
-        default_data = _empty_leaves()
-        with open(LEAVE_FEED_FILE, "w", encoding="utf-8") as f:
+    if not os.path.exists(WORK_STATUS_FEED_FILE):
+        default_data = _empty_work_status()
+        with open(WORK_STATUS_FEED_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
             f.write("\n")
-        print(f"Created new leave feed file: {LEAVE_FEED_FILE}")
+        print(f"Created new work status feed file: {WORK_STATUS_FEED_FILE}")
         return default_data
 
     try:
-        with open(LEAVE_FEED_FILE, "r", encoding="utf-8") as f:
+        with open(WORK_STATUS_FEED_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return _normalize_leave_payload(data)
+            return _normalize_work_status_payload(data)
     except (OSError, ValueError, json.JSONDecodeError) as e:
-        print(f"Error reading leave feed file: {e}")
-        return _empty_leaves()
+        print(f"Error reading work status feed file: {e}")
+        return _empty_work_status()
 
-def save_leave_feed_data(leave_feed):
-    """Save the transient leave feed to storage/feed/leaves_feed.json."""
-    os.makedirs(os.path.dirname(LEAVE_FEED_FILE), exist_ok=True)
-    with open(LEAVE_FEED_FILE, "w", encoding="utf-8") as f:
-        json.dump(leave_feed, f, indent=4)
+def save_work_status_feed_data(work_status_feed):
+    """Save the transient work status feed to storage/feed/work-status_feed.json."""
+    os.makedirs(os.path.dirname(WORK_STATUS_FEED_FILE), exist_ok=True)
+    with open(WORK_STATUS_FEED_FILE, "w", encoding="utf-8") as f:
+        json.dump(work_status_feed, f, indent=4)
         f.write("\n")
-    print(f"Leave feed saved to {LEAVE_FEED_FILE}")
+    print(f"Work status feed saved to {WORK_STATUS_FEED_FILE}")
 
-def save_both_leave_files(payload):
+def save_both_work_status_files(payload):
     """Write the same payload to BOTH the persistent database and the feed.
 
     Both files hold identical content at all times. Only the feed copy
     gets emptied at midnight.
     """
-    save_leave_data(payload)
-    save_leave_feed_data(payload)
+    save_work_status_data(payload)
+    save_work_status_feed_data(payload)
     # Also refresh the in-memory feed copy so reads stay in sync.
     try:
-        leave_feed_data.clear()
-        leave_feed_data.update(payload)
+        work_status_feed_data.clear()
+        work_status_feed_data.update(payload)
     except Exception:
         pass
 
 # Load both on startup. If the feed is missing but the persistent file
 # exists, copy the persistent data into the feed so they start in sync.
-leave_data = load_leave_data()
-leave_feed_data = load_leave_feed_data()
+work_status_data = load_work_status_data()
+work_status_feed_data = load_work_status_feed_data()
 
-if not leave_feed_data.get("requests") and not leave_feed_data.get("approved") and not leave_feed_data.get("rejected"):
+if not work_status_feed_data.get("requests") and not work_status_feed_data.get("approved") and not work_status_feed_data.get("rejected"):
     # Feed is empty — mirror the persistent file so they match on boot.
-    if leave_data.get("requests") or leave_data.get("approved") or leave_data.get("rejected"):
-        print("Leave feed was empty — mirroring persistent leaves.json into feed for consistency.")
-        leave_feed_data = {
-            "requests": list(leave_data.get("requests", [])),
-            "approved": list(leave_data.get("approved", [])),
-            "rejected": list(leave_data.get("rejected", [])),
+    if work_status_data.get("requests") or work_status_data.get("approved") or work_status_data.get("rejected"):
+        print("Work status feed was empty — mirroring persistent work-status.json into feed for consistency.")
+        work_status_feed_data = {
+            "requests": list(work_status_data.get("requests", [])),
+            "approved": list(work_status_data.get("approved", [])),
+            "rejected": list(work_status_data.get("rejected", [])),
         }
-        save_leave_feed_data(leave_feed_data)
+        save_work_status_feed_data(work_status_feed_data)
 
 # Load activity feed data
 def load_activity_feed():
@@ -1277,7 +1416,7 @@ def add_activity(action, details, user=None, activity_type="system"):
         action (str): The action performed (e.g., "employee_registered", "rfid_scanned")
         details (str): Description of the activity
         user (dict): User who performed the action
-        activity_type (str): Type of activity (system, employee, attendance, leave, etc.)
+        activity_type (str): Type of activity (system, employee, attendance, work_status, etc.)
 
     Returns:
         dict: The created activity entry
@@ -1533,6 +1672,8 @@ def build_dtr_dict(year, month):
             "ut": "0.00",
             "ot": "0.00",
             "status": "",
+            # Work status fields - track specific time work status
+            "work_status": None,  # {type, period, start_time, end_time, is_specific_time}
             # Hidden 24-hour copies of the four timestamps above. These are
             # what calculate_hours() actually uses so the AM/PM distinction
             # is never lost when we store the 12-hour display value.
@@ -1606,10 +1747,46 @@ def has_time_out_for_period(day_data, period):
     out_key = f"{period}_out"
     return bool(day_data.get(out_key))
 
-# Check if a day is marked as on leave
-def is_on_leave(day_data):
-    """Check if the day record is marked as on leave"""
-    return day_data.get("status") == "on_leave"
+# Check if a day is marked as on work status
+def is_on_work_status(day_data):
+    """Check if the day record is marked as on work status.
+    
+    For whole-day work status, the status will be 'on_work_status'.
+    For specific-time work status, the work_status field will have details.
+    """
+    if day_data.get("status") == "on_work_status":
+        return True
+    # Also check the work_status field for any active work status
+    ws = day_data.get("work_status")
+    if ws and ws.get("is_active", True):
+        return True
+    return False
+
+def get_work_status_for_period(day_data, period):
+    """Get the work status for a specific period (am/pm).
+    
+    Returns the work status object if the period is affected, or None.
+    """
+    ws = day_data.get("work_status")
+    if not ws:
+        return None
+    
+    if not ws.get("is_active", True):
+        return None
+    
+    # If whole day, both am and pm are affected
+    if ws.get("period") == "whole_day":
+        return ws
+    
+    # Check if the specific period is affected
+    if ws.get("period") == period:
+        return ws
+    
+    return None
+
+def is_period_affected_by_work_status(day_data, period):
+    """Check if a specific period (am/pm) is affected by work status."""
+    return get_work_status_for_period(day_data, period) is not None
 
 # Get the appropriate scan type based on current state
 def determine_scan_type(day_data, scan_time, employee):
@@ -1619,6 +1796,12 @@ def determine_scan_type(day_data, scan_time, employee):
     - Even number filled (0,2,4): next scan is TIME_IN
     - Odd number filled (1,3): next scan is TIME_OUT
     The actual slot (AM_IN, AM_OUT, PM_IN, PM_OUT) is determined by scan time.
+
+    Special handling for specific-time work status:
+    - If the AM period is affected by work status, AM scans are still allowed
+      but the slot may be marked differently.
+    - If all four slots are filled, the scan is allowed to fill the next
+      available period (allows PM scanning even before noon).
 
     Returns one of:
         ("am", "in")   -> record am_in
@@ -1630,9 +1813,23 @@ def determine_scan_type(day_data, scan_time, employee):
     rfid = employee.get("rfid")
     period = get_period(scan_time)  # Returns "am" or "pm"
 
-    if is_on_leave(day_data):
-        print(f"Day marked as ON LEAVE for {rfid} - scan skipped")
+    # Check if the day has a whole-day work status (on leave, holiday, etc.)
+    # For whole-day work status, skip the scan entirely.
+    ws = day_data.get("work_status")
+    if ws and ws.get("period") == "whole_day" and ws.get("is_active", True):
+        print(f"Day marked as WHOLE DAY WORK STATUS for {rfid} - scan skipped")
         return None
+
+    # Check if the day has a status of on_work_status (for backward compatibility)
+    # But only skip scanning if it's actually a whole-day work status
+    # Specific-time work status (AM/PM only) should still allow scanning
+    if day_data.get("status") == "on_work_status":
+        # Check if there's work status data and if it's whole-day
+        ws = day_data.get("work_status")
+        if ws and ws.get("period") == "whole_day" and ws.get("is_active", True):
+            print(f"Day marked as ON WORK STATUS (whole day) for {rfid} - scan skipped")
+            return None
+        # For specific-time work status, we allow scanning to proceed normally
 
     # Count how many time slots are already filled for today
     filled_count = 0
@@ -1673,6 +1870,10 @@ def determine_scan_type(day_data, scan_time, employee):
         print(f"All time slots filled for {rfid}")
         return None
 
+    # Check if the current period is affected by specific-time work status.
+    # If so, we still allow scanning but mark it accordingly.
+    # The specific handling is done in record_attendance_scan.
+    
     # Return the period (am/pm) and the desired type (in/out)
     # The actual recording function will use this to determine the correct slot
     return (period, desired_type)
@@ -1726,6 +1927,7 @@ def record_attendance_scan(employee, scanned_at):
             "ut": "0.00",
             "ot": "0.00",
             "status": "",
+            "work_status": None,
             "_am_in_24": "",
             "_am_out_24": "",
             "_pm_in_24": "",
@@ -1740,13 +1942,17 @@ def record_attendance_scan(employee, scanned_at):
     scan_result = determine_scan_type(day_data, scan_time, employee)
 
     if scan_result is None:
-        print(f"Scan skipped for {rfid} - cooldown not met, already scanned, or on leave")
+        print(f"Scan skipped for {rfid} - cooldown not met, already scanned, or on work status")
         return record, "skipped"
 
     period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
     hidden_key = f"_{period}_{scan_type}_24"
+
+    # Check if this period is affected by a specific-time work status.
+    # If so, we still record the scan but mark it as work status related.
+    period_work_status = get_work_status_for_period(day_data, period)
 
     if scan_type == "in":
         if not day_data[in_key]:
@@ -2058,7 +2264,7 @@ def get_dashboard_statistics():
         "present_today": present_today,
         "absent_today": absent_today,
         "employees_late": 0,
-        "on_leave": len(leave_data.get("approved", [])),
+        "on_work_status": len(work_status_data.get("approved", [])),
         "attendance_rate": attendance_rate,
         "rfid_scans_today": len(today_events),
         "departments": 0,
@@ -2109,12 +2315,12 @@ def get_dashboard_data():
     # Load activity feed
     activity_feed = load_activity_feed()
 
-    # Both leave files hold the same data, so the persistent copy is the
+    # Both work status files hold the same data, so the persistent copy is the
     # source of truth for the dashboard payload.
-    leaves_payload = {
-        "requests": leave_data.get("requests", []),
-        "approved": leave_data.get("approved", []),
-        "rejected": leave_data.get("rejected", []),
+    work_status_payload = {
+        "requests": work_status_data.get("requests", []),
+        "approved": work_status_data.get("approved", []),
+        "rejected": work_status_data.get("rejected", []),
     }
 
     return {
@@ -2124,7 +2330,7 @@ def get_dashboard_data():
         "scans": recent_scans,
         "devices": get_online_devices(),
         "latest_scan": recent_scans[0] if recent_scans else None,
-        "leaves": leaves_payload,
+        "work_status": work_status_payload,
         "activities": activity_feed.get("activities", [])
     }
 
@@ -2142,7 +2348,7 @@ def get_role_redirect(role):
 # ============================================================================
 # This replaces the old generate_report_preview() function, which returned
 # hardcoded sample data. Everything below queries the actual attendance
-# records, employee database, leave data, and scan feed so the printed /
+# records, employee database, work status data, and scan feed so the printed /
 # exported reports reflect what's really stored in the system.
 
 def generate_report_print_data(report_type):
@@ -2157,7 +2363,7 @@ def generate_report_print_data(report_type):
         }
 
     Every branch below pulls from attendance_records, employee_database,
-    leave_data, or the scan feed — no sample/placeholder data is used.
+    work_status_data, or the scan feed — no sample/placeholder data is used.
     """
     now = datetime.now()
 
@@ -2168,7 +2374,7 @@ def generate_report_print_data(report_type):
         "yearly": "Yearly Attendance Report",
         "summary": "Attendance Summary Report",
         "absent": "Absent Employees Report",
-        "leave": "Leave Management Report",
+        "leave": "Work Status Report",
         "rfid_logs": "RFID Scan Log Report"
     }.get(report_type, f"{report_type.capitalize()} Report")
 
@@ -2207,8 +2413,10 @@ def generate_report_print_data(report_type):
                         pm_in = day.get("pm_in", "")
                         pm_out = day.get("pm_out", "")
                         hours = day.get("hours", "0.00")
-                        if day.get("status") == "on_leave":
-                            status = "On Leave"
+                        if day.get("status") == "on_work_status":
+                            status = "On Work Status"
+                        elif day.get("work_status"):
+                            status = "Work Status"
                         elif am_in or pm_in:
                             status = "Present"
                         break
@@ -2226,14 +2434,14 @@ def generate_report_print_data(report_type):
             })
 
         present = sum(1 for r in rows if r["Status"] == "Present")
-        on_leave = sum(1 for r in rows if r["Status"] == "On Leave")
-        absent = len(rows) - present - on_leave
+        on_work_status = sum(1 for r in rows if r["Status"] in ("On Work Status", "Work Status"))
+        absent = len(rows) - present - on_work_status
 
         summary = {
             "Total Employees": len(employees),
             "Present Today": present,
             "Absent Today": absent,
-            "On Leave": on_leave,
+            "On Work Status": on_work_status,
             "Report Date": now.strftime("%B %d, %Y")
         }
 
@@ -2255,7 +2463,7 @@ def generate_report_print_data(report_type):
                     try:
                         day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
                         if start_of_week <= day_date <= end_of_week:
-                            if day.get("status") == "on_leave":
+                            if day.get("status") == "on_work_status":
                                 continue
                             if day.get("am_in") or day.get("pm_in"):
                                 days_present += 1
@@ -2292,7 +2500,7 @@ def generate_report_print_data(report_type):
             total_ut = 0.0
             days_present = 0
             days_absent = 0
-            days_leave = 0
+            days_work_status = 0
 
             for rec in attendance_records:
                 if rec.get("uid") != emp.get("uid") or rec.get("month") != month_key:
@@ -2302,8 +2510,10 @@ def generate_report_print_data(report_type):
                     try:
                         day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
                         if day_date.month == now.month and day_date.year == now.year:
-                            if day.get("status") == "on_leave":
-                                days_leave += 1
+                            if day.get("status") == "on_work_status":
+                                days_work_status += 1
+                            elif day.get("work_status"):
+                                days_work_status += 1
                             elif day.get("am_in") or day.get("pm_in"):
                                 days_present += 1
                                 total_hours += float(day.get("hours", "0.00"))
@@ -2320,7 +2530,7 @@ def generate_report_print_data(report_type):
                 "Department": emp.get("department", "--"),
                 "Days Present": days_present,
                 "Days Absent": days_absent,
-                "Leave Days": days_leave,
+                "Work Status Days": days_work_status,
                 "Total Hours": f"{total_hours:.2f}",
                 "Overtime": f"{total_ot:.2f}",
                 "Undertime": f"{total_ut:.2f}"
@@ -2344,7 +2554,7 @@ def generate_report_print_data(report_type):
             total_ot = 0.0
             total_ut = 0.0
             days_present = 0
-            days_leave = 0
+            days_work_status = 0
 
             for rec in attendance_records:
                 if rec.get("uid") != emp.get("uid"):
@@ -2354,8 +2564,10 @@ def generate_report_print_data(report_type):
                     try:
                         day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
                         if day_date.year == year:
-                            if day.get("status") == "on_leave":
-                                days_leave += 1
+                            if day.get("status") == "on_work_status":
+                                days_work_status += 1
+                            elif day.get("work_status"):
+                                days_work_status += 1
                             elif day.get("am_in") or day.get("pm_in"):
                                 days_present += 1
                                 total_hours += float(day.get("hours", "0.00"))
@@ -2371,7 +2583,7 @@ def generate_report_print_data(report_type):
                 "Employee Name": f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
                 "Department": emp.get("department", "--"),
                 "Days Present": days_present,
-                "Leave Days": days_leave,
+                "Work Status Days": days_work_status,
                 "Total Hours": f"{total_hours:.2f}",
                 "Overtime": f"{total_ot:.2f}",
                 "Undertime": f"{total_ut:.2f}",
@@ -2385,18 +2597,20 @@ def generate_report_print_data(report_type):
         }
 
     elif report_type == "summary":
-        # ---- Summary: aggregate present/absent/leave counts -------------
+        # ---- Summary: aggregate present/absent/work status counts -------------
         total_present = 0
         total_absent = 0
-        total_leave = 0
+        total_work_status = 0
 
         for emp in employees:
             for rec in attendance_records:
                 if rec.get("uid") != emp.get("uid"):
                     continue
                 for key, day in rec.get("dtr", {}).items():
-                    if day.get("status") == "on_leave":
-                        total_leave += 1
+                    if day.get("status") == "on_work_status":
+                        total_work_status += 1
+                    elif day.get("work_status"):
+                        total_work_status += 1
                     elif day.get("am_in") or day.get("pm_in"):
                         total_present += 1
                     else:
@@ -2418,9 +2632,9 @@ def generate_report_print_data(report_type):
             "Percentage": f"{(total_absent / max(total_present + total_absent, 1) * 100):.1f}%"
         })
         rows.append({
-            "Metric": "Total Leave Days",
-            "Value": total_leave,
-            "Percentage": f"{(total_leave / max(total_present + total_absent + total_leave, 1) * 100):.1f}%"
+            "Metric": "Total Work Status Days",
+            "Value": total_work_status,
+            "Percentage": f"{(total_work_status / max(total_present + total_absent + total_work_status, 1) * 100):.1f}%"
         })
 
         summary = {
@@ -2444,7 +2658,7 @@ def generate_report_print_data(report_type):
                     try:
                         day_date = datetime.strptime(day.get("date", ""), "%Y-%m-%d")
                         if day_date.weekday() < 5:  # Weekday
-                            if not day.get("am_in") and not day.get("pm_in") and day.get("status") != "on_leave":
+                            if not day.get("am_in") and not day.get("pm_in") and day.get("status") != "on_work_status" and not day.get("work_status"):
                                 absent_count += 1
                                 absent_dates.append(day_date.strftime("%b %d"))
                     except Exception:
@@ -2465,18 +2679,19 @@ def generate_report_print_data(report_type):
         }
 
     elif report_type == "leave":
-        # ---- Leave report: every request across all three buckets -------
-        all_leaves = (
-            leave_data.get("requests", [])
-            + leave_data.get("approved", [])
-            + leave_data.get("rejected", [])
+        # ---- Work status report: every request across all three buckets -------
+        all_work_status = (
+            work_status_data.get("requests", [])
+            + work_status_data.get("approved", [])
+            + work_status_data.get("rejected", [])
         )
 
-        for req in all_leaves:
+        for req in all_work_status:
             rows.append({
                 "Employee ID": req.get("employeeid", req.get("uid", "")),
                 "Employee Name": req.get("fullname", ""),
-                "Leave Type": (req.get("leave_type", "") or "").capitalize(),
+                "Work Status Type": (req.get("work_status_type", "") or "").replace("_", " ").title(),
+                "Period": req.get("period", "whole_day").replace("_", " ").title(),
                 "Start Date": req.get("start_date", ""),
                 "End Date": req.get("end_date", ""),
                 "Days": len(req.get("days", [])),
@@ -2484,12 +2699,12 @@ def generate_report_print_data(report_type):
                 "Requested At": (req.get("requested_at", "") or "")[:10]
             })
 
-        approved = len(leave_data.get("approved", []))
-        pending = len(leave_data.get("requests", []))
-        rejected = len(leave_data.get("rejected", []))
+        approved = len(work_status_data.get("approved", []))
+        pending = len(work_status_data.get("requests", []))
+        rejected = len(work_status_data.get("rejected", []))
 
         summary = {
-            "Total Requests": len(all_leaves),
+            "Total Requests": len(all_work_status),
             "Approved": approved,
             "Pending": pending,
             "Rejected": rejected
@@ -2815,6 +3030,27 @@ def get_employee_attendance(rfid):
     return jsonify(response_data), 200
 
 # ============================================================================
+# WORK STATUS TYPES API
+# ============================================================================
+
+@app.route("/api/work-status-types", methods=["GET"])
+def get_work_status_types():
+    """Return the list of available work status types."""
+    types_list = []
+    for code, details in WORK_STATUS_TYPES.items():
+        types_list.append({
+            "code": code,
+            "label": details["label"],
+            "description": details["description"],
+            "requires_time": details["requires_time"],
+            "default_time_mode": details["default_time_mode"]
+        })
+    return jsonify({
+        "status": "success",
+        "data": types_list
+    }), 200
+
+# ============================================================================
 # NOTIFICATION API ROUTES
 # ============================================================================
 
@@ -2842,7 +3078,7 @@ def create_notification(rfid):
         {
             "title": "...",
             "message": "...",
-            "type": "system" | "attendance" | "leave" | "employee"
+            "type": "system" | "attendance" | "work_status" | "employee"
         }
     """
     safe_rfid = _sanitize_rfid(rfid)
@@ -3027,7 +3263,8 @@ def get_dtr_record(rfid):
             "hours": day_data.get("hours", "0.00"),
             "ut": day_data.get("ut", "0.00"),
             "ot": day_data.get("ot", "0.00"),
-            "status": day_data.get("status", "")
+            "status": day_data.get("status", ""),
+            "work_status": day_data.get("work_status")
         })
 
     # Log activity
@@ -3200,6 +3437,12 @@ def generate_dtr_pdf(rfid):
     dtr_data.append(header)
 
     for date_key, day in attendance_record.get("dtr", {}).items():
+        # Determine display status
+        display_status = day.get("status", "")
+        if day.get("work_status"):
+            ws = day["work_status"]
+            display_status = f"Work Status ({ws.get('period', 'whole_day').replace('_', ' ')})"
+        
         row = [
             day.get("day", ""),
             day.get("date", ""),
@@ -3210,7 +3453,7 @@ def generate_dtr_pdf(rfid):
             day.get("hours", "0.00"),
             day.get("ut", "0.00"),
             day.get("ot", "0.00"),
-            day.get("status", "")
+            display_status
         ]
         dtr_data.append(row)
 
@@ -3247,9 +3490,9 @@ def generate_dtr_pdf(rfid):
         ('RIGHTPADDING', (0, 0), (-1, -1), 2),
     ])
 
-    # Color rows that are on leave
+    # Color rows that are on work status
     for i, row in enumerate(dtr_data[1:], start=1):
-        if len(row) > 9 and row[9] == "on_leave":
+        if len(row) > 9 and row[9] == "on_work_status":
             table_style.add('BACKGROUND', (0, i), (-1, i), colors.yellow)
 
     dtr_table.setStyle(table_style)
@@ -3530,10 +3773,23 @@ def generate_report(report_type):
             "message": "Failed to generate report"
         }), 500
 
-## LEAVE MANAGEMENT ROUTES ------------------------------------
-# Request leave
-@app.route("/api/request-leave", methods=["POST"])
-def request_leave():
+## WORK STATUS MANAGEMENT ROUTES ------------------------------------
+# Request work status
+@app.route("/api/request-work-status", methods=["POST"])
+def request_work_status():
+    """Submit a new work status request.
+    
+    Form data:
+        rfid          - Employee RFID
+        start_date    - Start date (YYYY-MM-DD)
+        end_date      - End date (YYYY-MM-DD)
+        reason        - Reason for the request
+        work_status_type - Type of work status (from WORK_STATUS_TYPES)
+        period        - "whole_day" | "am" | "pm" (default: whole_day)
+        start_time    - Optional specific start time (HH:MM)
+        end_time      - Optional specific end time (HH:MM)
+        attachment    - Optional file attachment
+    """
     try:
         # Handle both JSON and form data (for file uploads)
         if request.content_type and 'application/json' in request.content_type:
@@ -3544,11 +3800,11 @@ def request_leave():
         if not data:
             return jsonify({"status": "error", "message": "Missing data"}), 400
 
-        required = ["rfid", "start_date", "end_date", "reason", "leave_type"]
+        required = ["rfid", "start_date", "end_date", "reason", "work_status_type"]
         if not all(key in data for key in required):
             return jsonify({
                 "status": "error",
-                "message": "Missing required fields: rfid, start_date, end_date, reason, leave_type"
+                "message": "Missing required fields: rfid, start_date, end_date, reason, work_status_type"
             }), 400
 
         rfid = data["rfid"].strip().upper()
@@ -3563,6 +3819,52 @@ def request_leave():
 
         if not employee:
             return jsonify({"status": "error", "message": "Employee not found"}), 404
+
+        # Validate work status type
+        work_status_type = data["work_status_type"].strip().lower()
+        if work_status_type not in WORK_STATUS_TYPES:
+            return jsonify({
+                "status": "error",
+                "message": f"Invalid work status type. Valid types: {', '.join(WORK_STATUS_TYPES.keys())}"
+            }), 400
+
+        # Get the period (whole_day, am, pm)
+        period = data.get("period", "whole_day").strip().lower()
+        if period not in ["whole_day", "am", "pm"]:
+            period = "whole_day"
+
+        # Get optional specific times
+        start_time = data.get("start_time", "").strip()
+        end_time = data.get("end_time", "").strip()
+
+        # Validate that leave dates are not in the past
+        try:
+            start_date = datetime.strptime(data["start_date"], "%Y-%m-%d")
+            end_date = datetime.strptime(data["end_date"], "%Y-%m-%d")
+            today = datetime.now().date()
+
+            if start_date.date() < today:
+                return jsonify({
+                    "status": "error",
+                    "message": "Work status requests cannot be submitted for past dates"
+                }), 400
+
+            if end_date.date() < today:
+                return jsonify({
+                    "status": "error",
+                    "message": "Work status requests cannot be submitted for past dates"
+                }), 400
+
+            if start_date > end_date:
+                return jsonify({
+                    "status": "error",
+                    "message": "Start date cannot be after end date"
+                }), 400
+        except ValueError:
+            return jsonify({
+                "status": "error",
+                "message": "Invalid date format. Please use YYYY-MM-DD"
+            }), 400
 
         # Handle file upload
         attachment_path = None
@@ -3579,38 +3881,42 @@ def request_leave():
                     }), 400
 
                 # Create employee-specific directory
-                employee_leave_dir = os.path.join(LEAVE_REQUEST_STORAGE, rfid)
-                os.makedirs(employee_leave_dir, exist_ok=True)
+                employee_work_status_dir = os.path.join(WORK_STATUS_REQUEST_STORAGE, rfid)
+                os.makedirs(employee_work_status_dir, exist_ok=True)
 
                 # Generate filename with date and RFID
                 date_today = datetime.now().strftime("%Y%m%d")
                 secure_filename_base = secure_filename(rfid)
                 filename = f"{date_today}_{secure_filename_base}{extension}"
-                file_path = os.path.join(employee_leave_dir, filename)
+                file_path = os.path.join(employee_work_status_dir, filename)
 
                 # Save the file
                 attachment_file.save(file_path)
 
                 # Store relative path for web access
-                attachment_path = os.path.join("storage", "leave-request", rfid, filename).replace(os.sep, "/")
+                attachment_path = os.path.join("storage", "work-status", rfid, filename).replace(os.sep, "/")
 
         # Build a request ID that won't collide with existing entries.
         existing_ids = []
-        for req in leave_data.get("requests", []) + leave_data.get("approved", []) + leave_data.get("rejected", []):
+        for req in work_status_data.get("requests", []) + work_status_data.get("approved", []) + work_status_data.get("rejected", []):
             try:
                 existing_ids.append(int(req.get("id", "0")))
             except (ValueError, TypeError):
                 pass
         request_id = str(max(existing_ids + [0]) + 1).zfill(3)
 
-        leave_request = {
+        work_status_request = {
             "id": request_id,
             "rfid": rfid,
             "uid": employee.get("uid"),
             "employeeid": employee.get("employeeid"),
             "fullname": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
             "department": employee.get("department", ""),
-            "leave_type": data["leave_type"],
+            "work_status_type": work_status_type,
+            "work_status_label": WORK_STATUS_TYPES[work_status_type]["label"],
+            "period": period,
+            "start_time": start_time,
+            "end_time": end_time,
             "start_date": data["start_date"],
             "end_date": data["end_date"],
             "reason": data.get("reason", ""),
@@ -3628,48 +3934,48 @@ def request_leave():
         current_date = start_date
         while current_date <= end_date:
             if current_date.weekday() < 5:
-                leave_request["days"].append(current_date.strftime("%Y-%m-%d"))
+                work_status_request["days"].append(current_date.strftime("%Y-%m-%d"))
             current_date += timedelta(days=1)
 
         # Append to the persistent structure and mirror to BOTH files.
-        leave_data["requests"].append(leave_request)
-        save_both_leave_files(leave_data)
+        work_status_data["requests"].append(work_status_request)
+        save_both_work_status_files(work_status_data)
 
         # Log activity
         add_activity(
-            "leave_requested",
-            f"{employee.get('firstname', '')} {employee.get('lastname', '')} requested {data['leave_type']} leave from {data['start_date']} to {data['end_date']}",
+            "work_status_requested",
+            f"{employee.get('firstname', '')} {employee.get('lastname', '')} requested {WORK_STATUS_TYPES[work_status_type]['label']} from {data['start_date']} to {data['end_date']}",
             {"name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}", "uid": employee.get('uid')},
-            "leave"
+            "work_status"
         )
 
         # Notify the employee that their request was received.
         try:
             push_notification(
                 rfid,
-                "Leave Request Submitted",
-                f"Your {data['leave_type']} leave request from {data['start_date']} to {data['end_date']} is now pending approval.",
-                notif_type="leave",
+                "Work Status Request Submitted",
+                f"Your {WORK_STATUS_TYPES[work_status_type]['label']} request from {data['start_date']} to {data['end_date']} is now pending approval.",
+                notif_type="work_status",
                 uid=employee.get("uid"),
                 fullname=f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
                 role=employee.get("role")
             )
         except Exception as e:
-            print(f"Warning: failed to push leave-request notification: {e}")
+            print(f"Warning: failed to push work status-request notification: {e}")
 
         return jsonify({
             "status": "success",
-            "message": "Leave request submitted successfully",
-            "data": leave_request
+            "message": "Work status request submitted successfully",
+            "data": work_status_request
         }), 200
 
     except Exception as e:
-        print(f"Leave request error: {str(e)}")
+        print(f"Work status request error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Get all leave requests (for HR/Admin)
-@app.route("/api/leave-requests", methods=["GET"])
-def get_leave_requests():
+# Get all work status requests (for HR/Admin)
+@app.route("/api/work-status-requests", methods=["GET"])
+def get_work_status_requests():
     auth_header = request.headers.get('Authorization')
     if auth_header and auth_header.startswith('Bearer '):
         user_data, error_response, status_code = verify_token()
@@ -3686,15 +3992,15 @@ def get_leave_requests():
     return jsonify({
         "status": "success",
         "data": {
-            "requests": leave_data.get("requests", []),
-            "approved": leave_data.get("approved", []),
-            "rejected": leave_data.get("rejected", []),
+            "requests": work_status_data.get("requests", []),
+            "approved": work_status_data.get("approved", []),
+            "rejected": work_status_data.get("rejected", []),
         }
     }), 200
 
-# Get leave requests for a specific employee
-@app.route("/api/leave-requests/<rfid>", methods=["GET"])
-def get_employee_leave_requests(rfid):
+# Get work status requests for a specific employee
+@app.route("/api/work-status-requests/<rfid>", methods=["GET"])
+def get_employee_work_status_requests(rfid):
     identifier = rfid.strip().upper()
 
     # Try RFID lookup first
@@ -3714,13 +4020,13 @@ def get_employee_leave_requests(rfid):
     uid = employee.get("uid")
 
     employee_requests = [
-        req for req in leave_data.get("requests", []) if req.get("uid") == uid
+        req for req in work_status_data.get("requests", []) if req.get("uid") == uid
     ]
     employee_approved = [
-        req for req in leave_data.get("approved", []) if req.get("uid") == uid
+        req for req in work_status_data.get("approved", []) if req.get("uid") == uid
     ]
     employee_rejected = [
-        req for req in leave_data.get("rejected", []) if req.get("uid") == uid
+        req for req in work_status_data.get("rejected", []) if req.get("uid") == uid
     ]
 
     return jsonify({
@@ -3733,24 +4039,24 @@ def get_employee_leave_requests(rfid):
     }), 200
 
 # ============================================================================
-# LEAVE ATTACHMENT PREVIEW / METADATA
+# WORK STATUS ATTACHMENT PREVIEW / METADATA
 # ============================================================================
 # These two routes power the front-end "View Attachment" modal.
 #
-#   GET /api/leave-attachment/meta/<rfid>/<filename>
-#       Returns JSON metadata about a single uploaded leave file:
+#   GET /api/work-status-attachment/meta/<rfid>/<filename>
+#       Returns JSON metadata about a single uploaded work status file:
 #       filename, size in bytes, size_human, extension, content_type,
 #       and a `previewable` flag that tells the UI whether an inline
 #       preview is possible in the browser (images + PDFs).
 #
-#   GET /storage/leave-request/<rfid>/<filename>?inline=1
+#   GET /storage/work-status/<rfid>/<filename>?inline=1
 #       Streams the file with Content-Disposition: inline so the browser
 #       renders images/PDFs directly instead of downloading them.
 #       Without ?inline=1 the same route falls back to an attachment
 #       download so existing links keep working.
 
 # Map of file extensions to MIME types used by the metadata route.
-_LEAVE_FILE_MIME_MAP = {
+_WORK_STATUS_FILE_MIME_MAP = {
     ".pdf": "application/pdf",
     ".doc": "application/msword",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -3763,7 +4069,7 @@ _LEAVE_FILE_MIME_MAP = {
 }
 
 # Extensions the browser can render inline.
-_LEAVE_PREVIEWABLE_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt"}
+_WORK_STATUS_PREVIEWABLE_EXTS = {".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp", ".txt"}
 
 def _human_size(num_bytes):
     """Return a compact human-readable size string (e.g. "128 KB")."""
@@ -3777,9 +4083,9 @@ def _human_size(num_bytes):
         num_bytes /= 1024.0
     return f"{num_bytes:.1f} TB"
 
-@app.route("/api/leave-attachment/meta/<rfid>/<filename>", methods=["GET"])
-def get_leave_attachment_meta(rfid, filename):
-    """Return JSON metadata for a single uploaded leave file.
+@app.route("/api/work-status-attachment/meta/<rfid>/<filename>", methods=["GET"])
+def get_work_status_attachment_meta(rfid, filename):
+    """Return JSON metadata for a single uploaded work status file.
 
     Response shape:
         {
@@ -3791,8 +4097,8 @@ def get_leave_attachment_meta(rfid, filename):
                 "extension": ".pdf",
                 "content_type": "application/pdf",
                 "previewable": true,
-                "url": "/storage/leave-request/FB822A54/20260922_FB822A54.pdf",
-                "inline_url": "/storage/leave-request/FB822A54/20260922_FB822A54.pdf?inline=1"
+                "url": "/storage/work-status/FB822A54/20260922_FB822A54.pdf",
+                "inline_url": "/storage/work-status/FB822A54/20260922_FB822A54.pdf?inline=1"
             }
         }
     """
@@ -3802,7 +4108,7 @@ def get_leave_attachment_meta(rfid, filename):
     if not safe_rfid or not safe_filename:
         return jsonify({"status": "error", "message": "Invalid path"}), 400
 
-    file_path = os.path.join(LEAVE_REQUEST_STORAGE, safe_rfid, safe_filename)
+    file_path = os.path.join(WORK_STATUS_REQUEST_STORAGE, safe_rfid, safe_filename)
 
     if not os.path.exists(file_path) or not os.path.isfile(file_path):
         return jsonify({"status": "error", "message": "File not found"}), 404
@@ -3813,10 +4119,10 @@ def get_leave_attachment_meta(rfid, filename):
         size = 0
 
     extension = os.path.splitext(safe_filename)[1].lower()
-    content_type = _LEAVE_FILE_MIME_MAP.get(extension, "application/octet-stream")
-    previewable = extension in _LEAVE_PREVIEWABLE_EXTS
+    content_type = _WORK_STATUS_FILE_MIME_MAP.get(extension, "application/octet-stream")
+    previewable = extension in _WORK_STATUS_PREVIEWABLE_EXTS
 
-    rel_url = f"/storage/leave-request/{safe_rfid}/{safe_filename}"
+    rel_url = f"/storage/work-status/{safe_rfid}/{safe_filename}"
 
     return jsonify({
         "status": "success",
@@ -3832,9 +4138,24 @@ def get_leave_attachment_meta(rfid, filename):
         }
     }), 200
 
-# Approve leave request
-@app.route("/api/approve-leave/<request_id>", methods=["POST"])
-def approve_leave(request_id):
+# Approve work status request
+@app.route("/api/approve-work-status/<request_id>", methods=["POST"])
+def approve_work_status(request_id):
+    """Approve a work status request.
+    
+    When approving, the request can optionally be scoped to a specific
+    time period (whole_day, am, pm). This allows the HR/Admin to approve
+    only the morning or afternoon portion of a day.
+    
+    JSON body (optional):
+        {
+            "period": "whole_day" | "am" | "pm",
+            "start_time": "08:00",  # optional for specific time
+            "end_time": "12:00"     # optional for specific time
+        }
+    
+    If no body is provided, the request's original period is used.
+    """
     try:
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
@@ -3848,27 +4169,51 @@ def approve_leave(request_id):
                     "message": "Session expired or user is not logged in"
                 }), 401
 
+        # Read optional period from request body
+        body = request.get_json(silent=True) or {}
+        requested_period = body.get("period", "").strip().lower()
+        requested_start_time = body.get("start_time", "").strip()
+        requested_end_time = body.get("end_time", "").strip()
+
         request_to_approve = None
         request_index = -1
 
-        for idx, req in enumerate(leave_data["requests"]):
+        for idx, req in enumerate(work_status_data["requests"]):
             if req.get("id") == request_id:
                 request_to_approve = req
                 request_index = idx
                 break
 
         if not request_to_approve:
-            return jsonify({"status": "error", "message": "Leave request not found"}), 404
+            return jsonify({"status": "error", "message": "Work status request not found"}), 404
 
+        # Determine the period to use:
+        # 1. If HR/Admin explicitly specified a period, use that
+        # 2. Otherwise, use the request's original period
+        if requested_period in ["whole_day", "am", "pm"]:
+            period = requested_period
+        else:
+            period = request_to_approve.get("period", "whole_day")
+
+        # Update optional specific times
+        if requested_start_time:
+            request_to_approve["start_time"] = requested_start_time
+        if requested_end_time:
+            request_to_approve["end_time"] = requested_end_time
+
+        request_to_approve["period"] = period
         request_to_approve["status"] = "approved"
         request_to_approve["processed_at"] = datetime.now().isoformat()
         request_to_approve["processed_by"] = user_data.get("fullname") or user_data.get("username")
 
-        leave_data["approved"].append(request_to_approve)
-        leave_data["requests"].pop(request_index)
+        work_status_data["approved"].append(request_to_approve)
+        work_status_data["requests"].pop(request_index)
 
-        # Update attendance records for the approved leave days
+        # Update attendance records for the approved work status days
         uid = request_to_approve.get("uid")
+        work_status_type = request_to_approve.get("work_status_type")
+        work_status_label = WORK_STATUS_TYPES.get(work_status_type, {}).get("label", work_status_type)
+        
         for date_str in request_to_approve.get("days", []):
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
             month_key = date_obj.strftime("%Y-%m")
@@ -3877,64 +4222,102 @@ def approve_leave(request_id):
                 if record.get("uid") == uid and record.get("month") == month_key:
                     for key, day in record.get("dtr", {}).items():
                         if day.get("date") == date_str:
-                            day["status"] = "on_leave"
-                            day["am_in"] = ""
-                            day["am_out"] = ""
-                            day["pm_in"] = ""
-                            day["pm_out"] = ""
-                            day["hours"] = "0.00"
-                            day["ut"] = "0.00"
-                            day["ot"] = "0.00"
-                            # Also clear the hidden 24-hour copies so a
-                            # stale value can't leak into calculate_hours()
-                            # if the record is ever re-evaluated.
-                            day["_am_in_24"] = ""
-                            day["_am_out_24"] = ""
-                            day["_pm_in_24"] = ""
-                            day["_pm_out_24"] = ""
-                            print(f"Marked {date_str} as ON LEAVE for {request_to_approve.get('fullname')}")
+                            # Set the status
+                            day["status"] = "on_work_status"
+                            
+                            # Store the work status details
+                            day["work_status"] = {
+                                "type": work_status_type,
+                                "label": work_status_label,
+                                "period": period,
+                                "start_time": request_to_approve.get("start_time", ""),
+                                "end_time": request_to_approve.get("end_time", ""),
+                                "is_specific_time": period in ["am", "pm"],
+                                "request_id": request_id,
+                                "is_active": True,
+                                "approved_by": request_to_approve.get("processed_by"),
+                                "approved_at": request_to_approve.get("processed_at")
+                            }
+                            
+                            # For whole-day work status, clear all times
+                            if period == "whole_day":
+                                day["am_in"] = ""
+                                day["am_out"] = ""
+                                day["pm_in"] = ""
+                                day["pm_out"] = ""
+                                day["hours"] = "0.00"
+                                day["ut"] = "0.00"
+                                day["ot"] = "0.00"
+                                day["_am_in_24"] = ""
+                                day["_am_out_24"] = ""
+                                day["_pm_in_24"] = ""
+                                day["_pm_out_24"] = ""
+                                print(f"Marked {date_str} as WHOLE DAY WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
+                            
+                            # For specific-time work status (AM or PM),
+                            # mark only that period as affected.
+                            # The DTR will highlight the affected period in yellow.
+                            elif period == "am":
+                                # Keep PM times if they exist
+                                day["_am_work_status"] = {
+                                    "type": work_status_type,
+                                    "label": work_status_label,
+                                    "start_time": request_to_approve.get("start_time", ""),
+                                    "end_time": request_to_approve.get("end_time", "")
+                                }
+                                print(f"Marked {date_str} AM period as WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
+                            elif period == "pm":
+                                # Keep AM times if they exist
+                                day["_pm_work_status"] = {
+                                    "type": work_status_type,
+                                    "label": work_status_label,
+                                    "start_time": request_to_approve.get("start_time", ""),
+                                    "end_time": request_to_approve.get("end_time", "")
+                                }
+                                print(f"Marked {date_str} PM period as WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
+                            
                             break
                     break
 
-        # Mirror to BOTH leave files.
-        save_both_leave_files(leave_data)
+        # Mirror to BOTH work status files.
+        save_both_work_status_files(work_status_data)
         save_attendance_data()
 
         # Log activity
         add_activity(
-            "leave_approved",
-            f"Leave request #{request_id} for {request_to_approve.get('fullname', '')} was approved by {user_data.get('fullname') or user_data.get('username')}",
+            "work_status_approved",
+            f"Work status request #{request_id} for {request_to_approve.get('fullname', '')} was approved by {user_data.get('fullname') or user_data.get('username')} ({work_status_label}, {period})",
             {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
-            "leave"
+            "work_status"
         )
 
         # Notify the employee that their request was approved.
         try:
             push_notification(
                 request_to_approve.get("rfid"),
-                "Leave Request Approved",
-                f"Your {request_to_approve.get('leave_type', 'leave')} request from {request_to_approve.get('start_date', '')} to {request_to_approve.get('end_date', '')} has been approved.",
-                notif_type="leave",
+                "Work Status Request Approved",
+                f"Your {work_status_label} request from {request_to_approve.get('start_date', '')} to {request_to_approve.get('end_date', '')} has been approved ({period.replace('_', ' ')}).",
+                notif_type="work_status",
                 uid=request_to_approve.get("uid"),
                 fullname=request_to_approve.get("fullname"),
                 role="employee"
             )
         except Exception as e:
-            print(f"Warning: failed to push leave-approved notification: {e}")
+            print(f"Warning: failed to push work status-approved notification: {e}")
 
         return jsonify({
             "status": "success",
-            "message": "Leave request approved successfully",
+            "message": "Work status request approved successfully",
             "data": request_to_approve
         }), 200
 
     except Exception as e:
-        print(f"Approve leave error: {str(e)}")
+        print(f"Approve work status error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Reject leave request
-@app.route("/api/reject-leave/<request_id>", methods=["POST"])
-def reject_leave(request_id):
+# Reject work status request
+@app.route("/api/reject-work-status/<request_id>", methods=["POST"])
+def reject_work_status(request_id):
     try:
         auth_header = request.headers.get('Authorization')
         if auth_header and auth_header.startswith('Bearer '):
@@ -3951,55 +4334,55 @@ def reject_leave(request_id):
         request_to_reject = None
         request_index = -1
 
-        for idx, req in enumerate(leave_data["requests"]):
+        for idx, req in enumerate(work_status_data["requests"]):
             if req.get("id") == request_id:
                 request_to_reject = req
                 request_index = idx
                 break
 
         if not request_to_reject:
-            return jsonify({"status": "error", "message": "Leave request not found"}), 404
+            return jsonify({"status": "error", "message": "Work status request not found"}), 404
 
         request_to_reject["status"] = "rejected"
         request_to_reject["processed_at"] = datetime.now().isoformat()
         request_to_reject["processed_by"] = user_data.get("fullname") or user_data.get("username")
 
-        leave_data["rejected"].append(request_to_reject)
-        leave_data["requests"].pop(request_index)
+        work_status_data["rejected"].append(request_to_reject)
+        work_status_data["requests"].pop(request_index)
 
-        # Mirror to BOTH leave files.
-        save_both_leave_files(leave_data)
+        # Mirror to BOTH work status files.
+        save_both_work_status_files(work_status_data)
 
         # Log activity
         add_activity(
-            "leave_rejected",
-            f"Leave request #{request_id} for {request_to_reject.get('fullname', '')} was rejected by {user_data.get('fullname') or user_data.get('username')}",
+            "work_status_rejected",
+            f"Work status request #{request_id} for {request_to_reject.get('fullname', '')} was rejected by {user_data.get('fullname') or user_data.get('username')}",
             {"name": user_data.get('fullname') or user_data.get('username'), "uid": user_data.get('uid')},
-            "leave"
+            "work_status"
         )
 
         # Notify the employee that their request was rejected.
         try:
             push_notification(
                 request_to_reject.get("rfid"),
-                "Leave Request Rejected",
-                f"Your {request_to_reject.get('leave_type', 'leave')} request from {request_to_reject.get('start_date', '')} to {request_to_reject.get('end_date', '')} has been rejected.",
-                notif_type="leave",
+                "Work Status Request Rejected",
+                f"Your {request_to_reject.get('work_status_label', 'work status')} request from {request_to_reject.get('start_date', '')} to {request_to_reject.get('end_date', '')} has been rejected.",
+                notif_type="work_status",
                 uid=request_to_reject.get("uid"),
                 fullname=request_to_reject.get("fullname"),
                 role="employee"
             )
         except Exception as e:
-            print(f"Warning: failed to push leave-rejected notification: {e}")
+            print(f"Warning: failed to push work status-rejected notification: {e}")
 
         return jsonify({
             "status": "success",
-            "message": "Leave request rejected",
+            "message": "Work status request rejected",
             "data": request_to_reject
         }), 200
 
     except Exception as e:
-        print(f"Reject leave error: {str(e)}")
+        print(f"Reject work status error: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 ## Settings Routes ------------------------------------
@@ -4457,19 +4840,19 @@ def serve_asset(filename):
     assets_dir = os.path.join(BASE_DIR, "storage", "assets")
     return send_from_directory(assets_dir, filename)
 
-# Serve leave request attachments from storage folder.
+# Serve work status request attachments from storage folder.
 #
 # By default the browser downloads the file (Content-Disposition: attachment).
 # Adding ?inline=1 streams the file with Content-Disposition: inline so
 # images and PDFs render directly inside an <iframe> / <img> — this is what
 # the front-end "View Attachment" modal uses to build its preview.
-@app.route("/storage/leave-request/<path:filename>")
-def serve_leave_request_attachment(filename):
+@app.route("/storage/work-status/<path:filename>")
+def serve_work_status_attachment(filename):
     inline = request.args.get("inline") in ("1", "true", "yes")
 
     # send_from_directory handles path traversal safely and returns the
     # correct Content-Type based on the file extension.
-    response = send_from_directory(LEAVE_REQUEST_STORAGE, filename)
+    response = send_from_directory(WORK_STATUS_REQUEST_STORAGE, filename)
 
     # Set explicit Content-Disposition so the caller controls download vs
     # preview. We keep the original filename so a "Save as…" still works.
@@ -5166,7 +5549,8 @@ def get_latest_rfid():
                             "am_out": day.get("am_out", ""),
                             "pm_in": day.get("pm_in", ""),
                             "pm_out": day.get("pm_out", ""),
-                            "status": day.get("status", "")
+                            "status": day.get("status", ""),
+                            "work_status": day.get("work_status")
                         }
                         break
                 break
@@ -5183,7 +5567,8 @@ def get_latest_rfid():
                         "am_out": "",
                         "pm_in": "",
                         "pm_out": "",
-                        "status": ""
+                        "status": "",
+                        "work_status": None
                     }
                     break
             # Save the new record
@@ -5364,10 +5749,12 @@ def page_not_found(e):
 @app.route("/api/device-ping", methods=["OPTIONS"])
 @app.route("/api/scan-feed", methods=["OPTIONS"])
 @app.route("/api/activity-feed", methods=["OPTIONS"])
-@app.route("/api/request-leave", methods=["OPTIONS"])
-@app.route("/api/leave-requests", methods=["OPTIONS"])
-@app.route("/api/approve-leave/<request_id>", methods=["OPTIONS"])
-@app.route("/api/reject-leave/<request_id>", methods=["OPTIONS"])
+@app.route("/api/request-work-status", methods=["OPTIONS"])
+@app.route("/api/work-status-requests", methods=["OPTIONS"])
+@app.route("/api/work-status-requests/<rfid>", methods=["OPTIONS"])
+@app.route("/api/approve-work-status/<request_id>", methods=["OPTIONS"])
+@app.route("/api/reject-work-status/<request_id>", methods=["OPTIONS"])
+@app.route("/api/work-status-types", methods=["OPTIONS"])
 @app.route("/api/dtr/employees", methods=["OPTIONS"])
 @app.route("/api/dtr/record/<rfid>", methods=["OPTIONS"])
 @app.route("/api/dtr/generate-pdf/<rfid>", methods=["OPTIONS"])
@@ -5380,7 +5767,7 @@ def page_not_found(e):
 @app.route("/api/notifications/<rfid>/clear", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/<notification_id>", methods=["OPTIONS"])
-@app.route("/api/leave-attachment/meta/<rfid>/<filename>", methods=["OPTIONS"])
+@app.route("/api/work-status-attachment/meta/<rfid>/<filename>", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
