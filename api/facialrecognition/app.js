@@ -1,6 +1,6 @@
 /* TapIn Face Scanner
    - Camera frames stay in the browser
-   - Loads .tfs files from storage/samples/
+   - Loads profile images from storage/profiles/
    - Face detection + recognition runs locally
    - Attendance recorded via RFID verification
    - Logs all face detections */
@@ -13,9 +13,9 @@ const ATTENDANCE_COOLDOWN = 10000; // 10 seconds between scans
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
-const statusEl = document.getElementById("status");
+const statusEl = document.getElementById("statusText");
+const statusDot = document.getElementById("statusDot");
 const messageEl = document.getElementById("message");
-const resultEl = document.getElementById("result");
 const faceCountEl = document.getElementById("faceCount");
 const logEntries = document.getElementById("logEntries");
 
@@ -29,24 +29,38 @@ let scanCount = 0;
 let todayAttendance = [];
 
 // ========================================================================
+// STATUS HELPERS
+// ========================================================================
+
+function setStatus(text, state) {
+  if (statusEl) statusEl.textContent = text;
+  if (statusDot) {
+    statusDot.className = "status-dot";
+    if (state === "ready" || state === "online") statusDot.classList.add("online");
+    else if (state === "error" || state === "offline") statusDot.classList.add("offline");
+    else statusDot.classList.add("unknown");
+  }
+}
+
+// ========================================================================
 // LOAD MODELS AND DATA
 // ========================================================================
 
 async function boot() {
   try {
-    statusEl.textContent = "Loading AI…";
+    setStatus("Loading AI…", "unknown");
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
     await faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL);
     await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
     modelsReady = true;
-    statusEl.textContent = "Camera ready";
+    setStatus("Camera ready", "ready");
     messageEl.textContent = "Start the scanner to detect faces.";
     await loadTemplates();
     await loadAttendance();
     await loadStats();
   } catch (e) {
     console.error("Boot error:", e);
-    statusEl.textContent = "AI Load Failed";
+    setStatus("AI Load Failed", "error");
     messageEl.textContent = "Could not load face models. Check internet connection.";
   }
 }
@@ -90,14 +104,16 @@ async function loadTemplates() {
 
     console.log(`✅ Loaded ${faceTemplates.length} face templates from profile images`);
     faceCountEl.textContent = `Faces: ${faceTemplates.length}`;
-    statusEl.textContent = faceTemplates.length ? "Profile templates ready" : "No profile images found";
-    statusEl.className = faceTemplates.length ? "pill status-ready" : "pill status-error";
+    if (faceTemplates.length) {
+      setStatus("Profile templates ready", "ready");
+    } else {
+      setStatus("No profile images found", "unknown");
+    }
   } catch (e) {
     console.error("Error loading templates:", e);
     faceTemplates = [];
     faceCountEl.textContent = "Faces: 0";
-    statusEl.textContent = "Template load failed";
-    statusEl.className = "pill status-error";
+    setStatus("Template load failed", "error");
   }
 }
 
@@ -120,6 +136,7 @@ async function loadStats() {
     const data = await res.json();
     if (data.status === "success") {
       const stats = data.stats;
+      // Profile images stat (was: TFS files)
       document.getElementById("statTFS").textContent = stats.profile_images || 0;
       document.getElementById("statPresent").textContent = stats.present_today || 0;
       document.getElementById("statTotal").textContent = stats.total_employees || 0;
@@ -145,6 +162,14 @@ async function startCamera() {
 
     video.srcObject = stream;
     await video.play();
+
+    // Wait for metadata so videoWidth/videoHeight are correct
+    if (!video.videoWidth) {
+      await new Promise(resolve => {
+        video.onloadedmetadata = () => resolve();
+      });
+    }
+
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     running = true;
@@ -153,9 +178,7 @@ async function startCamera() {
     document.getElementById("stop").disabled = false;
     document.getElementById("cameraHint").style.display = "none";
     messageEl.textContent = "🔍 Scanning for faces...";
-    
-    resultEl.innerHTML = `<strong>👤 Scanning...</strong><span>Looking for registered faces.</span>`;
-    
+
     recognitionLoop();
   } catch (e) {
     console.error("Camera error:", e);
@@ -171,7 +194,7 @@ function stopCamera() {
   }
   video.srcObject = null;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
+
   document.getElementById("start").disabled = false;
   document.getElementById("stop").disabled = true;
   document.getElementById("cameraHint").style.display = "grid";
@@ -204,9 +227,9 @@ function identify(descriptor) {
       best = {
         employee,
         rfid: record.rfid || employee.rfid || "",
-        uid: employee.uid || "",
+        uid: employee.uid || record.uid || "",
         distance: d,
-        name: `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || employee.name || "Unknown",
+        name: employee.name || `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || record.name || "Unknown",
         samples: 1
       };
     }
@@ -221,7 +244,7 @@ function identify(descriptor) {
 async function recordAttendance(match) {
   const uid = String(match.uid || match.employee?.uid || "");
   const rfid = String(match.rfid || match.employee?.rfid || "");
-  
+
   if (!uid && !rfid) {
     console.warn("No UID or RFID found for match");
     return;
@@ -235,13 +258,6 @@ async function recordAttendance(match) {
     return;
   }
   lastSent.set(key, now);
-
-  // Update UI
-  resultEl.className = "result recognized";
-  resultEl.innerHTML = `
-    <strong>🔄 ${escapeHtml(match.name)}</strong>
-    <span>Confidence: ${match.confidence.toFixed(1)}% · Recording attendance...</span>
-  `;
 
   try {
     const res = await fetch(`${BASE}/api/verify-and-record`, {
@@ -260,48 +276,24 @@ async function recordAttendance(match) {
 
     if (res.ok && data.status === "success") {
       const empName = data.employee?.name || data.employee?.firstname || match.name;
-      const statusIcon = data.is_present ? "✅" : "⏳";
-      
-      resultEl.className = "result recognized";
-      resultEl.innerHTML = `
-        <strong>${statusIcon} ${escapeHtml(empName)}</strong>
-        <span>Attendance recorded: ${escapeHtml(data.message || "Success")}</span>
-      `;
-      
-      // Add to log
+
       addLogEntry(empName, data.confidence || match.confidence, "success", data.attendance_status || "recorded");
-      
-      // Refresh attendance
+
       await loadAttendance();
       await loadStats();
-      
+
       messageEl.textContent = `✅ ${empName} - Attendance recorded`;
 
     } else if (res.status === 403) {
-      resultEl.className = "result rejected";
-      resultEl.innerHTML = `
-        <strong>⚠️ Low Confidence</strong>
-        <span>${escapeHtml(data.message || "Confidence below threshold")}</span>
-      `;
       addLogEntry(match.name, match.confidence, "warning", "low confidence");
       messageEl.textContent = "⚠️ Confidence too low for attendance.";
-      
+
     } else {
-      resultEl.className = "result rejected";
-      resultEl.innerHTML = `
-        <strong>❌ Recognition rejected</strong>
-        <span>${escapeHtml(data.message || "Verification failed")}</span>
-      `;
       addLogEntry(match.name, match.confidence, "error", "rejected");
       messageEl.textContent = "❌ Attendance not recorded.";
     }
   } catch (e) {
     console.error("Attendance error:", e);
-    resultEl.className = "result rejected";
-    resultEl.innerHTML = `
-      <strong>⚠️ API Error</strong>
-      <span>Could not connect to server. Try again.</span>
-    `;
     addLogEntry(match.name, match.confidence, "error", "API error");
     messageEl.textContent = "⚠️ API connection failed.";
   }
@@ -325,49 +317,43 @@ async function recognitionLoop() {
     faceCountEl.textContent = `Faces: ${detections.length}`;
 
     const resized = faceapi.resizeResults(detections, {
-      width: canvas.width, height: canvas.height
+      width: canvas.width,
+      height: canvas.height
     });
 
     for (let i = 0; i < resized.length; i++) {
       const box = resized[i].detection.box;
       const match = identify(detections[i].descriptor);
-      
+
       let label = "Unknown";
       let color = "#ef4444";
-      let isMatch = false;
 
       if (match) {
         label = `${match.name} ${match.confidence.toFixed(1)}%`;
         color = "#22c55e";
-        isMatch = true;
-        
-        // Record attendance for this match
         await recordAttendance(match);
       }
 
-      // Draw bounding box
+      // Manual flip: canvas has NO CSS mirror, video DOES.
+      // So we flip x here to match the mirrored selfie video.
+      const flippedX = canvas.width - box.x - box.width;
+
+      // Draw bounding box at the flipped position
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
-      ctx.strokeRect(box.x, box.y, box.width, box.height);
+      ctx.strokeRect(flippedX, box.y, box.width, box.height);
 
       // Draw label background
       ctx.fillStyle = color;
-      ctx.fillRect(box.x, Math.max(0, box.y - 28), Math.min(canvas.width - box.x, 300), 28);
+      const labelWidth = Math.min(canvas.width - flippedX, 300);
+      const labelY = Math.max(0, box.y - 28);
+      ctx.fillRect(flippedX, labelY, labelWidth, 28);
+
+      // Draw label text (no counter-flip needed — canvas is not mirrored)
       ctx.fillStyle = "#fff";
       ctx.font = "bold 14px sans-serif";
-      ctx.fillText(label.trim(), box.x + 6, Math.max(18, box.y - 9));
-    }
-
-    // If no faces detected, update result
-    if (detections.length === 0 && running) {
-      const currentText = resultEl.querySelector("strong")?.textContent || "";
-      if (!currentText.includes("Scanning") && !currentText.includes("No face")) {
-        resultEl.className = "result";
-        resultEl.innerHTML = `
-          <strong>👤 No face detected</strong>
-          <span>Look at the camera to scan your face.</span>
-        `;
-      }
+      ctx.textAlign = "left";
+      ctx.fillText(label.trim(), flippedX + 6, Math.max(18, box.y - 9));
     }
 
   } catch (e) {
@@ -386,14 +372,14 @@ function addLogEntry(name, confidence, type, message) {
   const time = new Date().toLocaleTimeString();
   const entry = document.createElement("div");
   entry.className = `log-entry log-${type}`;
-  
+
   const icons = {
     success: "✅",
     warning: "⚠️",
     error: "❌",
     info: "ℹ️"
   };
-  
+
   entry.innerHTML = `
     <span class="log-time">${time}</span>
     <span class="log-icon">${icons[type] || "ℹ️"}</span>
@@ -401,26 +387,22 @@ function addLogEntry(name, confidence, type, message) {
     <span class="log-confidence">${confidence?.toFixed(1) || "---"}%</span>
     <span class="log-message">${escapeHtml(message)}</span>
   `;
-  
+
   logEntries.insertBefore(entry, logEntries.firstChild);
-  
-  // Keep only last 50 entries
+
   while (logEntries.children.length > 50) {
     logEntries.removeChild(logEntries.lastChild);
   }
-  
-  // Remove empty state
+
   const empty = logEntries.querySelector(".log-empty");
   if (empty) empty.remove();
 }
 
 function renderAttendance(records) {
   const container = document.getElementById("todayAttendance");
-  
+
   if (!records || records.length === 0) {
-    container.innerHTML = `
-      <span class="help">📭 No attendance records for today.</span>
-    `;
+    container.innerHTML = `<span class="help">📭 No attendance records for today.</span>`;
     return;
   }
 

@@ -160,16 +160,16 @@ app.config.update(
 # The module serves the recognition page at /facialrecognition/
 
 try:
-    from facescanner import register as register_facescanner
-    register_facescanner(app)
+    from facialrecognition import register as register_facialrecognition
+    register_facialrecognition(app)
     print("✅ Face recognition module at /facialrecognition")
-    print("   📷 Detects faces using .tfs files")
+    print("   📷 Detects faces using profile images")
     print("   🔒 Records attendance via RFID verification")
     print("   🎯 Minimum confidence: 70%")
     print("   📁 Samples directory: storage/samples/")
 except ImportError as e:
     print(f"⚠️ Face recognition module not available: {e}")
-    print("   To enable face recognition, create the 'facescanner' folder")
+    print("   To enable face recognition, create the 'facialrecognition' folder")
 except Exception as e:
     print(f"⚠️ Error registering face recognition module: {e}")
 
@@ -511,7 +511,7 @@ SCAN_COOLDOWN_SECONDS = 3 * 60
 _last_feed_wipe_date = None
 
 def perform_nightly_feed_wipe(force=False):
-    """Wipe all four feed files once per calendar day at 12:00 AM.
+    """Wipe all four feed files. Only runs when force=True (used by weekly scheduler).
 
     Files cleared (all under storage/feed/):
         - storage/feed/scan_feed.json          (scans list)
@@ -523,13 +523,18 @@ def perform_nightly_feed_wipe(force=False):
 
     Also clears in-memory daily state (latest scan + per-RFID cooldown).
 
-    Safe to call on every request — it short-circuits if already run today,
-    unless `force=True` is passed (used by the midnight scheduler thread).
+    Only runs when force=True is passed (used by the weekly Sunday scheduler).
+    Daily wipe has been disabled per user request.
     """
     global _last_feed_wipe_date, latest_scan, last_scan_tracking, scan_events
 
+    # Only run when explicitly forced (weekly scheduler)
+    if not force:
+        return
+
     today = datetime.now().date()
-    if not force and _last_feed_wipe_date == today:
+    if _last_feed_wipe_date == today:
+        # Already wiped today
         return
     _last_feed_wipe_date = today
 
@@ -5507,41 +5512,13 @@ def dashboard_data():
 
     return jsonify({
         "status": "success",
-        "data": get_dashboard_data()
     }), 200
-
-# Return live employee and RFID totals for the dashboard cards.
-@app.route("/api/dashboard-stats", methods=["GET"])
-def dashboard_stats():
-    return jsonify({
-        "status": "success",
-        "stats": get_dashboard_statistics()
-    }), 200
-
-# Serve scan feed data
-@app.route("/api/scan-feed", methods=["GET"])
-def get_scan_feed():
-    # Wipe all feeds once per calendar day (first request after midnight).
-    perform_nightly_feed_wipe()
-    scan_feed_data = load_scan_feed()
-    return jsonify({
-        "status": "success",
-        "data": scan_feed_data
-    }), 200
-
-# Serve activity feed data for timeline
 @app.route("/api/activity-feed", methods=["GET"])
 def get_activity_feed():
     """Get the activity feed data for the dashboard timeline"""
     # Wipe all feeds once per calendar day (first request after midnight).
-    perform_nightly_feed_wipe()
-    limit = request.args.get("limit", default=50, type=int)
     activity_feed_data = load_activity_feed()
     activities = activity_feed_data.get("activities", [])
-
-    # Return limited activities
-    if limit and limit > 0:
-        activities = activities[:limit]
 
     return jsonify({
         "status": "success",
@@ -5603,91 +5580,91 @@ def get_attendance():
 @app.route("/api/get-latest-rfid", methods=["GET"])
 def get_latest_rfid():
     """Get the latest RFID scan with full attendance data for the employee"""
-    # Wipe all feeds once per calendar day (first request after midnight).
-    perform_nightly_feed_wipe()
-    rfid = latest_scan.get("rfid")
+    # Removed: Wipe all feeds once per calendar day (first request after midnight).
     scanned_at = latest_scan.get("scanned_at")
-    employee = employee_database.get(rfid) if rfid else None
+    latest_rfid = latest_scan.get("rfid")
 
     employee_data = None
     attendance_data = None
 
-    if employee:
-        # Build employee data with full image URL
-        stored_image = employee.get("image", "")
-        image_url = ""
+    if latest_rfid:
+        employee = employee_database.get(latest_rfid)
+        if employee:
+            # Build employee data with full image URL
+            stored_image = employee.get("image", "")
+            image_url = ""
 
-        if stored_image:
-            if stored_image.startswith("http"):
-                image_url = stored_image
+            if stored_image:
+                if stored_image.startswith("http"):
+                    image_url = stored_image
+                else:
+                    image_url = f"{request.host_url}{stored_image}"
             else:
-                image_url = f"{request.host_url}{stored_image}"
-        else:
-            rfid_filename = employee.get("rfid", "")
-            if rfid_filename:
-                image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-                for ext in image_extensions:
-                    image_path = os.path.join(PROFILE_STORAGE, rfid_filename + ext)
-                    if os.path.exists(image_path):
-                        image_url = f"{request.host_url}storage/profiles/{rfid_filename}{ext}"
-                        break
+                rfid_filename = employee.get("rfid", "")
+                if rfid_filename:
+                    image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+                    for ext in image_extensions:
+                        image_path = os.path.join(PROFILE_STORAGE, rfid_filename + ext)
+                        if os.path.exists(image_path):
+                            image_url = f"{request.host_url}storage/profiles/{rfid_filename}{ext}"
+                            break
 
-        employee_data = {
-            "uid": employee.get("uid"),
-            "rfid": employee.get("rfid"),
-            "employeeid": employee.get("employeeid"),
-            "lastname": employee.get("lastname"),
-            "firstname": employee.get("firstname"),
-            "role": employee.get("role"),
-            "image": image_url
-        }
+            employee_data = {
+                "uid": employee.get("uid"),
+                "rfid": employee.get("rfid"),
+                "employeeid": employee.get("employeeid"),
+                "lastname": employee.get("lastname"),
+                "firstname": employee.get("firstname"),
+                "role": employee.get("role"),
+                "image": image_url
+            }
 
-        # Get today's attendance data - ALWAYS try to get or create record
-        today = datetime.now()
-        today_str = today.strftime("%Y-%m-%d")
-        month_key = today.strftime("%Y-%m")
+            # Get today's attendance data - ALWAYS try to get or create record
+            today = datetime.now()
+            today_str = today.strftime("%Y-%m-%d")
+            month_key = today.strftime("%Y-%m")
 
-        # Try to find existing record
-        for record in attendance_records:
-            if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
+            # Try to find existing record
+            for record in attendance_records:
+                if record.get("uid") == employee.get("uid") and record.get("month") == month_key:
+                    for key, day in record.get("dtr", {}).items():
+                        if day.get("date") == today_str:
+                            attendance_data = {
+                                "am_in": day.get("am_in", ""),
+                                "am_out": day.get("am_out", ""),
+                                "pm_in": day.get("pm_in", ""),
+                                "pm_out": day.get("pm_out", ""),
+                                "status": day.get("status", ""),
+                                "work_status": day.get("work_status")
+                            }
+                            break
+                    break
+
+            # If no record found, create one and return empty data
+            if attendance_data is None:
+                # Create a new attendance record for this employee
+                record = get_attendance_record(employee, today)
+                # Get the newly created record's data
                 for key, day in record.get("dtr", {}).items():
                     if day.get("date") == today_str:
                         attendance_data = {
-                            "am_in": day.get("am_in", ""),
-                            "am_out": day.get("am_out", ""),
-                            "pm_in": day.get("pm_in", ""),
-                            "pm_out": day.get("pm_out", ""),
-                            "status": day.get("status", ""),
-                            "work_status": day.get("work_status")
+                            "am_in": "",
+                            "am_out": "",
+                            "pm_in": "",
+                            "pm_out": "",
+                            "status": "",
+                            "work_status": None
                         }
                         break
-                break
-
-        # If no record found, create one and return empty data
-        if attendance_data is None:
-            # Create a new attendance record for this employee
-            record = get_attendance_record(employee, today)
-            # Get the newly created record's data
-            for key, day in record.get("dtr", {}).items():
-                if day.get("date") == today_str:
-                    attendance_data = {
-                        "am_in": "",
-                        "am_out": "",
-                        "pm_in": "",
-                        "pm_out": "",
-                        "status": "",
-                        "work_status": None
-                    }
-                    break
-            # Save the new record
-            save_attendance_data()
-            print(f"Created new attendance record for {employee.get('firstname')} for today")
+                # Save the new record
+                save_attendance_data()
+                print(f"Created new attendance record for {employee.get('firstname')} for today")
 
     # If no employee found, still return a valid response
     if not employee_data and not attendance_data:
         return jsonify({
             "status": "success",
-            "rfid": rfid,
+            "rfid": latest_rfid if latest_rfid else "",
             "scanned_at": scanned_at,
             "devices": get_online_devices(),
             "found": False,
@@ -5697,7 +5674,7 @@ def get_latest_rfid():
 
     return jsonify({
         "status": "success",
-        "rfid": rfid,
+        "rfid": latest_rfid if latest_rfid else "",
         "scanned_at": scanned_at,
         "devices": get_online_devices(),
         "found": bool(employee),
@@ -5765,10 +5742,7 @@ def receive_rfid():
         print(f"RFID receive request received")
         print(f"Content-Type: {request.headers.get('Content-Type')}")
 
-        # Wipe all feeds once per calendar day (first request after midnight).
-        perform_nightly_feed_wipe()
-
-        # Get raw data for debugging
+        # Removed: Wipe all feeds once per calendar day (first request after midnight).
         raw_data = request.get_data()
         print(f"Raw data: {raw_data}")
 

@@ -497,6 +497,39 @@ function openWorkStatusModal() {
   if (m) m.classList.add('show');
   const f = document.getElementById('workStatusRequestForm');
   if (f) f.reset();
+
+  // Populate work status type dropdown with standard options including "Others"
+  populateWorkStatusTypeDropdown();
+}
+
+// Populate work status type dropdown with standard options
+function populateWorkStatusTypeDropdown() {
+  const select = document.getElementById('workStatusType');
+  if (!select) return;
+
+  // Clear existing options
+  select.innerHTML = '';
+
+  // Define standard work status types
+  const workStatusTypes = [
+    { value: 'overtime', label: 'Overtime' },
+    { value: 'vacation_leave', label: 'Vacation Leave' },
+    { value: 'sick_leave', label: 'Sick Leave' },
+    { value: 'maternity_leave', label: 'Maternity Leave' },
+    { value: 'paternity_leave', label: 'Paternity Leave' },
+    { value: 'bereavement_leave', label: 'Bereavement Leave' },
+    { value: 'jury_duty', label: 'Jury Duty' },
+    { value: 'military_leave', label: 'Military Leave' },
+    { value: 'others', label: 'Others' }
+  ];
+
+  // Add options to dropdown
+  workStatusTypes.forEach(option => {
+    const optionElement = document.createElement('option');
+    optionElement.value = option.value;
+    optionElement.textContent = option.label;
+    select.appendChild(optionElement);
+  });
 }
 function closeWorkStatusModal() {
   const m = document.getElementById('workStatusModal');
