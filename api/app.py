@@ -1677,10 +1677,10 @@ def build_dtr_dict(year, month):
             # Hidden 24-hour copies of the four timestamps above. These are
             # what calculate_hours() actually uses so the AM/PM distinction
             # is never lost when we store the 12-hour display value.
-            "_am_in_24": "",
-            "_am_out_24": "",
-            "_pm_in_24": "",
-            "_pm_out_24": ""
+            "am_in_24": "",
+            "am_out_24": "",
+            "pm_in_24": "",
+            "pm_out_24": ""
         }
     return dtr
 
@@ -1928,10 +1928,10 @@ def record_attendance_scan(employee, scanned_at):
             "ot": "0.00",
             "status": "",
             "work_status": None,
-            "_am_in_24": "",
-            "_am_out_24": "",
-            "_pm_in_24": "",
-            "_pm_out_24": ""
+            "am_in_24": "",
+            "am_out_24": "",
+            "pm_in_24": "",
+            "pm_out_24": ""
         }
         record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
 
@@ -1948,7 +1948,7 @@ def record_attendance_scan(employee, scanned_at):
     period, scan_type = scan_result
     in_key = f"{period}_in"
     out_key = f"{period}_out"
-    hidden_key = f"_{period}_{scan_type}_24"
+    hidden_key = f"{period}_{scan_type}_24"
 
     # Check if this period is affected by a specific-time work status.
     # If so, we still record the scan but mark it as work status related.
@@ -2048,12 +2048,12 @@ def record_attendance_scan(employee, scanned_at):
     # ------------------------------------------------------------------
     am_hours = calculate_hours(day_data.get("am_in", ""), day_data.get("am_out", ""),
                                period="am",
-                               start_24=day_data.get("_am_in_24", ""),
-                               end_24=day_data.get("_am_out_24", ""))
+                               start_24=day_data.get("am_in_24", ""),
+                               end_24=day_data.get("am_out_24", ""))
     pm_hours = calculate_hours(day_data.get("pm_in", ""), day_data.get("pm_out", ""),
                                period="pm",
-                               start_24=day_data.get("_pm_in_24", ""),
-                               end_24=day_data.get("_pm_out_24", ""))
+                               start_24=day_data.get("pm_in_24", ""),
+                               end_24=day_data.get("pm_out_24", ""))
     total_hours = am_hours + pm_hours
 
     # A day is only "fully complete" once every one of the four slots is
@@ -2259,12 +2259,30 @@ def get_dashboard_statistics():
     absent_today = max(total_employees - present_today, 0)
     attendance_rate = round((present_today / total_employees) * 100, 1) if total_employees else 0
 
+    # "On Work Status" should count UNIQUE EMPLOYEES whose approved work
+    # status requests cover TODAY's date — not the total number of approved
+    # requests ever. Otherwise the number grows forever and no longer means
+    # what the dashboard card claims.
+    today_str = today.isoformat()
+    employees_on_work_status_today = set()
+    for req in work_status_data.get("approved", []):
+        days = req.get("days") or []
+        if today_str in days:
+            uid = req.get("uid")
+            if uid:
+                employees_on_work_status_today.add(uid)
+            else:
+                # Fall back to RFID if the record has no uid.
+                rfid = req.get("rfid")
+                if rfid:
+                    employees_on_work_status_today.add(rfid)
+
     return {
         "total_employees": total_employees,
         "present_today": present_today,
         "absent_today": absent_today,
         "employees_late": 0,
-        "on_work_status": len(work_status_data.get("approved", [])),
+        "on_work_status": len(employees_on_work_status_today),
         "attendance_rate": attendance_rate,
         "rfid_scans_today": len(today_events),
         "departments": 0,
@@ -3596,7 +3614,9 @@ def print_report(report_type):
                 "message": "Session expired or user is not logged in"
             }), 401
 
-    # Validate report type
+    # Accept both "leave" (legacy) and "work-status" (new alias) — both map
+    # to the same Work Status report branch inside generate_report_print_data().
+    report_type = "leave" if report_type == "work-status" else report_type
     valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
     if report_type not in valid_reports:
         return jsonify({
@@ -3634,7 +3654,9 @@ def generate_report_pdf(report_type):
                 "message": "Session expired or user is not logged in"
             }), 401
 
-    # Validate report type
+    # Accept both "leave" (legacy) and "work-status" (new alias) — both map
+    # to the same Work Status report branch inside generate_report_print_data().
+    report_type = "leave" if report_type == "work-status" else report_type
     valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
     if report_type not in valid_reports:
         return jsonify({
@@ -3691,7 +3713,9 @@ def generate_report_excel(report_type):
                 "message": "Session expired or user is not logged in"
             }), 401
 
-    # Validate report type
+    # Accept both "leave" (legacy) and "work-status" (new alias) — both map
+    # to the same Work Status report branch inside generate_report_print_data().
+    report_type = "leave" if report_type == "work-status" else report_type
     valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
     if report_type not in valid_reports:
         return jsonify({
@@ -3741,7 +3765,9 @@ def generate_report(report_type):
                 "message": "Session expired or user is not logged in"
             }), 401
 
-    # Validate report type
+    # Accept both "leave" (legacy) and "work-status" (new alias) — both map
+    # to the same Work Status report branch inside generate_report_print_data().
+    report_type = "leave" if report_type == "work-status" else report_type
     valid_reports = ["daily", "weekly", "monthly", "yearly", "summary", "absent", "leave", "rfid_logs"]
     if report_type not in valid_reports:
         return jsonify({
@@ -3837,6 +3863,26 @@ def request_work_status():
         start_time = data.get("start_time", "").strip()
         end_time = data.get("end_time", "").strip()
 
+        # Validate optional specific times — must be "HH:MM" if provided.
+        # We do this BEFORE the date validation block so bad input is rejected
+        # early with a clear message.
+        _hhmm = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+        if start_time and not _hhmm.match(start_time):
+            return jsonify({
+                "status": "error",
+                "message": "start_time must be in HH:MM format (24-hour)"
+            }), 400
+        if end_time and not _hhmm.match(end_time):
+            return jsonify({
+                "status": "error",
+                "message": "end_time must be in HH:MM format (24-hour)"
+            }), 400
+        if start_time and end_time and start_time >= end_time:
+            return jsonify({
+                "status": "error",
+                "message": "start_time must be earlier than end_time"
+            }), 400
+
         # Validate that leave dates are not in the past
         try:
             start_date = datetime.strptime(data["start_date"], "%Y-%m-%d")
@@ -3884,10 +3930,13 @@ def request_work_status():
                 employee_work_status_dir = os.path.join(WORK_STATUS_REQUEST_STORAGE, rfid)
                 os.makedirs(employee_work_status_dir, exist_ok=True)
 
-                # Generate filename with date and RFID
+                # Generate filename with date + RFID + a short random suffix.
+                # Without the suffix, two requests filed on the same day by the
+                # same employee would overwrite each other's attachment.
                 date_today = datetime.now().strftime("%Y%m%d")
+                unique_suffix = secrets.token_hex(3)  # 6 hex chars
                 secure_filename_base = secure_filename(rfid)
-                filename = f"{date_today}_{secure_filename_base}{extension}"
+                filename = f"{date_today}_{secure_filename_base}_{unique_suffix}{extension}"
                 file_path = os.path.join(employee_work_status_dir, filename)
 
                 # Save the file
@@ -4001,6 +4050,25 @@ def get_work_status_requests():
 # Get work status requests for a specific employee
 @app.route("/api/work-status-requests/<rfid>", methods=["GET"])
 def get_employee_work_status_requests(rfid):
+    # Require a valid session OR bearer token — same guard as every other
+    # authenticated endpoint. Without this, anyone who knows an RFID can list
+    # that employee's work status request history.
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return error_response, status_code
+        caller_role = user_data.get("role", "employee")
+        caller_rfid = user_data.get("rfid")
+    else:
+        if not session.get("user"):
+            return jsonify({
+                "status": "error",
+                "message": "Session expired or user is not logged in"
+            }), 401
+        caller_role = session.get("user", {}).get("role", "employee")
+        caller_rfid = session.get("user", {}).get("rfid")
+
     identifier = rfid.strip().upper()
 
     # Try RFID lookup first
@@ -4015,6 +4083,13 @@ def get_employee_work_status_requests(rfid):
 
     if not employee:
         return jsonify({"status": "error", "message": "Employee not found"}), 404
+
+    # Authorization: only HR/Admin or the employee themselves can read the list.
+    if caller_role not in ("admin", "hr") and caller_rfid != employee.get("rfid"):
+        return jsonify({
+            "status": "error",
+            "message": "Unauthorized to view these work status requests"
+        }), 403
 
     # Use the employee's UID for filtering so it works with both RFID and UID lookups
     uid = employee.get("uid")
@@ -4213,6 +4288,14 @@ def approve_work_status(request_id):
         uid = request_to_approve.get("uid")
         work_status_type = request_to_approve.get("work_status_type")
         work_status_label = WORK_STATUS_TYPES.get(work_status_type, {}).get("label", work_status_type)
+
+        # Normalize: if the request had no explicit start_time/end_time, keep
+        # them as "" instead of None so the frontend (which treats "" as
+        # "no specific time") doesn't accidentally show "None" in the detail
+        # view. This also prevents a stale time from a previous approval on
+        # the same request from leaking in.
+        start_time_final = (request_to_approve.get("start_time") or "").strip()
+        end_time_final = (request_to_approve.get("end_time") or "").strip()
         
         for date_str in request_to_approve.get("days", []):
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
@@ -4230,8 +4313,8 @@ def approve_work_status(request_id):
                                 "type": work_status_type,
                                 "label": work_status_label,
                                 "period": period,
-                                "start_time": request_to_approve.get("start_time", ""),
-                                "end_time": request_to_approve.get("end_time", ""),
+                                "start_time": start_time_final,
+                                "end_time": end_time_final,
                                 "is_specific_time": period in ["am", "pm"],
                                 "request_id": request_id,
                                 "is_active": True,
@@ -4248,10 +4331,10 @@ def approve_work_status(request_id):
                                 day["hours"] = "0.00"
                                 day["ut"] = "0.00"
                                 day["ot"] = "0.00"
-                                day["_am_in_24"] = ""
-                                day["_am_out_24"] = ""
-                                day["_pm_in_24"] = ""
-                                day["_pm_out_24"] = ""
+                                day["am_in_24"] = ""
+                                day["am_out_24"] = ""
+                                day["pm_in_24"] = ""
+                                day["pm_out_24"] = ""
                                 print(f"Marked {date_str} as WHOLE DAY WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
                             
                             # For specific-time work status (AM or PM),
@@ -4262,8 +4345,8 @@ def approve_work_status(request_id):
                                 day["_am_work_status"] = {
                                     "type": work_status_type,
                                     "label": work_status_label,
-                                    "start_time": request_to_approve.get("start_time", ""),
-                                    "end_time": request_to_approve.get("end_time", "")
+                                    "start_time": start_time_final,
+                                    "end_time": end_time_final
                                 }
                                 print(f"Marked {date_str} AM period as WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
                             elif period == "pm":
@@ -4271,8 +4354,8 @@ def approve_work_status(request_id):
                                 day["_pm_work_status"] = {
                                     "type": work_status_type,
                                     "label": work_status_label,
-                                    "start_time": request_to_approve.get("start_time", ""),
-                                    "end_time": request_to_approve.get("end_time", "")
+                                    "start_time": start_time_final,
+                                    "end_time": end_time_final
                                 }
                                 print(f"Marked {date_str} PM period as WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
                             
@@ -5186,10 +5269,32 @@ def update_employee(rfid):
         category_found = None
         index_found = None
 
+        # The URL key can be either the employee's UID, their stored RFID, or
+        # (if the caller is renaming) the RFID as submitted in the form body.
+        # We normalize every candidate to uppercase for the RFID comparison so
+        # a case mismatch can never cause "Employee not found".
+        url_key = rfid  # already .strip().upper() at the top of the function
+        body_rfid = str(data.get("rfid", "")).strip().upper()
+
+        def _matches(emp):
+            """Return True if the employee record matches the URL key."""
+            emp_rfid = str(emp.get("rfid", "")).strip().upper()
+            emp_uid = str(emp.get("uid", "")).strip()
+            if emp_rfid and emp_rfid == url_key:
+                return True
+            if emp_uid and emp_uid == url_key:
+                return True
+            # When the caller is renaming the RFID, the URL still contains the
+            # OLD RFID (or the UID). Match the form-body RFID too so the record
+            # is always found even if the hidden field was stale.
+            if body_rfid and emp_rfid and emp_rfid == body_rfid:
+                return True
+            return False
+
         for category in ["admin", "hr", "employees"]:
             if category in database:
                 for idx, emp in enumerate(database[category]):
-                    if emp.get("rfid", "").strip().upper() == rfid:
+                    if _matches(emp):
                         found = True
                         category_found = category
                         index_found = idx
@@ -5198,21 +5303,8 @@ def update_employee(rfid):
                 if found:
                     break
 
-        # Fallback: try to find by UID if not found by RFID
         if not found:
-            for category in ["admin", "hr", "employees"]:
-                if category in database:
-                    for idx, emp in enumerate(database[category]):
-                        if str(emp.get("uid", "")).strip() == rfid:
-                            found = True
-                            category_found = category
-                            index_found = idx
-                            updated_employee = emp
-                            break
-                    if found:
-                        break
-
-        if not found:
+            print(f"update_employee: no match for URL key '{url_key}' (body rfid='{body_rfid}')")
             return jsonify({
                 "status": "error",
                 "message": "Employee not found"
@@ -5331,16 +5423,32 @@ def update_employee(rfid):
 
         # Update in-memory database (handle RFID rename if requested)
         try:
-            if new_rfid_value:
-                # remove old key if present
-                if rfid in employee_database:
-                    try:
-                        del employee_database[rfid]
-                    except Exception:
-                        pass
-                employee_database[new_rfid_value] = updated_employee
+            # Capture the OLD RFID before we mutate anything — this is the
+            # actual key the employee was stored under in employee_database,
+            # which is NOT necessarily the URL key (the URL key may be the UID).
+            old_rfid_for_cache = None
+            for k, v in list(employee_database.items()):
+                if v is updated_employee or (
+                    str(v.get("uid", "")).strip() == str(updated_employee.get("uid", "")).strip()
+                    and str(updated_employee.get("uid", "")).strip()
+                ):
+                    old_rfid_for_cache = k
+                    break
+
+            if old_rfid_for_cache and old_rfid_for_cache in employee_database:
+                try:
+                    del employee_database[old_rfid_for_cache]
+                except Exception:
+                    pass
+
+            # Re-key by the (possibly new) RFID so subsequent lookups work.
+            final_rfid = str(updated_employee.get("rfid", "")).strip().upper()
+            if final_rfid:
+                employee_database[final_rfid] = updated_employee
             else:
-                employee_database[rfid] = updated_employee
+                # No RFID — keep the synthetic UID key so it still appears.
+                uid_key = f"__UID__{updated_employee.get('uid', '')}"
+                employee_database[uid_key] = updated_employee
         except Exception as e:
             print(f"Warning: failed to update in-memory employee_database mapping: {e}")
 

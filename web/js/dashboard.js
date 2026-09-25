@@ -40,6 +40,16 @@ function getAuthHeaders() {
     };
 }
 
+/* Auth headers for multipart/form-data requests (file uploads).
+   We must NOT set Content-Type — the browser sets it with the multipart
+   boundary automatically. Only the Authorization token is sent. */
+function getMultipartAuthHeaders() {
+    const token = localStorage.getItem('tapinToken');
+    return {
+        'Authorization': `Bearer ${token}`
+    };
+}
+
 /* ============ DTR / EMPLOYEE SEARCH DROPDOWN STYLES ============ */
 
 // Inject the CSS that the DTR search dropdown needs to actually appear
@@ -337,6 +347,25 @@ function formatDTRDate(value) {
     return String(value);
 }
 
+// Sort employees by uid (numeric or string)
+function sortEmployeesByUid(employees) {
+    return employees.slice().sort((a, b) => {
+        const uidA = a.uid || '';
+        const uidB = b.uid || '';
+
+        // Try to parse as numbers for numeric sorting
+        const numA = parseInt(uidA, 10);
+        const numB = parseInt(uidB, 10);
+
+        if (!isNaN(numA) && !isNaN(numB)) {
+            return numA - numB;
+        }
+
+        // Fallback to string comparison
+        return uidA.localeCompare(uidB);
+    });
+}
+
 // Format a date value into short "M/D/YY" style used in the DTR header
 // (e.g. "9/1/26"), no leading zeros — same style as the reference form.
 function formatDTRHeaderDate(value) {
@@ -401,6 +430,25 @@ function escapeHtml(value) {
 
 function initials(user) {
     return `${user.firstname || ''} ${user.lastname || ''}`.trim().split(/\s+/).map((part) => part[0] || '').join('').slice(0, 2).toUpperCase() || '--';
+}
+
+// Sort employees by uid (numeric or string)
+function sortEmployeesByUid(employees) {
+    return employees.slice().sort((a, b) => {
+        const uidA = a.uid || '';
+        const uidB = b.uid || '';
+
+        // Try to parse as numbers for numeric sorting
+        const numA = parseInt(uidA, 10);
+        const numB = parseInt(uidB, 10);
+
+        if (!isNaN(numA) && !isNaN(numB)) {
+            return numA - numB;
+        }
+
+        // Fallback to string comparison
+        return uidA.localeCompare(uidB);
+    });
 }
 
 // ============ SEARCH FUNCTIONALITY ============
@@ -865,17 +913,35 @@ function updateEmployeesGrid(users) {
     // Store all employees for filtering (only update if data changed)
     const currentData = JSON.stringify(users || []);
     if (currentData !== previousEmployeesData) {
-        allEmployees = users || [];
-        filteredEmployees = [...allEmployees];
-        previousEmployeesData = currentData;
+        // Sort employees by uid before storing
+        allEmployees = sortEmployeesByUid(users || []);
+        previousEmployeesData = JSON.stringify(allEmployees);
         // Populate department filter dropdown
         populateDepartmentFilter(allEmployees);
-        // Reset filter values to 'all' when data changes
-        document.getElementById('employeeRoleFilter').value = 'all';
-        document.getElementById('employeeDeptFilter').value = 'all';
-        document.getElementById('employeeSearchInput').value = '';
-        // Reset to page 1 when new data loads
-        currentPage = 1;
+
+        // Only reset filters on the FIRST load (when we have no filtered
+        // list yet). On subsequent server refreshes we keep whatever the
+        // user has selected so the cards don't vanish and filters don't
+        // silently reset for every role.
+        const isFirstLoad = !filteredEmployees || filteredEmployees.length === 0;
+
+        if (isFirstLoad) {
+            const roleFilterEl = document.getElementById('employeeRoleFilter');
+            const deptFilterEl = document.getElementById('employeeDeptFilter');
+            const searchInputEl = document.getElementById('employeeSearchInput');
+            if (roleFilterEl) roleFilterEl.value = 'all';
+            if (deptFilterEl) deptFilterEl.value = 'all';
+            if (searchInputEl) searchInputEl.value = '';
+            // Reset to page 1 when new data loads
+            currentPage = 1;
+            // Apply the (now reset) filters so filteredEmployees is populated
+            filterEmployees();
+        } else {
+            // Re-apply the CURRENT filter inputs to the new allEmployees
+            // list without touching the inputs themselves. This keeps the
+            // grid stable across the 5-second dashboard refresh.
+            applyCurrentEmployeeFilters();
+        }
     }
     
     // Render the grid
@@ -1153,6 +1219,54 @@ function filterEmployees() {
     renderEmployeeCards(filteredEmployees);
 }
 
+// Re-apply the current filter inputs to `allEmployees` and rebuild
+// `filteredEmployees` WITHOUT resetting the input elements or the page.
+// Used by updateEmployeesGrid() on server refreshes so the grid doesn't
+// blink or empty out every 5 seconds.
+function applyCurrentEmployeeFilters() {
+    const searchInput = document.getElementById('employeeSearchInput');
+    const roleFilter = document.getElementById('employeeRoleFilter');
+    const deptFilter = document.getElementById('employeeDeptFilter');
+    
+    const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    const role = roleFilter ? roleFilter.value : 'all';
+    const department = deptFilter ? deptFilter.value : 'all';
+    
+    filteredEmployees = allEmployees.filter(emp => {
+        // Search filter
+        let matchesSearch = true;
+        if (searchTerm) {
+            const fullname = `${emp.firstname || ''} ${emp.lastname || ''}`.toLowerCase();
+            const employeeId = (emp.employeeid || '').toLowerCase();
+            const email = (emp.email || '').toLowerCase();
+            matchesSearch = fullname.includes(searchTerm) || 
+                           employeeId.includes(searchTerm) || 
+                           email.includes(searchTerm);
+        }
+        
+        // Role filter
+        let matchesRole = true;
+        if (role !== 'all') {
+            matchesRole = (emp.role || 'employee').toLowerCase() === role;
+        }
+        
+        // Department filter
+        let matchesDept = true;
+        if (department !== 'all') {
+            const empDept = (emp.department || '').toLowerCase();
+            matchesDept = empDept === department.toLowerCase();
+        }
+        
+        return matchesSearch && matchesRole && matchesDept;
+    });
+    
+    // Clamp currentPage so we never land on a page that no longer exists
+    const totalPages = Math.ceil(filteredEmployees.length / CARDS_PER_PAGE) || 1;
+    if (currentPage > totalPages) {
+        currentPage = totalPages;
+    }
+}
+
 // Clear all filters
 function clearEmployeeFilters() {
     const searchInput = document.getElementById('employeeSearchInput');
@@ -1307,7 +1421,7 @@ function viewEmployee(uid) {
     // Build modal HTML
     const modalHtml = `
         <div class="modal-overlay" id="viewEmployeeModal" onclick="if(event.target===this) closeViewEmployeeModal()">
-            <div class="modal-content view-modal">
+            <div class="modal-content view-modal" onclick="event.stopPropagation()">
                 <div class="modal-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
                     <div class="modal-avatar">${escapeHtml(fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--')}</div>
                     <div class="modal-user-info">
@@ -1403,7 +1517,7 @@ function editEmployee(uid) {
     // Build edit modal HTML
     const modalHtml = `
         <div class="modal-overlay" id="editEmployeeModal" onclick="if(event.target===this) closeEditEmployeeModal()">
-            <div class="modal-content edit-modal">
+            <div class="modal-content edit-modal" onclick="event.stopPropagation()">
                 <div class="modal-header" style="background:linear-gradient(135deg, ${roleColor}, ${role === 'admin' ? '#DC2626' : role === 'hr' ? '#2563EB' : '#16A34A'});">
                     <div class="modal-avatar">${escapeHtml(fullname.split(' ').map(w => w[0] || '').join('').slice(0, 2).toUpperCase() || '--')}</div>
                     <div class="modal-user-info">
@@ -1421,7 +1535,7 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>RFID</label>
-                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required maxlength="8" pattern="^[0-9]{8}$" placeholder="XXXXXXXX" />
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required maxlength="8" pattern="^[0-9A-Z]{8}$" placeholder="XXXXXXXX" />
                             </div>
                             <div class="form-group">
                                 <label>First Name</label>
@@ -1535,10 +1649,10 @@ function closeEditEmployeeModal() {
 // Submit edit employee form
 async function submitEditEmployee(event) {
     event.preventDefault();
-    
+
     const uid = document.getElementById('editUid').value;
     const rfid = document.getElementById('editRfidHidden').value;
-    
+
     // Get form data - use FormData to handle file upload
     const formData = new FormData();
     formData.append('employeeid', document.getElementById('editEmployeeId').value);
@@ -1553,25 +1667,25 @@ async function submitEditEmployee(event) {
     formData.append('position', document.getElementById('editPosition').value);
     formData.append('role', document.getElementById('editRole').value);
     formData.append('username', document.getElementById('editUsername').value);
-    
+
     const password = document.getElementById('editPassword').value;
     if (password) {
         formData.append('password', password);
     }
-    
+
     // Get image file if selected
     const imageFile = document.getElementById('editImage').files[0];
     if (imageFile) {
         formData.append('image', imageFile);
     }
-    
+
     const msgEl = document.getElementById('editMessage');
     msgEl.style.display = 'block';
     msgEl.style.color = '#3B82F6';
     msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Updating employee...';
-    
+
     try {
-        const response = await fetch(`${dashboardApiBaseUrl}/api/update-employee/${rfid}`, {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/update-employee/${encodeURIComponent(rfid)}`, {
             method: 'PUT',
             headers: {
                 'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
@@ -1580,39 +1694,72 @@ async function submitEditEmployee(event) {
             body: formData,
             credentials: 'include'
         });
-        
+
         const result = await response.json();
-        
+
         if (response.status === 401) {
             redirectToLogin();
             return;
         }
-        
+
         if (!response.ok) {
             msgEl.style.color = '#EF4444';
             msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Update failed.'}`;
             return;
         }
-        
+
+        // Additional validation: check that we got valid data back
+        if (!result || !result.data || typeof result.data !== 'object') {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> Invalid response from server.`;
+            return;
+        }
+
+        const updatedEmp = result.data;
+        // Additional check: make sure we got back an object that looks like an employee
+        if (!updatedEmp.uid) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> Invalid employee data received.`;
+            return;
+        }
+
         msgEl.style.color = '#10B981';
         msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Employee updated successfully!';
-        
+
         // Update the local data
-        const updatedEmp = result.data;
         const index = allEmployees.findIndex(e => e.uid === uid);
         if (index !== -1) {
             allEmployees[index] = updatedEmp;
-            filteredEmployees = [...allEmployees];
+            // Re-sort allEmployees by uid after update
+            allEmployees = sortEmployeesByUid(allEmployees);
+            // Reapply filters instead of overwriting with all employees
+            filterEmployees();
+            // Store the FULL employee list (not the filtered subset) so the
+            // next dashboard refresh sees the same data we already have and
+            // does NOT reset the filter inputs / empty out the grid.
+            previousEmployeesData = JSON.stringify(allEmployees);
             renderEmployeeCards(filteredEmployees);
             populateDepartmentFilter(allEmployees);
+
+            // After updating, navigate to the page containing the edited
+            // employee. Look it up in the FILTERED list so the page number
+            // actually matches what's on screen.
+            const updatedIndex = filteredEmployees.findIndex(e => e.uid === updatedEmp.uid);
+            if (updatedIndex !== -1) {
+                const newPage = Math.floor(updatedIndex / CARDS_PER_PAGE) + 1;
+                if (newPage !== currentPage) {
+                    currentPage = newPage;
+                    renderEmployeeCards(filteredEmployees);
+                }
+            }
         }
-        
+
         // Close modal after delay
         setTimeout(() => {
             closeEditEmployeeModal();
             showNotification('Employee updated successfully!', 'success');
         }, 1500);
-        
+
     } catch (error) {
         console.error('Error updating employee:', error);
         msgEl.style.color = '#EF4444';
@@ -1978,8 +2125,8 @@ function updateActivityTimeline(activities) {
                     bgColor = 'var(--danger-light)';
                 } else {
                     icon = 'fa-solid fa-briefcase';
-                    color = 'var(--work-status)';
-                    bgColor = 'var(--work-status-light)';
+                    color = 'var(--leave)';
+                    bgColor = 'var(--leave-light)';
                 }
                 break;
             case 'employee':
@@ -2099,9 +2246,35 @@ async function loadDTREmployees() {
             dtrEmployeesList = result.data || [];
 
             // Auto-load first employee if available
-            if (dtrEmployeesList.length > 0) {
-                selectDTREmployee(dtrEmployeesList[0].rfid);
+            // Commented out to provide clean search input as requested
+            // if (dtrEmployeesList.length > 0) {
+            //     selectDTREmployee(dtrEmployeesList[0].rfid);
+            // }
+
+            // Clear search input to provide clean input as requested
+            const dtrSearchInput = document.getElementById('dtrEmployeeSearch');
+            if (dtrSearchInput) {
+                dtrSearchInput.value = '';
             }
+
+            // Also clear the hidden selection input
+            const dtrHiddenSelect = document.getElementById('dtrEmployeeSelect');
+            if (dtrHiddenSelect) {
+                dtrHiddenSelect.value = '';
+            }
+
+            // Hide dropdown and clear button for clean state
+            const dtrDropdown = document.getElementById('dtrEmployeeDropdown');
+            if (dtrDropdown) {
+                dtrDropdown.style.display = 'none';
+            }
+            const dtrClearBtn = document.getElementById('dtrSearchClear');
+            if (dtrClearBtn) {
+                dtrClearBtn.style.display = 'none';
+            }
+
+            // Reset selection index
+            dtrSelectedSuggestionIndex = -1;
         }
     } catch (error) {
         console.error('Error loading DTR employees:', error);
@@ -2426,8 +2599,8 @@ async function loadDTRRecord() {
                 <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i> Loading DTR...
             </td></tr>`;
         }
-        
-        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${encodeURIComponent(rfid)}?month=${encodeURIComponent(month)}`, {
             method: 'GET',
             headers: getAuthHeaders(),
             credentials: 'include',
@@ -2482,7 +2655,11 @@ async function loadDTRRecord() {
                     rowStyle = 'background-color:#FEF3C7;';
                     if (day.work_status) {
                         const wsLabel = day.work_status.label || day.work_status.type || 'Work Status';
-                        statusText = `${wsLabel}`;
+                        const wsPeriod = day.work_status.period || 'whole_day';
+                        // Show the period alongside the label so HR/Admin can
+                        // immediately see whether this covers the whole day,
+                        // only AM, or only PM.
+                        statusText = `${wsLabel} (${wsPeriod.replace('_', ' ')})`;
                     } else {
                         statusText = 'WORK STATUS';
                     }
@@ -2597,7 +2774,8 @@ function buildDTRHTML(record, dtr, employee) {
         let statusText = day.status || '';
         if (day.work_status && day.work_status.is_active) {
             const wsLabel = day.work_status.label || day.work_status.type || 'Work Status';
-            statusText = `${wsLabel}`;
+            const wsPeriod = day.work_status.period || 'whole_day';
+            statusText = `${wsLabel} (${wsPeriod.replace('_', ' ')})`;
         } else if (isWorkStatus) {
             statusText = 'WORK STATUS';
         }
@@ -2980,9 +3158,9 @@ async function generateDTRPDF() {
     
     try {
         showDTRMessage('Generating PDF...', 'info');
-        
+
         // First, get the DTR data to build the HTML
-        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${encodeURIComponent(rfid)}?month=${encodeURIComponent(month)}`, {
             method: 'GET',
             headers: getAuthHeaders(),
             credentials: 'include',
@@ -3055,7 +3233,7 @@ function printDTR() {
     }
     
     // Fetch the DTR data and print
-    fetch(`${dashboardApiBaseUrl}/api/dtr/record/${rfid}?month=${month}`, {
+    fetch(`${dashboardApiBaseUrl}/api/dtr/record/${encodeURIComponent(rfid)}?month=${encodeURIComponent(month)}`, {
         method: 'GET',
         headers: getAuthHeaders(),
         credentials: 'include',
@@ -3119,6 +3297,9 @@ const REPORT_LABELS = {
     'yearly': 'Yearly Attendance',
     'summary': 'Attendance Summary',
     'absent': 'Absent Employees',
+    'leave': 'Work Status Report',
+    // Alias so the "Work Status Report" card (data-report="work-status")
+    // also resolves to a proper label instead of "undefined".
     'work-status': 'Work Status Report',
     'rfid-logs': 'RFID Scan Logs'
 };
@@ -3295,7 +3476,7 @@ async function generateReport(reportType) {
 
 // Generate all reports in one click
 async function generateAllReports() {
-    const reportTypes = ['daily', 'weekly', 'monthly', 'yearly', 'summary', 'absent', 'work-status', 'rfid-logs'];
+    const reportTypes = ['daily', 'weekly', 'monthly', 'yearly', 'summary', 'absent', 'leave', 'rfid-logs'];
     
     showNotification('Generating all reports...', 'info');
     
@@ -3532,7 +3713,7 @@ function updateAttendanceRate(stats) {
     const absent = stats.absent_today || 0;
     const onWorkStatus = stats.on_work_status || 0;
     const rate = stats.attendance_rate || 0;
-    
+
     // Update rate circle
     const rateCircle = document.querySelector('.rate-circle');
     const rateValue = document.querySelector('.rate-value');
@@ -3541,47 +3722,47 @@ function updateAttendanceRate(stats) {
         rateCircle.style.background = `conic-gradient(var(--success) 0% ${percentage}%, var(--border) ${percentage}% 100%)`;
         rateValue.textContent = `${percentage}%`;
     }
-    
+
     // Update attendance rate text
     const rateText = document.getElementById('attendanceRateText');
     if (rateText) {
         rateText.textContent = `${present} of ${total} employees present`;
     }
-    
-    // Update progress bars
+
+    // Progress bar + count elements actually present in the HTML:
+    //   Present     -> #presentFill    / #presentCount
+    //   Absent      -> #absentFill     / #absentCount
+    //   Work Status -> #workStatusFill / #workStatusCount
+    //
+    // (The old code referenced #leaveFill / #leaveCount and #lateFill /
+    //  #lateCount — those IDs no longer exist in the HTML, so the
+    //  "On Work Status" bar and count were stuck at 0%.)
     const presentFill = document.getElementById('presentFill');
-    const lateFill = document.getElementById('lateFill');
     const absentFill = document.getElementById('absentFill');
     const workStatusFill = document.getElementById('workStatusFill');
 
     const presentCount = document.getElementById('presentCount');
-    const lateCount = document.getElementById('lateCount');
     const absentCount = document.getElementById('absentCount');
     const workStatusCount = document.getElementById('workStatusCount');
 
     if (total > 0) {
         const presentPct = (present / total) * 100;
-        const latePct = 0; // No late data from API yet
         const absentPct = (absent / total) * 100;
         const workStatusPct = (onWorkStatus / total) * 100;
 
         if (presentFill) presentFill.style.width = `${Math.min(presentPct, 100)}%`;
-        if (lateFill) lateFill.style.width = `${Math.min(latePct, 100)}%`;
         if (absentFill) absentFill.style.width = `${Math.min(absentPct, 100)}%`;
         if (workStatusFill) workStatusFill.style.width = `${Math.min(workStatusPct, 100)}%`;
 
         if (presentCount) presentCount.textContent = present;
-        if (lateCount) lateCount.textContent = 0;
         if (absentCount) absentCount.textContent = absent;
         if (workStatusCount) workStatusCount.textContent = onWorkStatus;
     } else {
         if (presentFill) presentFill.style.width = '0%';
-        if (lateFill) lateFill.style.width = '0%';
         if (absentFill) absentFill.style.width = '0%';
         if (workStatusFill) workStatusFill.style.width = '0%';
 
         if (presentCount) presentCount.textContent = 0;
-        if (lateCount) lateCount.textContent = 0;
         if (absentCount) absentCount.textContent = 0;
         if (workStatusCount) workStatusCount.textContent = 0;
     }
@@ -4238,7 +4419,7 @@ function renderWorkStatusRequestTable() {
                                             </div>
                                         </td>
                                         <td>
-                                            <span class="badge" style="background:var(--work-status-light);color:var(--work-status);">
+                                            <span class="badge" style="background:var(--leave-light);color:var(--leave);">
                                                 ${escapeHtml(wsLabel)}
                                             </span>
                                         </td>
@@ -4257,7 +4438,7 @@ function renderWorkStatusRequestTable() {
                                                     <i class="fa-solid fa-eye"></i> View
                                                 </button>
                                                 ${req.status === 'pending' ? `
-                                                    <button class="btn btn-outline btn-sm" onclick="approveWorkStatusRequest('${req.id}')">
+                                                    <button class="btn btn-outline btn-sm" onclick="openApproveWorkStatusModal('${req.id}')">
                                                         <i class="fa-solid fa-check"></i> Approve
                                                     </button>
                                                     <button class="btn btn-outline btn-sm" onclick="rejectWorkStatusRequest('${req.id}')">
@@ -4368,7 +4549,160 @@ function sortWorkStatusRequests(field) {
     renderWorkStatusRequestTable();
 }
 
-// Approve work status request
+/* ============================================================================
+ * APPROVE WORK STATUS MODAL — lets HR/Admin choose WHOLE DAY, AM ONLY, or
+ * PM ONLY and optionally enter specific start/end times at approval time.
+ *
+ * Why this exists: an employee might submit a whole-day work status request,
+ * but HR/Admin may only want to approve the morning portion (or vice versa).
+ * When a specific period is chosen here, the backend stores `period` on the
+ * DTR day so only the affected period gets highlighted yellow — not the whole
+ * day. This keeps the DTR accurate.
+ * ==========================================================================*/
+function openApproveWorkStatusModal(requestId) {
+    const req = workStatusRequests.find(r => String(r.id) === String(requestId));
+    if (!req) {
+        showNotification('Work status request not found.', 'error');
+        return;
+    }
+
+    const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    const currentPeriod = (req.period || 'whole_day');
+
+    const modalHtml = `
+        <div class="modal-overlay" id="approveWorkStatusModal" onclick="if(event.target===this) closeApproveWorkStatusModal()">
+            <div class="modal-content edit-modal" onclick="event.stopPropagation()" style="max-width:560px;">
+                <div class="modal-header" style="background:linear-gradient(135deg,#10B981,#34D399);">
+                    <div class="modal-avatar"><i class="fa-solid fa-check-circle" style="font-size:22px;"></i></div>
+                    <div class="modal-user-info">
+                        <h2>Approve Work Status</h2>
+                        <span style="font-size:13px;opacity:0.85;">${escapeHtml(req.fullname || 'Unknown')} · ${escapeHtml(wsLabel)}</span>
+                    </div>
+                    <button class="modal-close" onclick="closeApproveWorkStatusModal()">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">
+                        You can approve the whole day, or scope the approval to only the
+                        <strong>Morning (AM)</strong> or only the <strong>Afternoon (PM)</strong> portion
+                        so the DTR highlight appears only on the affected period.
+                    </p>
+
+                    <div class="form-group">
+                        <label>Approve For</label>
+                        <select class="form-control" id="approveWorkStatusPeriod">
+                            <option value="whole_day" ${currentPeriod === 'whole_day' ? 'selected' : ''}>Whole Day</option>
+                            <option value="am" ${currentPeriod === 'am' ? 'selected' : ''}>Morning (AM) Only</option>
+                            <option value="pm" ${currentPeriod === 'pm' ? 'selected' : ''}>Afternoon (PM) Only</option>
+                        </select>
+                    </div>
+
+                    <div class="grid-2">
+                        <div class="form-group">
+                            <label>Specific Start Time (Optional)</label>
+                            <input class="form-control" type="time" id="approveWorkStatusStartTime" value="${escapeHtml(req.start_time || '')}">
+                        </div>
+                        <div class="form-group">
+                            <label>Specific End Time (Optional)</label>
+                            <input class="form-control" type="time" id="approveWorkStatusEndTime" value="${escapeHtml(req.end_time || '')}">
+                        </div>
+                    </div>
+
+                    <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:12px;font-size:12px;color:var(--text-muted);">
+                        <strong style="color:var(--text);">Dates:</strong>
+                        ${escapeHtml(req.start_date || '')} → ${escapeHtml(req.end_date || '')}
+                        <br>
+                        <strong style="color:var(--text);">Reason:</strong>
+                        ${escapeHtml(req.reason || '—')}
+                    </div>
+
+                    <div id="approveWorkStatusMessage" style="margin-top:12px;font-size:13px;display:none;"></div>
+                </div>
+                <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px;">
+                    <button type="button" class="btn btn-outline" onclick="closeApproveWorkStatusModal()">
+                        <i class="fa-solid fa-times"></i> Cancel
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="confirmApproveWorkStatus('${escapeHtml(req.id)}')">
+                        <i class="fa-solid fa-check"></i> Confirm Approval
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+
+    const existing = document.getElementById('approveWorkStatusModal');
+    if (existing) existing.remove();
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    document.body.style.overflow = 'hidden';
+}
+
+function closeApproveWorkStatusModal() {
+    const modal = document.getElementById('approveWorkStatusModal');
+    if (modal) modal.remove();
+    document.body.style.overflow = '';
+}
+
+/* Send the approval to the backend with the chosen period and specific times.
+   The backend stores the period on the DTR day so only that period is
+   highlighted yellow. */
+async function confirmApproveWorkStatus(requestId) {
+    const period = document.getElementById('approveWorkStatusPeriod')?.value || 'whole_day';
+    const startTime = document.getElementById('approveWorkStatusStartTime')?.value || '';
+    const endTime = document.getElementById('approveWorkStatusEndTime')?.value || '';
+
+    const msgEl = document.getElementById('approveWorkStatusMessage');
+    if (msgEl) {
+        msgEl.style.display = 'block';
+        msgEl.style.color = '#3B82F6';
+        msgEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Approving...';
+    }
+
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/approve-work-status/${encodeURIComponent(requestId)}`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            body: JSON.stringify({
+                period: period,
+                start_time: startTime,
+                end_time: endTime
+            }),
+            credentials: 'include'
+        });
+
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            if (msgEl) {
+                msgEl.style.color = '#EF4444';
+                msgEl.innerHTML = `<i class="fa-solid fa-exclamation-circle"></i> ${result.message || 'Failed to approve request.'}`;
+            }
+            return;
+        }
+
+        if (msgEl) {
+            msgEl.style.color = '#10B981';
+            msgEl.innerHTML = '<i class="fa-solid fa-check-circle"></i> Approved successfully!';
+        }
+
+        showNotification('Work status request approved!', 'success');
+        setTimeout(() => {
+            closeApproveWorkStatusModal();
+            loadWorkStatusRequests();
+        }, 800);
+    } catch (error) {
+        console.error('Error approving work status request:', error);
+        if (msgEl) {
+            msgEl.style.color = '#EF4444';
+            msgEl.innerHTML = '<i class="fa-solid fa-exclamation-circle"></i> Network error. Please try again.';
+        }
+    }
+}
+
+// Approve work status request (legacy — used when "Approve" is clicked
+// directly without the period modal; still keeps the request's original period)
 async function approveWorkStatusRequest(requestId) {
     if (!confirm('Approve this work status request?')) return;
 
@@ -4762,10 +5096,10 @@ function openWorkStatusDetailModal(requestId) {
     if (footerLeft) {
         if (req.status === 'pending') {
             footerLeft.innerHTML = `
-                <button class="btn btn-outline btn-sm" onclick="approveWorkStatusRequest('${escapeHtml(req.id)}'); closeWorkStatusDetailModal();">
+                <button class="btn btn-outline btn-sm" onclick="closeWorkStatusDetailModal(); openApproveWorkStatusModal('${escapeHtml(req.id)}');">
                     <i class="fa-solid fa-check"></i> Approve
                 </button>
-                <button class="btn btn-outline btn-sm" onclick="rejectWorkStatusRequest('${escapeHtml(req.id)}'); closeWorkStatusDetailModal();">
+                <button class="btn btn-outline btn-sm" onclick="closeWorkStatusDetailModal(); rejectWorkStatusRequest('${escapeHtml(req.id)}');">
                     <i class="fa-solid fa-times"></i> Reject
                 </button>
             `;
@@ -5005,6 +5339,9 @@ async function verifyDashboardSession() {
         await loadWorkStatusRequests();
         // Initialize search functionality
         initSearch();
+        // Inject the DTR search dropdown styles so suggestion boxes float
+        // correctly above the cards (fixes the "dropdown doesn't show" bug).
+        ensureDTRSearchStyles();
     } catch (error) {
         redirectToLogin();
     }
