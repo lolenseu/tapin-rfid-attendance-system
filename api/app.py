@@ -1736,6 +1736,8 @@ def get_attendance_record(employee, scan_date):
     return record
 
 # Determine if a time is AM or PM period
+# NOTE: Kept for backwards compatibility but no longer used to pick the slot.
+# Slot selection is now purely sequential (see determine_scan_type).
 def get_period(scan_time):
     """Return 'am' if hour < 12, else 'pm'"""
     return "am" if scan_time.hour < 12 else "pm"
@@ -1755,7 +1757,7 @@ def has_time_out_for_period(day_data, period):
 # Check if a day is marked as on work status
 def is_on_work_status(day_data):
     """Check if the day record is marked as on work status.
-    
+
     For whole-day work status, the status will be 'on_work_status'.
     For specific-time work status, the work_status field will have details.
     """
@@ -1769,91 +1771,117 @@ def is_on_work_status(day_data):
 
 def get_work_status_for_period(day_data, period):
     """Get the work status for a specific period (am/pm).
-    
+
     Returns the work status object if the period is affected, or None.
     """
     ws = day_data.get("work_status")
     if not ws:
         return None
-    
+
     if not ws.get("is_active", True):
         return None
-    
+
     # If whole day, both am and pm are affected
     if ws.get("period") == "whole_day":
         return ws
-    
+
     # Check if the specific period is affected
     if ws.get("period") == period:
         return ws
-    
+
     return None
 
 def is_period_affected_by_work_status(day_data, period):
     """Check if a specific period (am/pm) is affected by work status."""
     return get_work_status_for_period(day_data, period) is not None
 
-# Get the appropriate scan type based on current state
+# ============================================================================
+# SEQUENTIAL SLOT-FILLING LOGIC
+# ============================================================================
+# The DTR has four time slots, always filled in this exact order:
+#
+#     1. am_in   (first tap of the day)
+#     2. am_out  (second tap)
+#     3. pm_in   (third tap)
+#     4. pm_out  (fourth tap)
+#
+# The slot is chosen by how many slots are ALREADY filled, NOT by the
+# wall-clock time of the tap. This means:
+#
+#   • 07:30 first tap    -> am_in  = "07:30"
+#   • 12:45 second tap   -> am_out = "12:45"   (still goes on the AM side)
+#   • 13:02 third tap    -> pm_in  = "13:02"
+#   • 17:15 fourth tap   -> pm_out = "17:15"
+#
+# If the employee only taps twice all day, am_in and am_out get the values
+# — even if the second tap happened in the afternoon. If the employee taps
+# four times, all four slots are filled in order.
+#
+# Any fifth-or-later tap for the same day is ignored (all slots full).
+#
+# Cooldown: two consecutive taps in the SAME direction (in / out) within
+# SCAN_COOLDOWN_SECONDS are still blocked to prevent accidental double-taps
+# from burning a slot.
+# ============================================================================
+
 def determine_scan_type(day_data, scan_time, employee):
     """
-    Determine whether this scan should be a time in or time out.
-    Uses odd/even pattern based on how many slots are already filled:
-    - Even number filled (0,2,4): next scan is TIME_IN
-    - Odd number filled (1,3): next scan is TIME_OUT
-    The actual slot (AM_IN, AM_OUT, PM_IN, PM_OUT) is determined by scan time.
+    Decide which DTR slot the current tap should fill, based purely on how
+    many slots are already filled — NOT on the wall-clock time.
 
-    Special handling for specific-time work status:
-    - If the AM period is affected by work status, AM scans are still allowed
-      but the slot may be marked differently.
-    - If all four slots are filled, the scan is allowed to fill the next
-      available period (allows PM scanning even before noon).
+    Order of filling:
+        0 filled -> ("am", "in")   => day_data["am_in"]
+        1 filled -> ("am", "out")  => day_data["am_out"]
+        2 filled -> ("pm", "in")   => day_data["pm_in"]
+        3 filled -> ("pm", "out")  => day_data["pm_out"]
+        4 filled -> None           (all slots full)
 
-    Returns one of:
-        ("am", "in")   -> record am_in
-        ("am", "out")  -> record am_out
-        ("pm", "in")   -> record pm_in
-        ("pm", "out")  -> record pm_out
-        None           -> skip this tap entirely (cooldown not met or all slots filled)
+    Returns:
+        (period, scan_type)  where period is "am" | "pm" and scan_type is
+                             "in" | "out"
+        None                 if the scan should be skipped (cooldown, all
+                             slots full, or whole-day work status)
     """
     rfid = employee.get("rfid")
-    period = get_period(scan_time)  # Returns "am" or "pm"
 
-    # Check if the day has a whole-day work status (on leave, holiday, etc.)
-    # For whole-day work status, skip the scan entirely.
+    # ---- 1) Whole-day work status short-circuits everything ----------------
     ws = day_data.get("work_status")
     if ws and ws.get("period") == "whole_day" and ws.get("is_active", True):
         print(f"Day marked as WHOLE DAY WORK STATUS for {rfid} - scan skipped")
         return None
 
-    # Check if the day has a status of on_work_status (for backward compatibility)
-    # But only skip scanning if it's actually a whole-day work status
-    # Specific-time work status (AM/PM only) should still allow scanning
     if day_data.get("status") == "on_work_status":
-        # Check if there's work status data and if it's whole-day
         ws = day_data.get("work_status")
         if ws and ws.get("period") == "whole_day" and ws.get("is_active", True):
             print(f"Day marked as ON WORK STATUS (whole day) for {rfid} - scan skipped")
             return None
-        # For specific-time work status, we allow scanning to proceed normally
+        # Specific-time work status (AM or PM only) is fine — allow the scan.
 
-    # Count how many time slots are already filled for today
+    # ---- 2) Count how many slots are already filled ------------------------
+    # The order in which we check MATTERS: it defines the fill order.
+    fill_order = ["am_in", "am_out", "pm_in", "pm_out"]
     filled_count = 0
-    if day_data.get("am_in"):
-        filled_count += 1
-    if day_data.get("am_out"):
-        filled_count += 1
-    if day_data.get("pm_in"):
-        filled_count += 1
-    if day_data.get("pm_out"):
-        filled_count += 1
+    for slot in fill_order:
+        if day_data.get(slot):
+            filled_count += 1
 
-    # Determine what type of scan we want to record (in or out)
-    # Even number filled -> next is IN (0,2,4, ...)
-    # Odd number filled -> next is OUT (1,3,5, ...)
-    desired_type = "in" if filled_count % 2 == 0 else "out"
+    if filled_count >= 4:
+        print(f"All time slots filled for {rfid}")
+        return None
 
-    # Helper: returns True if the last recorded tap for this RFID was the
-    # same direction we're about to record, within the cooldown window.
+    # ---- 3) Map filled_count -> the next slot to fill ----------------------
+    slot_map = [
+        ("am", "in"),   # 0 filled -> am_in
+        ("am", "out"),  # 1 filled -> am_out
+        ("pm", "in"),   # 2 filled -> pm_in
+        ("pm", "out"),  # 3 filled -> pm_out
+    ]
+    period, scan_type = slot_map[filled_count]
+
+    # ---- 4) Cooldown guard -------------------------------------------------
+    # Block if the LAST recorded tap for this RFID was the SAME direction
+    # (in / out) and it happened within the cooldown window. This stops an
+    # accidental double-tap from burning the next slot.
     def same_direction_within_cooldown(direction):
         if rfid not in last_scan_tracking:
             return False
@@ -1865,41 +1893,29 @@ def determine_scan_type(day_data, scan_time, employee):
             return False
         return (scan_time - last_time).total_seconds() < SCAN_COOLDOWN_SECONDS
 
-    # Check if we're in cooldown for the desired type
-    if same_direction_within_cooldown(desired_type):
-        print(f"{desired_type.upper()} cooldown not met for {rfid}")
+    if same_direction_within_cooldown(scan_type):
+        print(f"{scan_type.upper()} cooldown not met for {rfid}")
         return None
 
-    # All four slots filled, can't record more
-    if filled_count >= 4:
-        print(f"All time slots filled for {rfid}")
-        return None
+    # ---- 5) Return the chosen slot ----------------------------------------
+    return (period, scan_type)
 
-    # Check if the current period is affected by specific-time work status.
-    # If so, we still allow scanning but mark it accordingly.
-    # The specific handling is done in record_attendance_scan.
-    
-    # Return the period (am/pm) and the desired type (in/out)
-    # The actual recording function will use this to determine the correct slot
-    return (period, desired_type)
-
-# Format a datetime as 12-hour time (no AM/PM suffix) for DTR storage.
+# Format a datetime as 24-hour time HH:MM (no seconds) for DTR storage.
+# Both the visible and the hidden 24h fields use this same format, so the
+# AM/PM distinction is unambiguous (e.g. "07:30" vs "13:02").
 def format_dtr_time(scan_time):
-    """
-    Convert a datetime to a 12-hour time string without AM/PM.
-    """
-    hour = scan_time.hour % 12
-    if hour == 0:
-        hour = 12
-    return f"{hour:02d}:{scan_time.minute:02d}:{scan_time.second:02d}"
+    """Return HH:MM in 24-hour format (00:00 – 23:59)."""
+    return scan_time.strftime("%H:%M")
 
 # Format a datetime as a 24-hour time string for hidden DTR storage.
 # This is what calculate_hours() consumes so AM/PM is never ambiguous.
+# Same HH:MM format as format_dtr_time() above, just kept as a separate
+# function name for backwards compatibility with older code paths.
 def format_dtr_time_24h(scan_time):
-    """Return HH:MM:SS in 24-hour format (00:00:00 – 23:59:59)."""
-    return scan_time.strftime("%H:%M:%S")
+    """Return HH:MM in 24-hour format (00:00 – 23:59)."""
+    return scan_time.strftime("%H:%M")
 
-# Add a device timestamp to the correct AM or PM DTR slot.
+# Add a device timestamp to the correct DTR slot.
 def record_attendance_scan(employee, scanned_at):
     """Record attendance scan - handles creating records for new employees and months"""
     scan_time = parse_scan_time(scanned_at)
@@ -1940,10 +1956,11 @@ def record_attendance_scan(employee, scanned_at):
         }
         record["dtr"][f"{scan_time.day}-{calendar.month_abbr[scan_time.month].lower()}"] = day_data
 
+    # 24-hour HH:MM, no seconds. Example: "07:30" or "13:02".
     time_value = format_dtr_time(scan_time)
     time_value_24h = format_dtr_time_24h(scan_time)
 
-    # Determine the scan type (time in or time out)
+    # Determine the next slot to fill (pure sequential logic — ignores clock).
     scan_result = determine_scan_type(day_data, scan_time, employee)
 
     if scan_result is None:
@@ -2116,12 +2133,26 @@ def parse_scan_time(scanned_at):
 # the 12-hour display string is parsed and the `period` argument decides
 # whether an hour < 12 means morning or afternoon. This is the same
 # heuristic the old code used, kept only for backwards compatibility.
+#
+# NOTE: The primary path now parses "HH:MM" (no seconds) because
+# format_dtr_time() and format_dtr_time_24h() store that shorter form.
+# The legacy path still parses "HH:MM:SS" for old records on disk.
 def calculate_hours(start_time, end_time, period=None, start_24=None, end_24=None):
     # ---- Preferred: use the hidden 24-hour values ----------------------
     if start_24 and end_24:
         try:
-            start = datetime.strptime(start_24, "%H:%M:%S")
-            end = datetime.strptime(end_24, "%H:%M:%S")
+            # Accept both "HH:MM" and "HH:MM:SS" so this works for both new
+            # (short) and old (long) records still on disk.
+            def _parse_hhmm(value):
+                for fmt in ("%H:%M", "%H:%M:%S"):
+                    try:
+                        return datetime.strptime(value, fmt)
+                    except ValueError:
+                        continue
+                raise ValueError(f"unrecognized time format: {value!r}")
+
+            start = _parse_hhmm(start_24)
+            end = _parse_hhmm(end_24)
             # Cross-midnight guard: if the end is somehow before the
             # start (e.g. device clock skew), treat it as zero rather
             # than a negative span.
@@ -2134,8 +2165,16 @@ def calculate_hours(start_time, end_time, period=None, start_24=None, end_24=Non
     if not start_time or not end_time:
         return 0
     try:
-        start = datetime.strptime(start_time, "%H:%M:%S")
-        end = datetime.strptime(end_time, "%H:%M:%S")
+        # Try HH:MM:SS first (legacy records), then HH:MM (new records).
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                start = datetime.strptime(start_time, fmt)
+                end = datetime.strptime(end_time, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            return 0
 
         # If a period was supplied and the parsed hour is less than 12,
         # add 12 hours so afternoon times are computed correctly.
@@ -3465,7 +3504,7 @@ def generate_dtr_pdf(rfid):
         if day.get("work_status"):
             ws = day["work_status"]
             display_status = f"Work Status ({ws.get('period', 'whole_day').replace('_', ' ')})"
-        
+
         row = [
             day.get("day", ""),
             day.get("date", ""),
@@ -3809,7 +3848,7 @@ def generate_report(report_type):
 @app.route("/api/request-work-status", methods=["POST"])
 def request_work_status():
     """Submit a new work status request.
-    
+
     Form data:
         rfid          - Employee RFID
         start_date    - Start date (YYYY-MM-DD)
@@ -4222,18 +4261,18 @@ def get_work_status_attachment_meta(rfid, filename):
 @app.route("/api/approve-work-status/<request_id>", methods=["POST"])
 def approve_work_status(request_id):
     """Approve a work status request.
-    
+
     When approving, the request can optionally be scoped to a specific
     time period (whole_day, am, pm). This allows the HR/Admin to approve
     only the morning or afternoon portion of a day.
-    
+
     JSON body (optional):
         {
             "period": "whole_day" | "am" | "pm",
             "start_time": "08:00",  # optional for specific time
             "end_time": "12:00"     # optional for specific time
         }
-    
+
     If no body is provided, the request's original period is used.
     """
     try:
@@ -4301,7 +4340,7 @@ def approve_work_status(request_id):
         # the same request from leaking in.
         start_time_final = (request_to_approve.get("start_time") or "").strip()
         end_time_final = (request_to_approve.get("end_time") or "").strip()
-        
+
         for date_str in request_to_approve.get("days", []):
             date_obj = datetime.strptime(date_str, "%Y-%m-%d")
             month_key = date_obj.strftime("%Y-%m")
@@ -4312,7 +4351,7 @@ def approve_work_status(request_id):
                         if day.get("date") == date_str:
                             # Set the status
                             day["status"] = "on_work_status"
-                            
+
                             # Store the work status details
                             day["work_status"] = {
                                 "type": work_status_type,
@@ -4326,7 +4365,7 @@ def approve_work_status(request_id):
                                 "approved_by": request_to_approve.get("processed_by"),
                                 "approved_at": request_to_approve.get("processed_at")
                             }
-                            
+
                             # For whole-day work status, clear all times
                             if period == "whole_day":
                                 day["am_in"] = ""
@@ -4341,7 +4380,7 @@ def approve_work_status(request_id):
                                 day["pm_in_24"] = ""
                                 day["pm_out_24"] = ""
                                 print(f"Marked {date_str} as WHOLE DAY WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
-                            
+
                             # For specific-time work status (AM or PM),
                             # mark only that period as affected.
                             # The DTR will highlight the affected period in yellow.
@@ -4363,7 +4402,7 @@ def approve_work_status(request_id):
                                     "end_time": end_time_final
                                 }
                                 print(f"Marked {date_str} PM period as WORK STATUS ({work_status_label}) for {request_to_approve.get('fullname')}")
-                            
+
                             break
                     break
 
@@ -5510,8 +5549,12 @@ def dashboard_data():
                 "message": "Session expired or user is not logged in"
             }), 401
 
+    # Return the FULL dashboard payload the frontend expects:
+    # stats, users, attendance, scans, devices, latest_scan,
+    # work_status, and activities.
     return jsonify({
         "status": "success",
+        "data": get_dashboard_data()
     }), 200
 @app.route("/api/activity-feed", methods=["GET"])
 def get_activity_feed():
@@ -5896,9 +5939,10 @@ except Exception as e:
 
 # One-time catch-up wipe on boot. If the server was down at midnight and
 # restarted the next day, this clears any stale feed content immediately.
+# Disabled per user request - feeds are no longer wiped on boot/restart
 try:
-    perform_nightly_feed_wipe(force=True)
-    print("[Boot] Initial feed wipe completed.")
+    perform_nightly_feed_wipe(force=False)  # Changed from force=True to force=False to disable boot wipe
+    print("[Boot] Initial feed wipe skipped (disabled per user request).")
 except Exception as e:
     print(f"⚠️ Startup wipe error: {e}")
 

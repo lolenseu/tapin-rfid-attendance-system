@@ -182,6 +182,8 @@ Example endpoints include:
 /api/device-ping
 ```
 
+As of v0.3, the API server has been updated with improved RFID attendance processing and enhanced device monitoring capabilities.
+
 ## PostgreSQL Database
 
 TAP-IN uses **PostgreSQL** as its primary database system.
@@ -302,6 +304,7 @@ Protected functionality may include:
 | **Beta v0.0.0** | Beta    | Initial TAP-IN RFID Attendance System development version. Basic project structure, web interface, API, database integration, and IoT development initiated. |
 | **Test v0.1.0** | Testing | Initial IoT device testing version. RFID reader, LCD, buzzer, device communication, and basic RFID attendance functionality tested.                          |
 | **Test v0.2.0** | Testing | Web version developed and tested                                                                                                                             |
+| **Test v0.3.0** | Testing | API server updates and improvements to RFID attendance processing.                                                                                           |
 
 ### Beta v0.0.0
 
@@ -343,6 +346,16 @@ Focus:
 * User interface design
 * Integration with Flask API
 * Testing of web functionalities
+
+### Test v0.3.0 — API Server Update
+
+This version focused on updating the API server with:
+
+* Improved RFID attendance processing logic
+* Enhanced device monitoring and heartbeat handling
+* Bug fixes in attendance recording
+* Optimized database queries for dashboard statistics
+* Added error handling for device communication timeouts
 
 ## Future Improvements
 
