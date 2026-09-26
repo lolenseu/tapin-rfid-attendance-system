@@ -116,6 +116,9 @@ ALLOWED_ORIGINS = [
     # Production
     "https://tapin-2s5w.onrender.com",
     "https://tapin-api.up.railway.app",
+    # Face scanner frontend on Vercel — replace with your actual project
+    # domain(s), or set them via the FACE_SCANNER_ORIGINS env var below.
+    "https://tapin-face-scanner.vercel.app",
     # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -127,6 +130,14 @@ ALLOWED_ORIGINS = [
     "http://localhost:*",
     "http://127.0.0.1:*",
 ]
+
+# Extra allowed origins from an env var (comma-separated), e.g. set
+# FACE_SCANNER_ORIGINS=https://your-project.vercel.app,https://your-custom-domain.com
+# on the API host so you don't have to edit this file every time the Vercel
+# preview URL changes.
+_extra_origins = os.environ.get("FACE_SCANNER_ORIGINS", "")
+if _extra_origins.strip():
+    ALLOWED_ORIGINS.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
 
 # For development, allow all origins
 if not is_production():
@@ -156,22 +167,11 @@ app.config.update(
 # ============================================================================
 # WEB FACIAL RECOGNITION INTEGRATION - FACE SCANNER
 # ============================================================================
-# Use the face scanner as the unified facial recognition feature.
-# The module serves the recognition page at /facialrecognition/
-
-try:
-    from facialrecognition import register as register_facialrecognition
-    register_facialrecognition(app)
-    print("✅ Face recognition module at /facialrecognition")
-    print("   📷 Detects faces using profile images")
-    print("   🔒 Records attendance via RFID verification")
-    print("   🎯 Minimum confidence: 70%")
-    print("   📁 Samples directory: storage/samples/")
-except ImportError as e:
-    print(f"⚠️ Face recognition module not available: {e}")
-    print("   To enable face recognition, create the 'facialrecognition' folder")
-except Exception as e:
-    print(f"⚠️ Error registering face recognition module: {e}")
+# The face scanner frontend (index.html/app.js/styles.css) is deployed
+# standalone on Vercel and does its own face detection/matching in the
+# browser with face-api.js. This server only exposes the /api/faces/*
+# routes it calls (defined further down, near the other storage routes) —
+# there is no separate facialrecognition module/file anymore.
 
 # JWT Configuration
 JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
@@ -4993,6 +4993,308 @@ def serve_work_status_attachment(filename):
 
     return response
 
+# ============================================================================
+# FACE SCANNER API — /api/faces/*
+# ============================================================================
+# Called by the standalone face-scanner page (index.html/app.js/styles.css)
+# deployed on Vercel. Face detection and matching happen entirely in the
+# browser with face-api.js; this server only supplies the profile-image
+# templates to match against and records attendance once a match is sent
+# back here. No RFID tap is required — a confident face match is enough.
+
+FACE_LOG_DIR = os.path.join(BASE_DIR, "storage", "logs")
+FACE_SCAN_LOG_FILE = os.path.join(FACE_LOG_DIR, "face_scans.json")
+FACE_MIN_CONFIDENCE = float(os.environ.get("FACE_MIN_CONFIDENCE", "70.0"))
+FACE_ATTENDANCE_COOLDOWN = int(os.environ.get("FACE_ATTENDANCE_COOLDOWN", "10"))
+
+
+def _face_list_profile_images():
+    os.makedirs(PROFILE_STORAGE, exist_ok=True)
+    allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+    return sorted(
+        f for f in os.listdir(PROFILE_STORAGE)
+        if os.path.splitext(f)[1].lower() in allowed_exts
+    )
+
+
+def _face_find_profile_image_for_rfid(rfid):
+    if not rfid:
+        return None
+    os.makedirs(PROFILE_STORAGE, exist_ok=True)
+    rfid_clean = str(rfid).strip().upper()
+    allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+    for ext in allowed_exts:
+        candidate = os.path.join(PROFILE_STORAGE, f"{rfid_clean}{ext}")
+        if os.path.exists(candidate):
+            return candidate
+    try:
+        for filename in os.listdir(PROFILE_STORAGE):
+            name, ext = os.path.splitext(filename)
+            if name.upper() == rfid_clean and ext.lower() in allowed_exts:
+                return os.path.join(PROFILE_STORAGE, filename)
+    except FileNotFoundError:
+        pass
+    return None
+
+
+def _face_employee_public(employee):
+    if not employee:
+        return None
+    return {
+        "uid": employee.get("uid", ""),
+        "rfid": employee.get("rfid", ""),
+        "employeeid": employee.get("employeeid", ""),
+        "firstname": employee.get("firstname", ""),
+        "lastname": employee.get("lastname", ""),
+        "name": f"{employee.get('firstname', '')} {employee.get('lastname', '')}".strip(),
+        "role": employee.get("role", "employee"),
+        "department": employee.get("department", ""),
+        "position": employee.get("position", ""),
+        "image": employee.get("image", ""),
+    }
+
+
+def _face_get_employee_by_rfid(rfid):
+    return employee_database.get(str(rfid).strip().upper())
+
+
+def _face_get_employee_by_uid(uid):
+    uid = str(uid).strip()
+    for emp in employee_database.values():
+        if str(emp.get("uid", "")).strip() == uid:
+            return emp
+    return None
+
+
+def _face_load_employee_templates():
+    templates = []
+    for employee in employee_database.values():
+        rfid = str(employee.get("rfid", "") or "").strip().upper()
+        if not rfid:
+            continue
+        image_path = _face_find_profile_image_for_rfid(rfid)
+        if not image_path:
+            continue
+        templates.append({
+            "employee": _face_employee_public(employee),
+            "rfid": rfid,
+            "image_url": f"/storage/profiles/{os.path.basename(image_path)}",
+            "image_file": os.path.basename(image_path),
+        })
+    return templates
+
+
+def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verification"):
+    os.makedirs(FACE_LOG_DIR, exist_ok=True)
+    log_entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "rfid": rfid,
+        "employee": {
+            "uid": employee.get("uid", "") if employee else "",
+            "employeeid": employee.get("employeeid", "") if employee else "",
+            "firstname": employee.get("firstname", "") if employee else "",
+            "lastname": employee.get("lastname", "") if employee else "",
+        } if employee else None,
+        "confidence": confidence,
+        "status": status,
+        "scan_type": scan_type,
+    }
+    log_data = []
+    if os.path.exists(FACE_SCAN_LOG_FILE):
+        try:
+            with open(FACE_SCAN_LOG_FILE, "r", encoding="utf-8") as f:
+                log_data = json.load(f)
+                if not isinstance(log_data, list):
+                    log_data = []
+        except Exception:
+            log_data = []
+    log_data.insert(0, log_entry)
+    if len(log_data) > 1000:
+        log_data = log_data[:1000]
+    with open(FACE_SCAN_LOG_FILE, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, indent=2)
+    return log_entry
+
+
+@app.route("/api/faces/status", methods=["GET"])
+def faces_status():
+    profile_images = _face_list_profile_images()
+    return jsonify({
+        "status": "success",
+        "service": "face-scanner",
+        "profile_images_found": len(profile_images),
+        "profile_images": profile_images,
+        "min_confidence": FACE_MIN_CONFIDENCE,
+        "attendance_cooldown": FACE_ATTENDANCE_COOLDOWN,
+    })
+
+
+@app.route("/api/faces/employees", methods=["GET"])
+def faces_employees():
+    templates = _face_load_employee_templates()
+    return jsonify({
+        "status": "success",
+        "count": len(templates),
+        "employees": templates,
+        "profile_images": _face_list_profile_images(),
+    })
+
+
+@app.route("/api/faces/record", methods=["POST"])
+def faces_record():
+    """Record attendance from a face match alone. No RFID tap is required —
+    the browser sends the uid/rfid of whichever employee's profile image
+    matched, plus the match confidence."""
+    body = request.get_json(silent=True) or {}
+    uid = str(body.get("uid", "")).strip()
+    rfid = str(body.get("rfid", "")).strip().upper()
+    confidence_raw = body.get("confidence", 0)
+    scanned_at = str(body.get("scanned_at", "")).strip()
+
+    try:
+        confidence = float(confidence_raw)
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "Invalid confidence"}), 400
+
+    if not uid and not rfid:
+        return jsonify({"status": "error", "message": "Missing employee UID or RFID"}), 400
+
+    if confidence < FACE_MIN_CONFIDENCE:
+        return jsonify({
+            "status": "rejected",
+            "message": f"Face confidence {confidence:.1f}% is below the {FACE_MIN_CONFIDENCE:.1f}% threshold",
+            "uid": uid, "rfid": rfid, "confidence": confidence,
+        }), 403
+
+    employee = None
+    if uid:
+        employee = _face_get_employee_by_uid(uid)
+    if not employee and rfid:
+        employee = _face_get_employee_by_rfid(rfid)
+
+    if not employee:
+        return jsonify({
+            "status": "rejected",
+            "message": "Employee not found in the system",
+            "uid": uid, "rfid": rfid,
+        }), 404
+
+    employee_rfid = str(employee.get("rfid", "")).strip().upper()
+    profile_image = _face_find_profile_image_for_rfid(employee_rfid)
+    if not profile_image:
+        return jsonify({
+            "status": "rejected",
+            "message": "Employee has no profile image for face recognition",
+            "uid": uid, "rfid": employee_rfid,
+        }), 404
+
+    if not scanned_at:
+        scanned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        try:
+            scanned_dt = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+            scanned_at = scanned_dt.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            scanned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    try:
+        record, result = record_attendance_scan(employee, scanned_at)
+        save_attendance_data()
+        _face_log_scan(employee_rfid, employee, confidence, "face_verified", "face_verification")
+        add_scan_to_feed(employee_rfid, scanned_at, employee, True, scan_type="face_recognition")
+        scan_events.append({
+            "rfid": employee_rfid,
+            "scanned_at": scanned_at,
+            "scanned_on": datetime.now().date().isoformat(),
+            "scan_type": "face",
+            "confidence": confidence,
+        })
+        save_scan_events({"scan_events": scan_events[-10000:]})
+        add_activity(
+            "face_attendance",
+            f"✅ Face recognized: {employee.get('firstname', '')} {employee.get('lastname', '')} "
+            f"({employee.get('employeeid', '')}) - {confidence:.1f}% confidence - {result}",
+            {"name": "Face Scanner", "uid": "system"},
+            "attendance"
+        )
+        is_present = result in ["success", "already_exists"]
+        return jsonify({
+            "status": "success",
+            "message": result,
+            "source": "face-scanner",
+            "confidence": confidence,
+            "scanned_at": scanned_at,
+            "employee": _face_employee_public(employee),
+            "is_present": is_present,
+            "rfid_used": employee_rfid,
+            "attendance_status": result,
+            "profile_image": f"/storage/profiles/{os.path.basename(profile_image)}",
+            "samples": 1,
+        }), 200
+    except Exception as exc:
+        print(f"❌ Attendance recording failed: {exc}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": f"Attendance recording failed: {str(exc)}",
+            "uid": uid, "rfid": rfid,
+        }), 500
+
+
+@app.route("/api/faces/scan-log", methods=["GET"])
+def faces_scan_log():
+    limit = request.args.get("limit", default=50, type=int)
+    log_data = []
+    if os.path.exists(FACE_SCAN_LOG_FILE):
+        try:
+            with open(FACE_SCAN_LOG_FILE, "r", encoding="utf-8") as f:
+                log_data = json.load(f)
+                if not isinstance(log_data, list):
+                    log_data = []
+        except Exception:
+            log_data = []
+    if limit and limit > 0:
+        log_data = log_data[:limit]
+    return jsonify({"status": "success", "count": len(log_data), "logs": log_data})
+
+
+@app.route("/api/faces/recent-attendance", methods=["GET"])
+def faces_recent_attendance():
+    try:
+        recent = []
+        today = datetime.now().date().isoformat()
+        for record in attendance_records[-50:]:
+            dtr = record.get("dtr", {})
+            for date_key, day in dtr.items():
+                if day.get("date") == today:
+                    recent.append({
+                        "employee": record.get("fullname", ""),
+                        "employeeid": record.get("employeeid", ""),
+                        "date": day.get("date", ""),
+                        "am_in": day.get("am_in", ""),
+                        "am_out": day.get("am_out", ""),
+                        "pm_in": day.get("pm_in", ""),
+                        "pm_out": day.get("pm_out", ""),
+                        "hours": day.get("hours", "0.00"),
+                        "status": day.get("status", ""),
+                    })
+        return jsonify({"status": "success", "count": len(recent), "attendance": recent})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e), "attendance": []}), 200
+
+
+@app.route("/api/faces/dashboard-stats", methods=["GET"])
+def faces_dashboard_stats():
+    try:
+        stats = get_dashboard_statistics()
+        stats["profile_images"] = len(_face_list_profile_images())
+        stats["face_scanner_active"] = True
+        return jsonify({"status": "success", "stats": stats})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 200
+
+
 ## Authentication Routes ------------------------------------
 # FIXED: Authenticate all roles and create a three-hour session.
 @app.route("/api/login", methods=["POST"])
@@ -5904,16 +6206,16 @@ def handle_options():
     return response, 200
 
 # ============================================================================
-# FACE RECOGNITION OPTIONS HANDLERS
+# FACE SCANNER OPTIONS HANDLERS
 # ============================================================================
-# Add OPTIONS handlers for facial recognition routes
-@app.route("/facialrecognition/api/status", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/employees", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/verify-and-record", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/check-face", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/recent-attendance", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/dashboard-stats", methods=["OPTIONS"])
-@app.route("/facialrecognition/api/scan-log", methods=["OPTIONS"])
+# Add OPTIONS handlers for the /api/faces/* routes the Vercel-hosted scanner
+# page calls (CORS preflight).
+@app.route("/api/faces/status", methods=["OPTIONS"])
+@app.route("/api/faces/employees", methods=["OPTIONS"])
+@app.route("/api/faces/record", methods=["OPTIONS"])
+@app.route("/api/faces/recent-attendance", methods=["OPTIONS"])
+@app.route("/api/faces/dashboard-stats", methods=["OPTIONS"])
+@app.route("/api/faces/scan-log", methods=["OPTIONS"])
 def handle_scanner_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")

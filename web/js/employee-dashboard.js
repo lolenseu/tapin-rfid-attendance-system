@@ -407,6 +407,11 @@ async function loadMyMonthlyStats() {
       return start <= monthEnd && end >= monthStart;
     }).length;
 
+    // Total work status requests (all time, all statuses)
+    const totalRequests = myWorkStatusRequests.length;
+    // Total approved work status requests (all time)
+    const totalApproved = myWorkStatusRequests.filter(r => (r.status || '').toLowerCase() === 'approved').length;
+
     // Working days in this month (used for bar percentages).
     // Skip weekends, approved work status, AND holidays so the bars stay accurate.
     const holidayDates = new Set();
@@ -432,6 +437,8 @@ async function loadMyMonthlyStats() {
     setText('statTotalAbsent', String(totalAbsent));
     setText('statTotalHours', totalHours.toFixed(2));
     setText('statLeaveCount', String(leaveCount));
+    setText('statTotalRequests', String(totalRequests));
+    setText('statTotalApproved', String(totalApproved));
 
     const pct = (v) => workingDaysInMonth > 0 ? Math.min((v / workingDaysInMonth) * 100, 100) : 0;
     setWidth('statPresentBar', pct(totalPresent) + '%');
@@ -450,6 +457,8 @@ function resetMonthlyStats() {
   setText('statTotalAbsent', '0');
   setText('statTotalHours', '0.00');
   setText('statLeaveCount', '0');
+  setText('statTotalRequests', '0');
+  setText('statTotalApproved', '0');
   setWidth('statPresentBar', '0%');
   setWidth('statAbsentBar', '0%');
   setWidth('statHoursBar', '0%');
@@ -815,17 +824,23 @@ function populateWorkStatusTypeDropdown() {
   // Clear existing options
   select.innerHTML = '';
 
-  // Define standard work status types
+  // Define standard work status types (must match backend WORK_STATUS_TYPES)
   const workStatusTypes = [
-    { value: 'overtime', label: 'Overtime' },
-    { value: 'vacation_leave', label: 'Vacation Leave' },
-    { value: 'sick_leave', label: 'Sick Leave' },
-    { value: 'maternity_leave', label: 'Maternity Leave' },
-    { value: 'paternity_leave', label: 'Paternity Leave' },
-    { value: 'bereavement_leave', label: 'Bereavement Leave' },
-    { value: 'jury_duty', label: 'Jury Duty' },
-    { value: 'military_leave', label: 'Military Leave' },
-    { value: 'others', label: 'Others' }
+    { value: 'on_leave', label: 'On Leave' },
+    { value: 'official_travel', label: 'Official Travel' },
+    { value: 'official_business', label: 'Official Business' },
+    { value: 'work_from_home', label: 'Work From Home (WFH)' },
+    { value: 'field_work', label: 'Field Work' },
+    { value: 'training', label: 'Training' },
+    { value: 'conference_seminar', label: 'Conference / Seminar' },
+    { value: 'work_assignment', label: 'Work Assignment' },
+    { value: 'offsite_duty', label: 'Offsite Duty' },
+    { value: 'client_visit', label: 'Client Visit' },
+    { value: 'meeting_outside_office', label: 'Meeting Outside Office' },
+    { value: 'special_assignment', label: 'Special Assignment' },
+    { value: 'suspended_work', label: 'Suspended Work' },
+    { value: 'holiday_non_working', label: 'Holiday / Non-Working Day' },
+    { value: 'rest_day', label: 'Rest Day' }
   ];
 
   // Add options to dropdown
@@ -1245,8 +1260,21 @@ function openEditProfileModal() {
   fileInput.onchange = function () {
     const reader = new FileReader();
     reader.onload = (e) => {
-      document.getElementById('editProfileImagePreviewImg').src = e.target.result;
-      document.getElementById('editProfileImagePreview').style.display = 'block';
+      let previewImg = document.getElementById('editProfileImagePreviewImg');
+      if (!previewImg) {
+        previewImg = document.createElement('img');
+        previewImg.id = 'editProfileImagePreviewImg';
+        previewImg.style.maxWidth = '100%';
+        previewImg.style.borderRadius = '8px';
+        const preview = document.getElementById('editProfileImagePreview');
+        if (preview) {
+          preview.innerHTML = ''; // Clear any existing content
+          preview.appendChild(previewImg);
+        }
+      }
+      previewImg.src = e.target.result;
+      const preview = document.getElementById('editProfileImagePreview');
+      if (preview) preview.style.display = 'block';
     };
     if (this.files && this.files[0]) reader.readAsDataURL(this.files[0]);
   };
