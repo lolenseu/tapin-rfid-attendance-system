@@ -10,24 +10,13 @@
 // ============================================================================
 // API CONNECTION — mirrors dashboard.js
 // ============================================================================
-// dashboard.js does this:
-//     const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
-//     fetch(`${dashboardApiBaseUrl}/api/dashboard-data`)
-//
-// That pattern is proven to work. We use the SAME pattern here, but the
-// face-scanner uses a dedicated API surface (/api/faces/*), so we build
-// the base the same way and just append /api/faces.
-//
-// window.TAPIN_API_URL comes from ./js/config.js which is loaded BEFORE
-// this file in faces.html:
-//     <script src="./js/config.js"></script>
-//     <script defer src="./js/faces.js"></script>
-//
-// Important: config.js sets 'https://lolenseu.pythonanywhere.com/' WITH a
-// trailing slash. dashboard.js strips trailing slashes via .replace(/\/+$/, '').
-// We do the exact same thing here so the concatenation never produces "//".
 const API_ORIGIN = (window.TAPIN_API_URL || 'https://lolenseu.pythonanywhere.com').replace(/\/+$/, '');
 const API_BASE = API_ORIGIN + '/api/faces';
+
+// Diagnostic — remove once everything works
+console.log("[faces.js] window.TAPIN_API_URL =", window.TAPIN_API_URL);
+console.log("[faces.js] API_ORIGIN =", API_ORIGIN);
+console.log("[faces.js] API_BASE =", API_BASE);
 
 const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights";
 const MATCH_THRESHOLD = 0.50; // Lower = stricter
@@ -70,6 +59,7 @@ function setStatus(text, state) {
 // ========================================================================
 
 async function boot() {
+  // ---- Phase 1: Load AI models. If this fails, nothing else can work. ----
   try {
     setStatus("Loading AI…", "unknown");
     await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
@@ -78,51 +68,73 @@ async function boot() {
     modelsReady = true;
     setStatus("Camera ready", "ready");
     messageEl.textContent = "Start the scanner to detect faces.";
-    await loadTemplates();
-    await loadAttendance();
-    await loadStats();
+    console.log("[faces.js] AI models loaded successfully");
   } catch (e) {
-    console.error("Boot error:", e);
+    console.error("[faces.js] Model load error:", e);
     setStatus("AI Load Failed", "error");
     messageEl.textContent = "Could not load face models. Check internet connection.";
+    return; // Nothing else will work without models
   }
+
+  // ---- Phase 2: Load data. Each call is isolated so one failure doesn't
+  //              block the other two from running. ----
+  await loadTemplates().catch(e => {
+    console.error("[faces.js] loadTemplates failed:", e);
+  });
+  await loadAttendance().catch(e => {
+    console.error("[faces.js] loadAttendance failed:", e);
+  });
+  await loadStats().catch(e => {
+    console.error("[faces.js] loadStats failed:", e);
+  });
+
+  console.log("[faces.js] Boot sequence complete");
 }
 
 async function loadTemplates() {
+  console.log("[faces.js] loadTemplates: fetching", `${API_BASE}/employees`);
   try {
-    // dashboard.js pattern: fetch(`${dashboardApiBaseUrl}/api/...`)
-    // faces.js pattern:    fetch(`${API_BASE}/...`)  →  <origin>/api/faces/...
     const res = await fetch(`${API_BASE}/employees`);
+    console.log("[faces.js] /employees HTTP status:", res.status);
 
     if (!res.ok) {
-      console.error(`/api/faces/employees returned HTTP ${res.status}`);
+      console.error(`[faces.js] /api/faces/employees returned HTTP ${res.status}`);
       throw new Error(`HTTP ${res.status}`);
     }
 
     const data = await res.json();
+    console.log("[faces.js] /employees response:", data);
+
     const employees = data.employees || [];
+    console.log(`[faces.js] ${employees.length} employee template(s) returned by API`);
 
     faceTemplates = [];
 
     for (const item of employees) {
       const employee = item.employee || {};
       const rawImageUrl = item.image_url || employee.image || "";
-      if (!rawImageUrl) continue;
+      if (!rawImageUrl) {
+        console.warn("[faces.js] skipping employee with no image_url:", item);
+        continue;
+      }
 
       // The API returns paths like "/storage/profiles/xxx.jpg" that are
       // relative to the API host, not this page's own (Vercel) origin.
-      // dashboard.js resolves URLs the same way (it prefixes with the API
-      // base URL); we mirror that here so the profile images actually load.
-      const imageUrl = /^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : API_ORIGIN + rawImageUrl;
+      const imageUrl = /^https?:\/\//i.test(rawImageUrl)
+        ? rawImageUrl
+        : API_ORIGIN + rawImageUrl;
 
       try {
         const img = await faceapi.fetchImage(imageUrl);
-        const detection = await faceapi.detectSingleFace(img)
-          .withFaceLandmarks()
+        const detection = await faceapi.detectSingleFace(
+            img,
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
+          )
+          .withFaceLandmarks(true) // true = use the tiny landmark net (matches boot())
           .withFaceDescriptor();
 
         if (!detection) {
-          console.warn(`No face detected in profile image for ${employee.name || item.rfid}`);
+          console.warn(`[faces.js] No face detected in profile image for ${employee.name || item.rfid} (${imageUrl})`);
           continue;
         }
 
@@ -130,60 +142,112 @@ async function loadTemplates() {
           ...employee,
           rfid: item.rfid || employee.rfid,
           uid: employee.uid,
-          name: employee.name || `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || "Unknown",
+          name: employee.name
+            || `${employee.firstname || ""} ${employee.lastname || ""}`.trim()
+            || "Unknown",
           imageUrl,
           descriptor: Array.from(detection.descriptor)
         });
+
+        console.log(`[faces.js] ✔ template built for ${employee.name || item.rfid}`);
       } catch (imgErr) {
-        console.warn(`Could not load face template for ${employee.name || item.rfid}:`, imgErr);
+        console.warn(`[faces.js] Could not load face template for ${employee.name || item.rfid}:`, imgErr);
       }
     }
 
-    console.log(`✅ Loaded ${faceTemplates.length} face templates from profile images`);
+    console.log(`[faces.js] ✅ Loaded ${faceTemplates.length} face templates from profile images`);
     faceCountEl.textContent = `Faces: ${faceTemplates.length}`;
+
     if (faceTemplates.length) {
       setStatus("Profile templates ready", "ready");
     } else {
       setStatus("No profile images found", "unknown");
     }
   } catch (e) {
-    console.error("Error loading templates:", e);
+    console.error("[faces.js] Error loading templates:", e);
     faceTemplates = [];
     faceCountEl.textContent = "Faces: 0";
     setStatus("Template load failed", "error");
+    // Re-throw so boot() can log it, but boot() already catches per-call.
+    throw e;
   }
 }
 
 async function loadAttendance() {
+  console.log("[faces.js] loadAttendance: fetching", `${API_BASE}/recent-attendance`);
   try {
     const res = await fetch(`${API_BASE}/recent-attendance`);
+    console.log("[faces.js] /recent-attendance HTTP status:", res.status);
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
     const data = await res.json();
+    console.log("[faces.js] /recent-attendance response:", data);
+
     if (data.status === "success") {
       todayAttendance = data.attendance || [];
       renderAttendance(todayAttendance);
+      console.log(`[faces.js] rendered ${todayAttendance.length} attendance record(s)`);
+    } else {
+      console.warn("[faces.js] /recent-attendance returned non-success:", data);
+      renderAttendance([]);
     }
   } catch (e) {
-    console.error("Error loading attendance:", e);
+    console.error("[faces.js] Error loading attendance:", e);
+    // Make sure the UI doesn't stay stuck on "Loading…"
+    const container = document.getElementById("todayAttendance");
+    if (container) {
+      container.innerHTML = `<span class="help">⚠️ Could not load attendance (${e.message}).</span>`;
+    }
+    throw e;
   }
 }
 
 async function loadStats() {
+  console.log("[faces.js] loadStats: fetching", `${API_BASE}/dashboard-stats`);
   try {
     const res = await fetch(`${API_BASE}/dashboard-stats`);
+    console.log("[faces.js] /dashboard-stats HTTP status:", res.status);
+
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
     const data = await res.json();
+    console.log("[faces.js] /dashboard-stats response:", data);
+
     if (data.status === "success") {
       const stats = data.stats || {};
-      // Profile images stat — the API server computes this by counting the
-      // actual files on disk in storage/profiles/.
-      document.getElementById("statTFS").textContent = stats.profile_images || 0;
-      document.getElementById("statPresent").textContent = stats.present_today || 0;
-      document.getElementById("statTotal").textContent = stats.total_employees || 0;
-      document.getElementById("statRate").textContent = stats.attendance_rate || "0%";
+
+      const elTfs = document.getElementById("statTFS");
+      const elPresent = document.getElementById("statPresent");
+      const elTotal = document.getElementById("statTotal");
+      const elRate = document.getElementById("statRate");
+
+      if (elTfs) elTfs.textContent = stats.profile_images || 0;
+      if (elPresent) elPresent.textContent = stats.present_today || 0;
+      if (elTotal) elTotal.textContent = stats.total_employees || 0;
+      if (elRate) elRate.textContent = stats.attendance_rate || "0%";
+
+      console.log("[faces.js] stats rendered:", {
+        profile_images: stats.profile_images,
+        present_today: stats.present_today,
+        total_employees: stats.total_employees,
+        attendance_rate: stats.attendance_rate
+      });
+    } else {
+      console.warn("[faces.js] /dashboard-stats returned non-success:", data);
     }
   } catch (e) {
-    console.error("Error loading stats:", e);
+    console.error("[faces.js] Error loading stats:", e);
+    // Set visible placeholders so the UI doesn't stay at "0" silently
+    const elTfs = document.getElementById("statTFS");
+    if (elTfs && elTfs.textContent === "0") elTfs.textContent = "—";
+    const elPresent = document.getElementById("statPresent");
+    if (elPresent && elPresent.textContent === "0") elPresent.textContent = "—";
+    const elTotal = document.getElementById("statTotal");
+    if (elTotal && elTotal.textContent === "0") elTotal.textContent = "—";
+    const elRate = document.getElementById("statRate");
+    if (elRate && elRate.textContent === "0%") elRate.textContent = "—";
+    throw e;
   }
 }
 
@@ -269,7 +333,10 @@ function identify(descriptor) {
         rfid: record.rfid || employee.rfid || "",
         uid: employee.uid || record.uid || "",
         distance: d,
-        name: employee.name || `${employee.firstname || ""} ${employee.lastname || ""}`.trim() || record.name || "Unknown",
+        name: employee.name
+          || `${employee.firstname || ""} ${employee.lastname || ""}`.trim()
+          || record.name
+          || "Unknown",
         samples: 1
       };
     }
@@ -290,22 +357,15 @@ async function recordAttendance(match) {
     return;
   }
 
-  // Build a stable cooldown key. Prefer UID so the key never changes between
-  // frames if the matched record only has one of the two fields populated.
   const key = uid || rfid;
   const now = Date.now();
   const previous = lastSent.get(key) || 0;
 
-  // If we are still in cooldown, don't spam the log or the API.
   if (now - previous < ATTENDANCE_COOLDOWN) {
     return;
   }
 
   // ⚠️ CRITICAL: set the cooldown timestamp BEFORE the async fetch() call.
-  // The recognition loop runs at ~60 fps, so if we set lastSent AFTER the
-  // fetch resolves, several frames fire in that window and each one triggers
-  // a second/third/fourth recordAttendance() call — which is what caused the
-  // duplicate log entries.
   lastSent.set(key, now);
 
   try {
@@ -384,21 +444,17 @@ async function recognitionLoop() {
       }
 
       // Manual flip: canvas has NO CSS mirror, video DOES.
-      // So we flip x here to match the mirrored selfie video.
       const flippedX = canvas.width - box.x - box.width;
 
-      // Draw bounding box at the flipped position
       ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.strokeRect(flippedX, box.y, box.width, box.height);
 
-      // Draw label background
       ctx.fillStyle = color;
       const labelWidth = Math.min(canvas.width - flippedX, 300);
       const labelY = Math.max(0, box.y - 28);
       ctx.fillRect(flippedX, labelY, labelWidth, 28);
 
-      // Draw label text (no counter-flip needed — canvas is not mirrored)
       ctx.fillStyle = "#fff";
       ctx.font = "bold 14px sans-serif";
       ctx.textAlign = "left";
@@ -428,7 +484,7 @@ function addLogEntry(name, confidence, type, message) {
     error: "❌",
     info: "ℹ️"
   };
-  
+
   entry.innerHTML = `
     <span class="log-time">${time}</span>
     <span class="log-icon">${icons[type] || "ℹ️"}</span>
@@ -483,9 +539,10 @@ function escapeHtml(v) {
 document.getElementById("start").addEventListener("click", startCamera);
 document.getElementById("stop").addEventListener("click", stopCamera);
 document.getElementById("refreshBtn").addEventListener("click", async () => {
-  await loadTemplates();
-  await loadAttendance();
-  await loadStats();
+  messageEl.textContent = "🔄 Refreshing data…";
+  await loadTemplates().catch(e => console.error("refresh loadTemplates:", e));
+  await loadAttendance().catch(e => console.error("refresh loadAttendance:", e));
+  await loadStats().catch(e => console.error("refresh loadStats:", e));
   messageEl.textContent = "🔄 Data refreshed!";
 });
 
