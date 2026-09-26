@@ -7,10 +7,28 @@
      via /api/faces/record — no RFID tap required
    - Logs all face detections */
 
-// API_ORIGIN is the bare API host (used to resolve profile image URLs).
-// API_BASE is the face-scanner API surface: /api/faces/*
-const API_ORIGIN = (window.TAPIN_API_URL || "https://lolenseu.pythonanywhere.com").replace(/\/+$/, "");
-const API_BASE = API_ORIGIN + "/api/faces";
+// ============================================================================
+// API CONNECTION — mirrors dashboard.js
+// ============================================================================
+// dashboard.js does this:
+//     const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
+//     fetch(`${dashboardApiBaseUrl}/api/dashboard-data`)
+//
+// That pattern is proven to work. We use the SAME pattern here, but the
+// face-scanner uses a dedicated API surface (/api/faces/*), so we build
+// the base the same way and just append /api/faces.
+//
+// window.TAPIN_API_URL comes from ./js/config.js which is loaded BEFORE
+// this file in faces.html:
+//     <script src="./js/config.js"></script>
+//     <script defer src="./js/faces.js"></script>
+//
+// Important: config.js sets 'https://lolenseu.pythonanywhere.com/' WITH a
+// trailing slash. dashboard.js strips trailing slashes via .replace(/\/+$/, '').
+// We do the exact same thing here so the concatenation never produces "//".
+const API_ORIGIN = (window.TAPIN_API_URL || 'https://lolenseu.pythonanywhere.com').replace(/\/+$/, '');
+const API_BASE = API_ORIGIN + '/api/faces';
+
 const MODEL_URL = "https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights";
 const MATCH_THRESHOLD = 0.50; // Lower = stricter
 const ATTENDANCE_COOLDOWN = 10000; // 10 seconds between scans
@@ -72,7 +90,15 @@ async function boot() {
 
 async function loadTemplates() {
   try {
+    // dashboard.js pattern: fetch(`${dashboardApiBaseUrl}/api/...`)
+    // faces.js pattern:    fetch(`${API_BASE}/...`)  →  <origin>/api/faces/...
     const res = await fetch(`${API_BASE}/employees`);
+
+    if (!res.ok) {
+      console.error(`/api/faces/employees returned HTTP ${res.status}`);
+      throw new Error(`HTTP ${res.status}`);
+    }
+
     const data = await res.json();
     const employees = data.employees || [];
 
@@ -82,8 +108,11 @@ async function loadTemplates() {
       const employee = item.employee || {};
       const rawImageUrl = item.image_url || employee.image || "";
       if (!rawImageUrl) continue;
+
       // The API returns paths like "/storage/profiles/xxx.jpg" that are
       // relative to the API host, not this page's own (Vercel) origin.
+      // dashboard.js resolves URLs the same way (it prefixes with the API
+      // base URL); we mirror that here so the profile images actually load.
       const imageUrl = /^https?:\/\//i.test(rawImageUrl) ? rawImageUrl : API_ORIGIN + rawImageUrl;
 
       try {
@@ -128,6 +157,7 @@ async function loadTemplates() {
 async function loadAttendance() {
   try {
     const res = await fetch(`${API_BASE}/recent-attendance`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.status === "success") {
       todayAttendance = data.attendance || [];
@@ -141,10 +171,12 @@ async function loadAttendance() {
 async function loadStats() {
   try {
     const res = await fetch(`${API_BASE}/dashboard-stats`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (data.status === "success") {
-      const stats = data.stats;
-      // Profile images stat (was: TFS files)
+      const stats = data.stats || {};
+      // Profile images stat — the API server computes this by counting the
+      // actual files on disk in storage/profiles/.
       document.getElementById("statTFS").textContent = stats.profile_images || 0;
       document.getElementById("statPresent").textContent = stats.present_today || 0;
       document.getElementById("statTotal").textContent = stats.total_employees || 0;
@@ -258,13 +290,22 @@ async function recordAttendance(match) {
     return;
   }
 
-  const now = Date.now();
+  // Build a stable cooldown key. Prefer UID so the key never changes between
+  // frames if the matched record only has one of the two fields populated.
   const key = uid || rfid;
+  const now = Date.now();
   const previous = lastSent.get(key) || 0;
+
+  // If we are still in cooldown, don't spam the log or the API.
   if (now - previous < ATTENDANCE_COOLDOWN) {
-    console.log(`⏳ Cooldown active for ${match.name}`);
     return;
   }
+
+  // ⚠️ CRITICAL: set the cooldown timestamp BEFORE the async fetch() call.
+  // The recognition loop runs at ~60 fps, so if we set lastSent AFTER the
+  // fetch resolves, several frames fire in that window and each one triggers
+  // a second/third/fourth recordAttendance() call — which is what caused the
+  // duplicate log entries.
   lastSent.set(key, now);
 
   try {
@@ -387,7 +428,7 @@ function addLogEntry(name, confidence, type, message) {
     error: "❌",
     info: "ℹ️"
   };
-
+  
   entry.innerHTML = `
     <span class="log-time">${time}</span>
     <span class="log-icon">${icons[type] || "ℹ️"}</span>

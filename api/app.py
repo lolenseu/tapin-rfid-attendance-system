@@ -116,9 +116,8 @@ ALLOWED_ORIGINS = [
     # Production
     "https://tapin-2s5w.onrender.com",
     "https://tapin-api.up.railway.app",
-    # Face scanner frontend on Vercel — replace with your actual project
-    # domain(s), or set them via the FACE_SCANNER_ORIGINS env var below.
-    "https://tapin-face-scanner.vercel.app",
+    # Face scanner frontend on Vercel — the actual deployed URL
+    "https://tapin-ispsctagudin.vercel.app",
     # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -2321,6 +2320,19 @@ def get_dashboard_statistics():
                 if rfid:
                     employees_on_work_status_today.add(rfid)
 
+    # Count profile image files on disk so the face-scanner dashboard can
+    # display "Profile Samples" without a separate request. Only JPG/PNG/
+    # GIF/WEBP/BMP files count — same extension list used by the face API.
+    try:
+        os.makedirs(PROFILE_STORAGE, exist_ok=True)
+        _allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+        profile_images = sum(
+            1 for f in os.listdir(PROFILE_STORAGE)
+            if os.path.splitext(f)[1].lower() in _allowed_exts
+        )
+    except Exception:
+        profile_images = 0
+
     return {
         "total_employees": total_employees,
         "present_today": present_today,
@@ -2330,6 +2342,7 @@ def get_dashboard_statistics():
         "attendance_rate": attendance_rate,
         "rfid_scans_today": len(today_events),
         "departments": 0,
+        "profile_images": profile_images,
     }
 
 # Prepare recent scans and user records for the dashboard UI.
@@ -4996,7 +5009,7 @@ def serve_work_status_attachment(filename):
 # ============================================================================
 # FACE SCANNER API — /api/faces/*
 # ============================================================================
-# Called by the standalone face-scanner page (index.html/app.js/styles.css)
+# Called by the standalone face-scanner page (faces.html/faces.js/faces.css)
 # deployed on Vercel. Face detection and matching happen entirely in the
 # browser with face-api.js; this server only supplies the profile-image
 # templates to match against and records attendance once a match is sent
@@ -5264,11 +5277,25 @@ def faces_recent_attendance():
     try:
         recent = []
         today = datetime.now().date().isoformat()
-        for record in attendance_records[-50:]:
+        # Dedupe by uid so the same employee never appears twice for the
+        # same day in the "Today's Attendance" list, no matter how many
+        # times their face was recognized.
+        seen_uids = set()
+        for record in attendance_records:
+            uid = record.get("uid", "")
+            if uid in seen_uids:
+                continue
             dtr = record.get("dtr", {})
             for date_key, day in dtr.items():
                 if day.get("date") == today:
+                    # Only include rows that actually have at least one
+                    # time recorded today. A freshly-created DTR row for
+                    # an employee who hasn't tapped yet would otherwise
+                    # flood the list with empty entries.
+                    if not (day.get("am_in") or day.get("am_out") or day.get("pm_in") or day.get("pm_out")):
+                        continue
                     recent.append({
+                        "uid": uid,
                         "employee": record.get("fullname", ""),
                         "employeeid": record.get("employeeid", ""),
                         "date": day.get("date", ""),
@@ -5279,6 +5306,8 @@ def faces_recent_attendance():
                         "hours": day.get("hours", "0.00"),
                         "status": day.get("status", ""),
                     })
+                    seen_uids.add(uid)
+                    break
         return jsonify({"status": "success", "count": len(recent), "attendance": recent})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e), "attendance": []}), 200
@@ -5287,8 +5316,9 @@ def faces_recent_attendance():
 @app.route("/api/faces/dashboard-stats", methods=["GET"])
 def faces_dashboard_stats():
     try:
+        # get_dashboard_statistics() already includes "profile_images" now —
+        # counted directly from files on disk in storage/profiles/.
         stats = get_dashboard_statistics()
-        stats["profile_images"] = len(_face_list_profile_images())
         stats["face_scanner_active"] = True
         return jsonify({"status": "success", "stats": stats})
     except Exception as e:
