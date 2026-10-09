@@ -6082,6 +6082,11 @@ def faces_record():
             }), 500
     else:
         # New behavior: face scan only authorizes RFID for later tap (secure two-factor)
+        # But we still count it in the daily stats for facial scans
+        try:
+            record_daily_scan(uid=employee.get("uid"), source="face")
+        except Exception as e:
+            print(f"Warning: failed to update daily stats from face scan: {e}")
         authorized_face_rfids.add(employee_rfid)
 
         return jsonify({

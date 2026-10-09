@@ -6,7 +6,9 @@
    - When a face is matched with enough confidence, attendance is recorded
      via /api/faces/record — no RFID tap required
    - Logs all face detections
-   - The camera auto-starts on page load — there are no Start/Stop buttons. */
+   - The camera auto-starts on page load — there are no Start/Stop buttons.
+   - Also polls /api/get-latest-rfid so an RFID tap opens a second modal
+     with a green check (known) or red X (unknown). */
 
 // ============================================================================
 // API CONNECTION — mirrors dashboard.js
@@ -89,6 +91,10 @@ const REJECT_BACKOFF_MS = 3000;
 const ATTENDANCE_COOLDOWN = 180000; // 3 minutes between scans per person
 
 const STATS_REFRESH_MS = 10000; // Refresh "Present Today" + stats every 10s
+
+// How long the employee profile modal stays on screen after a
+// successful scan before auto-hiding. Currently 5 seconds.
+const PROFILE_MODAL_DISPLAY_MS = 5000;
 
 // --- Single-face-at-a-time setting ---------------------------------------
 // The scanner now uses detectSingleFace(), which guarantees only ONE
@@ -179,6 +185,45 @@ function formatLocalTimestamp(date = new Date()) {
   const mi = pad(date.getMinutes());
   const ss = pad(date.getSeconds());
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
+// Get employee initials from firstname and lastname
+function getInitials(firstname, lastname) {
+  const f = (firstname || '').charAt(0).toUpperCase();
+  const l = (lastname || '').charAt(0).toUpperCase();
+  return f + l || '?';
+}
+
+// Get absolute image URL from potentially relative path.
+//
+// Mirrors profile.js: the API sometimes returns bare paths like
+// "storage/faces/juan.jpg" (no leading slash), so we insert one
+// ourselves. Without this, "origin" + "storage/..." becomes
+// "originstorage/..." which 404s.
+function getImageUrl(imagePath) {
+  if (!imagePath) return '';
+  const trimmed = String(imagePath).trim();
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (trimmed.startsWith('/')) return `${API_ORIGIN}${trimmed}`;
+  return `${API_ORIGIN}/${trimmed}`;
+}
+
+// Get current time in HH:MM:SS AM/PM format
+function getCurrentTime() {
+  const now = new Date();
+  return now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+}
+
+// Format time from ISO string to HH:MM AM/PM format
+function formatTimeFromISO(isoString) {
+  if (!isoString) return '--';
+  try {
+    const d = new Date(isoString);
+    return d.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+  } catch {
+    return isoString;
+  }
 }
 
 // ========================================================================
@@ -293,7 +338,7 @@ async function loadTemplates() {
 
       const imageUrl = /^https?:\/\//i.test(rawImageUrl)
         ? rawImageUrl
-        : API_ORIGIN + rawImageUrl;
+        : (rawImageUrl.startsWith('/') ? API_ORIGIN + rawImageUrl : API_ORIGIN + '/' + rawImageUrl);
 
       try {
         const img = await faceapi.fetchImage(imageUrl);
@@ -322,7 +367,8 @@ async function loadTemplates() {
           name: employee.name
             || `${employee.firstname || ""} ${employee.lastname || ""}`.trim()
             || "Unknown",
-          imageUrl,
+          imageUrl,                                   // absolute, for the modal
+          rawImage: rawImageUrl,                      // keep the original path too
           descriptor: Array.from(detection.descriptor)
         });
 
@@ -560,6 +606,8 @@ function identify(descriptor) {
           || `${employee.firstname || ""} ${employee.lastname || ""}`.trim()
           || record.name
           || "Unknown",
+        imageUrl: record.imageUrl,        // absolute — used by the modal
+        rawImage: record.rawImage,        // original path — fallback
         samples: 1
       };
     }
@@ -728,6 +776,15 @@ async function recordAttendance(match) {
       lastSent.set(key, Date.now());
 
       addLogEntry(empName, data.confidence || match.confidence, "success", data.attendance_status || "recorded");
+
+      // Show profile modal with employee data.
+      //
+      // Merge the local `match` (has absolute imageUrl + rawImage) with
+      // the server's employee object (authoritative names/ids). Server
+      // fields win when present; local fields survive otherwise. This
+      // is what guarantees the picture shows up in the modal even when
+      // the server's response omits or renames the image field.
+      showProfileModal({ ...match, ...(data.employee || {}) }, scannedAt);
 
       loadAttendance().catch(() => {});
       loadStats().catch(() => {});
@@ -964,13 +1021,401 @@ function escapeHtml(v) {
   }[c]));
 }
 
+// Show employee profile modal with given employee data.
+//
+// The recorder passes in either:
+//   • data.employee  → the raw employee object from the API response
+//   • match          → the object built by identify(), which nests the
+//                      employee under .employee and also carries a
+//                      precomputed .imageUrl from the template loader.
+//
+// We normalise both shapes into one flat view here so the picture,
+// name, role, employee ID, and RFID all render correctly regardless
+// of which object the caller handed us.
+//
+// Image resolution mirrors profile.js:
+//   getImageUrl("storage/faces/juan.jpg")
+//      → "https://<api-origin>/storage/faces/juan.jpg"
+//   If loading fails, the modal falls back to the employee's initials.
+function showProfileModal(employeeData, scannedAtTime = null) {
+  const modal = document.getElementById('profileModal');
+  const modalBody = document.getElementById('profileModalBody');
+
+  if (!modal || !modalBody) return;
+
+  // Handle both the "raw employee" shape and the "nested match" shape.
+  const nested = employeeData.employee || {};
+  const firstname = employeeData.firstname || nested.firstname || '';
+  const lastname  = employeeData.lastname  || nested.lastname  || '';
+  const fullname  = (firstname + ' ' + lastname).trim()
+    || employeeData.name
+    || nested.name
+    || 'Unknown';
+  const initials  = getInitials(firstname, lastname);
+
+  // Role — prefer direct, fall back to nested, then default.
+  const role = employeeData.role || nested.role || 'employee';
+  const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+
+  // Employee ID — prefer direct, fall back to nested.
+  const employeeid = employeeData.employeeid !== undefined
+    ? employeeData.employeeid
+    : (nested.employeeid !== undefined ? nested.employeeid : 'N/A');
+
+  // RFID — prefer direct, fall back to nested.
+  const rfid = employeeData.rfid !== undefined
+    ? employeeData.rfid
+    : (nested.rfid !== undefined ? nested.rfid : 'N/A');
+
+  // ---- Resolve the employee photo ------------------------------------
+  // We accept any of these field names, in priority order:
+  //   imageUrl      → already-absolute URL (set by loadTemplates)
+  //   image         → profile.js uses this
+  //   image_url     → sometimes returned by the faces API
+  //   rawImage      → the original path from loadTemplates (fallback)
+  //   photo         → legacy alias
+  //   profile_image → legacy alias
+  //
+  // Then we normalise to an absolute URL. The rule mirrors profile.js:
+  // bare paths get a leading slash before the origin is prepended.
+  function pickImageField(obj) {
+    if (!obj) return '';
+    return obj.imageUrl
+        || obj.image
+        || obj.image_url
+        || obj.rawImage
+        || obj.photo
+        || obj.profile_image
+        || '';
+  }
+
+  const rawImage = pickImageField(employeeData) || pickImageField(nested);
+
+  let imageUrl = '';
+  if (rawImage) {
+    if (/^https?:\/\//i.test(rawImage)) {
+      imageUrl = rawImage;                                    // already absolute
+    } else if (rawImage.startsWith('/')) {
+      imageUrl = `${API_ORIGIN}${rawImage}`;                  // "/storage/..."
+    } else {
+      imageUrl = `${API_ORIGIN}/${rawImage}`;                 // "storage/..."
+    }
+  }
+
+  // Debug — remove once the picture shows up reliably.
+  console.log("[faces.js] modal image resolution:", {
+    employeeData, nested, rawImage, imageUrl
+  });
+
+  // Build status badge if the employee is on leave.
+  let statusBadge = '';
+  const status = employeeData.status || nested.status || '';
+  if (status === 'on_leave') {
+    statusBadge = `<span class="status-badge work-status">On Leave (Work Status)</span>`;
+  }
+
+  // Format scan time.
+  const lastScanTime = scannedAtTime ? formatTimeFromISO(scannedAtTime) : '--';
+
+  // Build the profile HTML. The avatar falls back to the employee's
+  // initials if the image URL is missing or the image fails to load.
+  const profileHtml = `
+    <div class="profile-section">
+      <div class="profile-avatar">
+        ${imageUrl
+          ? `<img src="${imageUrl}" alt="${escapeHtml(fullname)}"
+                onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\\'initials-text\\'>${initials}</span>';" />`
+          : `<span class="initials-text">${initials}</span>`}
+      </div>
+      <div class="profile-info">
+        <div class="fullname">${escapeHtml(fullname)}</div>
+        <span class="role-badge">${escapeHtml(roleLabel)}</span>
+        ${statusBadge}
+        <div class="id-row">
+          <span>
+            <span class="label">Employee ID:</span>
+            <span class="value">${escapeHtml(employeeid)}</span>
+          </span>
+          <span>
+            <span class="label">RFID:</span>
+            <span class="value">${escapeHtml(rfid)}</span>
+          </span>
+        </div>
+      </div>
+    </div>
+    <div class="time-section">
+      <div class="time-row">
+        <div class="time-item">
+          <div class="label">Last Scan</div>
+          <div class="value" id="modalLastScanTime">${escapeHtml(lastScanTime)}</div>
+        </div>
+        <div class="time-item rfid-prompt">
+          <div class="rfid-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none"
+                 stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 8a12 12 0 0 1 16 0" />
+              <path d="M7 11a8 8 0 0 1 10 0" />
+              <path d="M10 14a4 4 0 0 1 4 0" />
+              <circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none" />
+            </svg>
+          </div>
+          <div class="rfid-text">Please tap your RFID</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  modalBody.innerHTML = profileHtml;
+
+  // Show modal.
+  modal.style.display = 'flex';
+
+  // Update the "Current Time" cell every second while the modal is open.
+  const updateModalTime = () => {
+    const currentTimeDisplay = document.getElementById('modalCurrentTimeDisplay');
+    if (currentTimeDisplay) {
+      currentTimeDisplay.textContent = getCurrentTime();
+    }
+  };
+  updateModalTime();
+
+  // Clear any interval/timeout left over from a previous scan so
+  // rapid-fire scans don't stack up hidden intervals.
+  if (window._profileModalTimeInterval) {
+    clearInterval(window._profileModalTimeInterval);
+  }
+  window._profileModalTimeInterval = setInterval(updateModalTime, 1000);
+
+  // Auto-hide after PROFILE_MODAL_DISPLAY_MS (currently 8 seconds).
+  if (window._profileModalHideTimeout) {
+    clearTimeout(window._profileModalHideTimeout);
+  }
+  window._profileModalHideTimeout = setTimeout(() => {
+    modal.style.display = 'none';
+    if (window._profileModalTimeInterval) {
+      clearInterval(window._profileModalTimeInterval);
+      window._profileModalTimeInterval = null;
+    }
+  }, PROFILE_MODAL_DISPLAY_MS);
+}
+
+// ========================================================================
+// RFID TAP POLLING (mirrors profile.js)
+// ========================================================================
+//
+// The profile page polls /api/get-latest-rfid every 2 seconds and shows
+// the latest employee. We do the same here, but the result is rendered
+// inside a modal that auto-hides. When a NEW RFID (different from the
+// previous one) arrives, we open the modal again.
+//
+// On success (employee found):
+//   • Show the employee photo, name, role, employee ID, RFID.
+//   • Bottom strip: Last Scan + a GREEN CHECK + "Tap recorded".
+//
+// On unknown RFID:
+//   • Show a "?" avatar with "Unknown".
+//   • Bottom strip: Last Scan + a RED X + "Not registered".
+
+const RFID_POLL_INTERVAL = 2000;                 // poll every 2 s
+const RFID_MODAL_DISPLAY_MS = 8000;              // auto-hide after 8 s
+const RFID_API_URL = `${API_ORIGIN}/api/get-latest-rfid`;
+
+let rfidPollTimer = null;
+let lastRfidSeen = null;                         // dedupe: only pop on NEW taps
+let rfidModalHideTimeout = null;
+
+// Fetch the latest RFID tap and render the modal if it's new.
+async function pollLatestRfid() {
+  try {
+    const res = await fetch(RFID_API_URL, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.status !== 'success') return;
+
+    // Only react when the RFID actually changes (or the scanned_at
+    // timestamp changes, for the same card being re-tapped).
+    const signature = `${data.rfid || ''}|${data.scanned_at || ''}`;
+    if (signature === lastRfidSeen) return;
+    lastRfidSeen = signature;
+
+    // Ignore empty heartbeats (no RFID ever tapped).
+    if (!data.rfid) return;
+
+    if (data.found && data.employee) {
+      showRfidTapModal({
+        employee: data.employee,
+        rfid: data.rfid,
+        scannedAt: data.scanned_at,
+        known: true
+      });
+    } else {
+      showRfidTapModal({
+        rfid: data.rfid,
+        scannedAt: data.scanned_at,
+        known: false
+      });
+    }
+  } catch (e) {
+    // Silent — polling errors shouldn't spam the console.
+    // console.warn('[faces.js] rfid poll failed:', e);
+  }
+}
+
+// Render the RFID tap modal.
+//
+// `payload.known === true`  → show employee details + green check.
+// `payload.known === false` → show "Unknown" + red X.
+function showRfidTapModal(payload) {
+  const modal = document.getElementById('rfidModal');
+  const body = document.getElementById('rfidModalBody');
+  if (!modal || !body) return;
+
+  const known = payload.known === true;
+  const emp = payload.employee || {};
+
+  // ---- Known employee ---------------------------------------------------
+  if (known) {
+    const firstname = emp.firstname || '';
+    const lastname = emp.lastname || '';
+    const fullname = (firstname + ' ' + lastname).trim() || emp.name || 'Unknown';
+    const initials = getInitials(firstname, lastname);
+    const role = emp.role || 'employee';
+    const roleLabel = role.charAt(0).toUpperCase() + role.slice(1);
+
+    const employeeid = emp.employeeid !== undefined ? emp.employeeid : 'N/A';
+    const rfid = emp.rfid || payload.rfid || 'N/A';
+
+    // Resolve the photo (same chain as the scan modal).
+    let rawImage = emp.imageUrl || emp.image || emp.image_url || emp.photo || emp.profile_image || '';
+    let imageUrl = '';
+    if (rawImage) {
+      if (/^https?:\/\//i.test(rawImage)) imageUrl = rawImage;
+      else if (rawImage.startsWith('/')) imageUrl = `${API_ORIGIN}${rawImage}`;
+      else imageUrl = `${API_ORIGIN}/${rawImage}`;
+    }
+
+    const scanTime = payload.scannedAt ? formatTimeFromISO(payload.scannedAt) : '--';
+
+    body.innerHTML = `
+      <div class="profile-section">
+        <div class="profile-avatar">
+          ${imageUrl
+            ? `<img src="${imageUrl}" alt="${escapeHtml(fullname)}"
+                  onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\\'initials-text\\'>${initials}</span>';" />`
+            : `<span class="initials-text">${initials}</span>`}
+        </div>
+        <div class="profile-info">
+          <div class="fullname">${escapeHtml(fullname)}</div>
+          <span class="role-badge">${escapeHtml(roleLabel)}</span>
+          <div class="id-row">
+            <span>
+              <span class="label">Employee ID:</span>
+              <span class="value">${escapeHtml(employeeid)}</span>
+            </span>
+            <span>
+              <span class="label">RFID:</span>
+              <span class="value">${escapeHtml(rfid)}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="time-section">
+        <div class="time-row">
+          <div class="time-item">
+            <div class="label">Last Scan</div>
+            <div class="value">${escapeHtml(scanTime)}</div>
+          </div>
+          <div class="time-item tap-result tap-ok">
+            <div class="tap-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none"
+                   stroke="currentColor" stroke-width="2.5"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M7.5 12.5l3 3 6-6.5" />
+              </svg>
+            </div>
+            <div class="tap-text">Tap recorded</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+  // ---- Unknown RFID ----------------------------------------------------
+  else {
+    const rfid = payload.rfid || 'N/A';
+    const scanTime = payload.scannedAt ? formatTimeFromISO(payload.scannedAt) : '--';
+
+    body.innerHTML = `
+      <div class="profile-section">
+        <div class="profile-avatar unknown-avatar">
+          <span class="initials-text">❓</span>
+        </div>
+        <div class="profile-info">
+          <div class="fullname unknown-name">Unknown</div>
+          <span class="role-badge unknown">Unknown</span>
+          <div class="id-row">
+            <span>
+              <span class="label">Employee ID:</span>
+              <span class="value unknown-value">—</span>
+            </span>
+            <span>
+              <span class="label">RFID:</span>
+              <span class="value unknown-value">${escapeHtml(rfid)}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="time-section">
+        <div class="time-row">
+          <div class="time-item">
+            <div class="label">Last Scan</div>
+            <div class="value">${escapeHtml(scanTime)}</div>
+          </div>
+          <div class="time-item tap-result tap-fail">
+            <div class="tap-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="32" height="32" fill="none"
+                   stroke="currentColor" stroke-width="2.5"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M8.5 8.5l7 7" />
+                <path d="M15.5 8.5l-7 7" />
+              </svg>
+            </div>
+            <div class="tap-text">Not registered</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Show the modal.
+  modal.style.display = 'flex';
+
+  // Auto-hide after RFID_MODAL_DISPLAY_MS.
+  if (rfidModalHideTimeout) clearTimeout(rfidModalHideTimeout);
+  rfidModalHideTimeout = setTimeout(() => {
+    modal.style.display = 'none';
+  }, RFID_MODAL_DISPLAY_MS);
+}
+
+// Start polling once the page is ready. Called from the boot chain
+// so it runs after the models/templates load.
+function startRfidPolling() {
+  if (rfidPollTimer) clearInterval(rfidPollTimer);
+  // Fire once immediately, then every RFID_POLL_INTERVAL.
+  pollLatestRfid();
+  rfidPollTimer = setInterval(pollLatestRfid, RFID_POLL_INTERVAL);
+  console.log("[faces.js] RFID tap polling started");
+}
+
 // ========================================================================
 // EVENT LISTENERS
 // ========================================================================
 //
 // The Start/Stop buttons no longer exist in the HTML, so we no longer
-// wire up click handlers for them. Only the Refresh button and the
-// beforeunload guard remain.
+// wire up click handlers for them. Only the Refresh button, the modal
+// close buttons, and the beforeunload guard remain.
 
 const refreshBtn = document.getElementById("refreshBtn");
 if (refreshBtn) {
@@ -981,6 +1426,39 @@ if (refreshBtn) {
     await loadStats().catch(e => console.error("refresh loadStats:", e));
     await loadServerConfig().catch(e => console.warn("refresh loadServerConfig:", e));
     messageEl.textContent = "🔄 Data refreshed!";
+  });
+}
+
+// Profile modal close button (scan modal).
+const profileModalClose = document.getElementById("profileModalClose");
+if (profileModalClose) {
+  profileModalClose.addEventListener("click", () => {
+    const modal = document.getElementById('profileModal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+    // Also stop the live clock interval when the user manually closes.
+    if (window._profileModalTimeInterval) {
+      clearInterval(window._profileModalTimeInterval);
+      window._profileModalTimeInterval = null;
+    }
+    if (window._profileModalHideTimeout) {
+      clearTimeout(window._profileModalHideTimeout);
+      window._profileModalHideTimeout = null;
+    }
+  });
+}
+
+// RFID modal close button (tap modal).
+const rfidModalClose = document.getElementById('rfidModalClose');
+if (rfidModalClose) {
+  rfidModalClose.addEventListener('click', () => {
+    const modal = document.getElementById('rfidModal');
+    if (modal) modal.style.display = 'none';
+    if (rfidModalHideTimeout) {
+      clearTimeout(rfidModalHideTimeout);
+      rfidModalHideTimeout = null;
+    }
   });
 }
 
@@ -1029,4 +1507,8 @@ boot().then(() => {
 
   // Start checking for stats data
   checkForStats();
+
+  // Kick off RFID tap polling. Runs alongside the camera loop so an
+  // RFID card tap opens the second modal with a check/X result.
+  startRfidPolling();
 });

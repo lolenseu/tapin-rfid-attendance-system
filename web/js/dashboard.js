@@ -1632,7 +1632,7 @@ function editEmployee(uid) {
                             </div>
                             <div class="form-group">
                                 <label>RFID</label>
-                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required maxlength="8" pattern="^[0-9A-Z]{8}$" placeholder="XXXXXXXX" />
+                                <input class="form-control" type="text" id="editRfid" value="${escapeHtml(employee.rfid || '')}" required placeholder="XXXXXXXX" />
                             </div>
                             <div class="form-group">
                                 <label>First Name</label>
@@ -4477,8 +4477,16 @@ function filterWorkStatusRequests() {
         return matchesEmployeeSearch;
     });
 
-    // Reset to first page when filtering
-    workStatusRequestsCurrentPage = 1;
+    // Clamp the current page so we never sit on a page that no longer exists
+    // after filtering. Do NOT unconditionally reset to 1 here — that would
+    // make clicking Next jump right back to page 1 on the next render.
+    const totalPages = Math.ceil(filteredWorkStatusRequests.length / WORK_STATUS_REQUESTS_PER_PAGE) || 1;
+    if (workStatusRequestsCurrentPage > totalPages) {
+        workStatusRequestsCurrentPage = totalPages;
+    }
+    if (workStatusRequestsCurrentPage < 1) {
+        workStatusRequestsCurrentPage = 1;
+    }
 }
 
 // Render work status request filter controls (for HR/Admin)
@@ -4616,7 +4624,7 @@ function renderWorkStatusRequestTable() {
     // Apply filters first
     filterWorkStatusRequests();
 
-    // Filter to only show pending requests for management (if no status filter is set)
+    // Copy the filtered list so we can sort without mutating the source
     let displayRequests = [...filteredWorkStatusRequests];
 
     // Apply sorting
@@ -4632,7 +4640,7 @@ function renderWorkStatusRequestTable() {
         }
 
         // Handle date fields
-        if (workStatusRequestSort.field.includes('date')) {
+        if (workStatusRequestSort.field && workStatusRequestSort.field.includes('date')) {
             valueA = new Date(valueA);
             valueB = new Date(valueB);
         }
@@ -4642,7 +4650,22 @@ function renderWorkStatusRequestTable() {
         return 0;
     });
 
-    if (displayRequests.length === 0) {
+    // Pagination math — guard against divide-by-zero and clamp the page.
+    const totalItems = displayRequests.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / WORK_STATUS_REQUESTS_PER_PAGE));
+
+    if (workStatusRequestsCurrentPage > totalPages) {
+        workStatusRequestsCurrentPage = totalPages;
+    }
+    if (workStatusRequestsCurrentPage < 1) {
+        workStatusRequestsCurrentPage = 1;
+    }
+
+    const startIndex = (workStatusRequestsCurrentPage - 1) * WORK_STATUS_REQUESTS_PER_PAGE;
+    const endIndex = Math.min(startIndex + WORK_STATUS_REQUESTS_PER_PAGE, totalItems);
+    const pageRequests = displayRequests.slice(startIndex, endIndex);
+
+    if (totalItems === 0) {
         tableSection.innerHTML = `
             <div class="card">
                 <div class="card-header">
@@ -4656,40 +4679,96 @@ function renderWorkStatusRequestTable() {
         return;
     }
 
-    // Calculate pagination
-    const totalPages = Math.ceil(displayRequests.length / WORK_STATUS_REQUESTS_PER_PAGE);
-    const startIndex = (workStatusRequestsCurrentPage - 1) * WORK_STATUS_REQUESTS_PER_PAGE;
-    const endIndex = Math.min(startIndex + WORK_STATUS_REQUESTS_PER_PAGE, displayRequests.length);
-    const pageRequests = displayRequests.slice(startIndex, endIndex);
+    // ---- Build the table + pagination in ONE innerHTML assignment -------
+    // Putting the pagination controls INSIDE tableSection.innerHTML avoids
+    // the previous bug where appendChild() created a brand-new pagination
+    // container on every render and left stale buttons behind.
+    let paginationHTML = '';
+
+    if (totalPages > 1) {
+        paginationHTML += `<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:16px;">`;
+
+        // Previous
+        paginationHTML += `
+            <button class="btn btn-outline btn-sm pagination-btn"
+                    onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage - 1})"
+                    ${workStatusRequestsCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                Prev
+            </button>
+        `;
+
+        // Windowed page numbers
+        const maxVisiblePages = 5;
+        let startPage = Math.max(1, workStatusRequestsCurrentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+        if (endPage - startPage < maxVisiblePages - 1) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+
+        if (startPage > 1) {
+            paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeWorkStatusRequestPage(1)">1</button>`;
+            if (startPage > 2) paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            const isActive = i === workStatusRequestsCurrentPage;
+            paginationHTML += `
+                <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
+                        onclick="changeWorkStatusRequestPage(${i})"
+                        ${isActive ? 'style="font-weight:700;"' : ''}>
+                    ${i}
+                </button>
+            `;
+        }
+
+        if (endPage < totalPages) {
+            if (endPage < totalPages - 1) paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
+            paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeWorkStatusRequestPage(${totalPages})">${totalPages}</button>`;
+        }
+
+        // Next
+        paginationHTML += `
+            <button class="btn btn-outline btn-sm pagination-btn"
+                    onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage + 1})"
+                    ${workStatusRequestsCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                Next
+            </button>
+        `;
+
+        paginationHTML += `</div>`;
+    }
 
     tableSection.innerHTML = `
         <div class="card">
             <div class="card-header">
-                <div class="card-title"><i class="fa-solid fa-briefcase"></i> Work Status Requests (${filteredWorkStatusRequests.filter(r => r.status === 'pending').length} pending)</div>
+                <div class="card-title">
+                    <i class="fa-solid fa-briefcase"></i>
+                    Work Status Requests (${filteredWorkStatusRequests.filter(r => r.status === 'pending').length} pending)
+                </div>
             </div>
             <div class="card-body">
                 <div class="table-wrap">
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th onclick="sortWorkStatusRequests('employee')">
+                                <th onclick="sortWorkStatusRequests('employee')" style="cursor:pointer;">
                                     Employee
                                     ${workStatusRequestSort.field === 'employee' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
                                      workStatusRequestSort.field === 'employee' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
                                 </th>
-                                <th onclick="sortWorkStatusRequests('work_status_type')">
+                                <th onclick="sortWorkStatusRequests('work_status_type')" style="cursor:pointer;">
                                     Work Status Type
                                     ${workStatusRequestSort.field === 'work_status_type' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
                                      workStatusRequestSort.field === 'work_status_type' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
                                 </th>
-                                <th onclick="sortWorkStatusRequests('start_date')">
+                                <th onclick="sortWorkStatusRequests('start_date')" style="cursor:pointer;">
                                     Dates
                                     ${workStatusRequestSort.field === 'start_date' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
                                      workStatusRequestSort.field === 'start_date' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
                                 </th>
                                 <th>Period</th>
                                 <th>Days</th>
-                                <th onclick="sortWorkStatusRequests('status')">
+                                <th onclick="sortWorkStatusRequests('status')" style="cursor:pointer;">
                                     Status
                                     ${workStatusRequestSort.field === 'status' && workStatusRequestSort.direction === 'asc' ? ' ↑' :
                                      workStatusRequestSort.field === 'status' && workStatusRequestSort.direction === 'desc' ? ' ↓' : ''}
@@ -4705,18 +4784,13 @@ function renderWorkStatusRequestTable() {
                                 const formattedEnd = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
                                 const dateRange = formattedStart === formattedEnd ? formattedStart : `${formattedStart} - ${formattedEnd}`;
 
-                                // Calculate working days (excluding weekends)
                                 const workDays = req.days ? req.days.filter(day => {
                                     const date = new Date(day);
-                                    return date.getDay() !== 0 && date.getDay() !== 6; // Not Sunday (0) or Saturday (6)
+                                    return date.getDay() !== 0 && date.getDay() !== 6;
                                 }).length : 0;
 
-                                // Get work status label
                                 const wsLabel = req.work_status_label || (req.work_status_type || '').replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
 
-                                // Optional attachment link — the backend saves it under
-                                // storage/work-status/<RFID>/<filename> and returns the
-                                // relative path in req.attachment_path.
                                 const attachmentLink = req.attachment_path
                                     ? `<div style="margin-top:4px;font-size:11px;">
                                          <a href="javascript:void(0)" onclick="openWorkStatusAttachmentModal('${escapeHtml(req.attachment_path)}', '${escapeHtml(req.attachment_path.split('/').pop() || 'attachment')}')" style="color:var(--primary);text-decoration:underline;">
@@ -4724,6 +4798,7 @@ function renderWorkStatusRequestTable() {
                                          </a>
                                        </div>`
                                     : '';
+
                                 return `
                                     <tr>
                                         <td>
@@ -4768,76 +4843,13 @@ function renderWorkStatusRequestTable() {
                         </tbody>
                     </table>
                 </div>
+                <div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text-muted);">
+                    Showing ${startIndex + 1} - ${endIndex} of ${totalItems} requests
+                </div>
+                ${paginationHTML}
             </div>
         </div>
     `;
-
-    // Add pagination controls
-    const paginationContainer = document.createElement('div');
-    paginationContainer.className = 'pagination-footer';
-    paginationContainer.style.display = 'flex';
-    paginationContainer.style.justifyContent = 'center';
-    paginationContainer.style.alignItems = 'center';
-    paginationContainer.style.gap = '8px';
-    paginationContainer.style.marginTop = '16px';
-
-    let paginationHTML = '';
-
-    // Previous button
-    paginationHTML += `
-        <button class="btn btn-outline btn-sm pagination-btn"
-                onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage - 1})"
-                ${workStatusRequestsCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-            Prev
-        </button>
-    `;
-
-    // Page numbers
-    const maxVisiblePages = 5;
-    let startPage = Math.max(1, workStatusRequestsCurrentPage - Math.floor(maxVisiblePages / 2));
-    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
-
-    if (endPage - startPage < maxVisiblePages - 1) {
-        startPage = Math.max(1, endPage - maxVisiblePages + 1);
-    }
-
-    if (startPage > 1) {
-        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="changeWorkStatusRequestPage(1)">1</button>`;
-        if (startPage > 2) {
-            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
-        }
-    }
-
-    for (let i = startPage; i <= endPage; i++) {
-        const isActive = i === workStatusRequestsCurrentPage;
-        paginationHTML += `
-            <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
-                    onclick="changeWorkStatusRequestPage(${i})"
-                    ${isActive ? 'style="font-weight:700;"' : ''}>
-                ${i}
-            </button>
-        `;
-    }
-
-    if (endPage < totalPages) {
-        if (endPage < totalPages - 1) {
-            paginationHTML += `<span style="color:var(--text-muted);padding:0 4px;">…</span>`;
-        }
-        paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn"
-                                onclick="changeWorkStatusRequestPage(${totalPages})">${totalPages}</button>`;
-    }
-
-    // Next button
-    paginationHTML += `
-        <button class="btn btn-outline btn-sm pagination-btn"
-                onclick="changeWorkStatusRequestPage(${workStatusRequestsCurrentPage + 1})"
-                ${workStatusRequestsCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-            Next
-        </button>
-    `;
-
-    paginationContainer.innerHTML = paginationHTML;
-    tableSection.appendChild(paginationContainer);
 }
 
 // Change work status request page

@@ -26,7 +26,7 @@
 
     <div class="header">
       <div class="logo" id="logoContainer">
-        <img src="assets/tapin_logo.png" alt="TapIn Logo"/>
+        <img src="assets/tapin_logo.png" alt="TapIn Logo" onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\'logo-placeholder\'>T</span>';" />
       </div>
       <h1>TapIn Face Scanner</h1>
     </div>
@@ -110,5 +110,48 @@
   </div>
 </div>
 
+<!-- Profile Modal — opens after a successful face scan.
+     Header mirrors the main page header: TapIn logo + title.
+     The logo falls back to a "T" placeholder if the image fails. -->
+<div class="profile-modal" id="profileModal" style="display: none;">
+  <div class="profile-modal-content">
+    <div class="profile-modal-header">
+      <div class="profile-modal-logo">
+        <img src="assets/tapin_logo.png" alt="TapIn Logo"
+             onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\'logo-placeholder\'>T</span>';" />
+      </div>
+      <div class="profile-modal-title">
+        <h3>TapIn Profile</h3>
+        <small>Face Scanner</small>
+      </div>
+      <button class="profile-modal-close" id="profileModalClose">&times;</button>
+    </div>
+    <div class="profile-modal-body" id="profileModalBody">
+      <!-- Profile content will be injected here -->
+    </div>
+  </div>
+</div>
+
+<!-- RFID Tap Modal — pops when an RFID card is tapped at the scanner.
+     Shares the same visual language as the profile modal, but shows
+     a tap result (green check for known, red X for unknown). -->
+<div class="profile-modal" id="rfidModal" style="display: none;">
+  <div class="profile-modal-content">
+    <div class="profile-modal-header">
+      <div class="profile-modal-logo">
+        <img src="assets/tapin_logo.png" alt="TapIn Logo"
+             onerror="this.style.display='none';this.parentElement.innerHTML='<span class=\'logo-placeholder\'>T</span>';" />
+      </div>
+      <div class="profile-modal-title">
+        <h3>TapIn Profile</h3>
+        <small>RFID Tap</small>
+      </div>
+      <button class="profile-modal-close" id="rfidModalClose">&times;</button>
+    </div>
+    <div class="profile-modal-body" id="rfidModalBody">
+      <!-- Tap result content will be injected here -->
+    </div>
+  </div>
+</div>
 </body>
 </html>
