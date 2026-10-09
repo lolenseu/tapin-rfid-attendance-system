@@ -537,6 +537,12 @@ function normalizePosition(value) {
     return value.toLowerCase().replace(/\s+/g, '_');
 }
 
+// Capitalize the first letter of a string
+function capitalizeFirstLetter(str) {
+    if (!str) return '';
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 // Normalize role values from display format to option value format
 function normalizeRole(value) {
     if (!value) return '';
@@ -1543,7 +1549,7 @@ function viewEmployee(uid) {
                         </div>
                         <div class="detail-item">
                             <span class="detail-label"><i class="fa-solid fa-briefcase"></i> Position</span>
-                            <span class="detail-value">${escapeHtml(employee.position || 'N/A')}</span>
+                            <span class="detail-value">${escapeHtml(capitalizeFirstLetter(employee.position) || 'N/A')}</span>
                         </div>
                         <div class="detail-item">
                             <span class="detail-label"><i class="fa-solid fa-phone"></i> Contact Number</span>
@@ -1671,10 +1677,11 @@ function editEmployee(uid) {
                                 <label>Department</label>
                                 <select class="form-control" id="editDepartment">
                                     <option value="">-- Select Department --</option>
-                                    <option value="cte" ${normalizeDepartment(employee.department) === 'cte' ? 'selected' : ''}>CTE • College of Teacher Education</option>
-                                    <option value="cas" ${normalizeDepartment(employee.department) === 'cas' ? 'selected' : ''}>CAS • College of Arts and Sciences</option>
-                                    <option value="cbhm" ${normalizeDepartment(employee.department) === 'cbhm' ? 'selected' : ''}>CBHM • College of Business Management and Hospitality Management</option>
-                                    <option value="lhs" ${normalizeDepartment(employee.department) === 'lhs' ? 'selected' : ''}>LHS • Laboratory High School</option>
+                                    <option value="CTE" ${normalizeDepartment(employee.department) === 'cte' ? 'selected' : ''}>CTE • College of Teacher Education</option>
+                                    <option value="CAS" ${normalizeDepartment(employee.department) === 'cas' ? 'selected' : ''}>CAS • College of Arts and Sciences</option>
+                                    <option value="CBME" ${normalizeDepartment(employee.department) === 'cbme' ? 'selected' : ''}>CBME • College of Business and Entrepreneurship</option>
+                                    <option value="LHS" ${normalizeDepartment(employee.department) === 'lhs' ? 'selected' : ''}>LHS • Laboratory High School</option>
+                                    <option value="OTHERS" ${normalizeDepartment(employee.department) === 'others' ? 'selected' : ''}>Others</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -1706,6 +1713,8 @@ function editEmployee(uid) {
                                     <option value="contract_service" ${normalizeEmploymentType(employee.employment_type) === 'contract_service' ? 'selected' : ''}>Contract of Service (COS)</option>
                                     <option value="provisional_temporary" ${normalizeEmploymentType(employee.employment_type) === 'provisional_temporary' ? 'selected' : ''}>Provisional / Temporary</option>
                                     <option value="substitute_casual" ${normalizeEmploymentType(employee.employment_type) === 'substitute_casual' ? 'selected' : ''}>Substitute / Casual</option>
+                                    <option value="full_time" ${normalizeEmploymentType(employee.employment_type) === 'full_time' ? 'selected' : ''}>Full-Time</option>
+                                    <option value="part_time" ${normalizeEmploymentType(employee.employment_type) === 'part_time' ? 'selected' : ''}>Part-Time</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -1825,7 +1834,8 @@ async function submitEditEmployee(event) {
 
     formData.append('address', document.getElementById('editAddress').value);
     formData.append('bdate', document.getElementById('editBdate').value);
-    formData.append('department', document.getElementById('editDepartment').value);
+    const departmentValue = document.getElementById('editDepartment').value;
+    formData.append('department', departmentValue.toUpperCase());
     formData.append('position', document.getElementById('editPosition').value);
     formData.append('employment_type', document.getElementById('editEmploymentType').value);
     formData.append('functional_role', document.getElementById('editFunctionalRole').value);
@@ -2096,7 +2106,7 @@ function renderAttendanceTable() {
             <td><strong>${escapeHtml(employee ? employee.employeeid || employee.uid || '--' : '--')}</strong></td>
             <td>${escapeHtml(name)}</td>
             <td>${escapeHtml(department)}</td>
-            <td>${escapeHtml(position)}</td>
+            <td>${escapeHtml(capitalizeFirstLetter(position))}</td>
             <td><code>${escapeHtml(rfid)}</code></td>
             <td>${escapeHtml(scannedAt)}</td>
             <td>--</td>
@@ -2774,7 +2784,7 @@ function renderDTREmployeeInfoPanel(info) {
 
     panel.innerHTML = `
         <div class="dtr-info-row"><span class="dtr-info-label">Name:</span><span class="dtr-info-value">${escapeHtml(info.fullname || '--')}</span></div>
-        <div class="dtr-info-row"><span class="dtr-info-label">Position:</span><span class="dtr-info-value">${escapeHtml(info.position || '--')}</span></div>
+        <div class="dtr-info-row"><span class="dtr-info-label">Position:</span><span class="dtr-info-value">${escapeHtml(capitalizeFirstLetter(info.position) || '--')}</span></div>
         <div class="dtr-info-row"><span class="dtr-info-label">Department:</span><span class="dtr-info-value">${escapeHtml(info.department || '--')}</span></div>
         <div class="dtr-info-row"><span class="dtr-info-label">Regular Time:</span><span class="dtr-info-value">${escapeHtml(info.regularTime || 'DEFAULT')}</span></div>
     `;
@@ -3059,7 +3069,7 @@ function buildDTRHTML(record, dtr, employee) {
 
             <div class="dtr-info">
                 <div class="info-row"><span class="info-label">Name :</span><span class="info-value name">${fullname}</span></div>
-                <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${position}</span></div>
+                <div class="info-row"><span class="info-label">Position :</span><span class="info-value">${escapeHtml(capitalizeFirstLetter(position))}</span></div>
                 <div class="info-row"><span class="info-label">Department :</span><span class="info-value">${department}</span></div>
                 <div class="info-row two-col">
                     <span class="info-half"><span class="info-label">Regular Time :</span><span class="info-value">${employee.regularTime || 'DEFAULT'}</span></span>

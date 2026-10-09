@@ -40,6 +40,12 @@ function initialsOf(u) {
     .trim().split(/\s+/).map(p => p[0] || '').join('').slice(0, 2).toUpperCase() || '--';
 }
 
+// Capitalize the first letter of a string
+function capitalizeFirstLetter(str) {
+  if (!str) return '';
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
 function escapeHtml(v) {
   return String(v ?? '').replace(/[&<>'"]/g, c => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
@@ -196,7 +202,7 @@ function paintProfile() {
   setText('profileEmail', currentUser.email || '--');
   setText('profilePhone', currentUser.cpnumber || '--');
   setText('profileDept', currentUser.department || '--');
-  setText('profilePosition', currentUser.position || '--');
+  setText('profilePosition', capitalizeFirstLetter(currentUser.position) || '--');
   setText('profileEmployType', currentUser.employment_type || '--');
   setText('profileBdate', currentUser.bdate || '--');
   setText('profileFuncRole', currentUser.functional_role || '--');
@@ -674,6 +680,58 @@ function openEditProfileModal() {
   const m = document.getElementById('editProfileModal');
   if (!m) return;
 
+  // Populate department dropdown with options
+  const departmentSelect = document.getElementById('editDepartment');
+  if (departmentSelect) {
+    // Clear existing options except the first one
+    while (departmentSelect.options.length > 1) {
+      departmentSelect.remove(1);
+    }
+
+    // Add department options
+    const departments = [
+      { value: 'CTE', label: 'CTE • College of Teacher Education' },
+      { value: 'CAS', label: 'CAS • College of Arts and Sciences' },
+      { value: 'CBME', label: 'CBME • College of Business and Entrepreneurship' },
+      { value: 'LHS', label: 'LHS • Laboratory High School' },
+      { value: 'OTHERS', label: 'Others' }
+    ];
+
+    departments.forEach(dept => {
+      const option = document.createElement('option');
+      option.value = dept.value;
+      option.textContent = dept.label;
+      departmentSelect.appendChild(option);
+    });
+  }
+
+  // Populate employment type dropdown with options
+  const employmentTypeSelect = document.getElementById('editEmploymentType');
+  if (employmentTypeSelect) {
+    // Clear existing options except the first one
+    while (employmentTypeSelect.options.length > 1) {
+      employmentTypeSelect.remove(1);
+    }
+
+    // Add employment type options
+    const employmentTypes = [
+      { value: 'permanent_regular', label: 'Permanent / Regular' },
+      { value: 'job_order', label: 'Job Order (JO)' },
+      { value: 'contract_service', label: 'Contract of Service (COS)' },
+      { value: 'provisional_temporary', label: 'Provisional / Temporary' },
+      { value: 'substitute_casual', label: 'Substitute / Casual' },
+      { value: 'full_time', label: 'Full-Time' },
+      { value: 'part_time', label: 'Part-Time' }
+    ];
+
+    employmentTypes.forEach(empType => {
+      const option = document.createElement('option');
+      option.value = empType.value;
+      option.textContent = empType.label;
+      employmentTypeSelect.appendChild(option);
+    });
+  }
+
   document.getElementById('editFirstname').value = currentUser.firstname || '';
   document.getElementById('editLastname').value = currentUser.lastname || '';
   document.getElementById('editEmail').value = currentUser.email || '';
@@ -716,7 +774,8 @@ async function submitEditProfile(e) {
   fd.append('gender', document.getElementById('editGender').value);
   fd.append('rfid', currentUser.rfid);
   fd.append('role', currentUser.role || 'employee');
-  fd.append('department', document.getElementById('editDepartment').value);
+  const departmentValue = document.getElementById('editDepartment').value;
+  fd.append('department', departmentValue.toUpperCase());
 
   const file = document.getElementById('editProfileImage').files[0];
   if (file) fd.append('image', file);
