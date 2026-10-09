@@ -9,6 +9,12 @@ if (registrationForm) {
 
         const formData = new FormData(registrationForm);
 
+        // Convert department value to uppercase before sending
+        const departmentSelect = document.getElementById('registrationDepartment');
+        if (departmentSelect && departmentSelect.value) {
+            formData.set('department', departmentSelect.value.toUpperCase());
+        }
+
         try {
             const response = await fetch(`${registrationApiBaseUrl}/api/register-employee`, {
                 method: 'POST',

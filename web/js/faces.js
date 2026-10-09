@@ -93,8 +93,8 @@ const ATTENDANCE_COOLDOWN = 180000; // 3 minutes between scans per person
 const STATS_REFRESH_MS = 10000; // Refresh "Present Today" + stats every 10s
 
 // How long the employee profile modal stays on screen after a
-// successful scan before auto-hiding. Currently 5 seconds.
-const PROFILE_MODAL_DISPLAY_MS = 5000;
+// successful scan before auto-hiding. Reduced to 4 seconds as requested.
+const PROFILE_MODAL_DISPLAY_MS = 4000;
 
 // --- Single-face-at-a-time setting ---------------------------------------
 // The scanner now uses detectSingleFace(), which guarantees only ONE
@@ -1038,6 +1038,34 @@ function escapeHtml(v) {
 //      → "https://<api-origin>/storage/faces/juan.jpg"
 //   If loading fails, the modal falls back to the employee's initials.
 function showProfileModal(employeeData, scannedAtTime = null) {
+  // Hide any existing modals before showing a new one (only one modal at a time)
+  const existingProfileModal = document.getElementById('profileModal');
+  const existingRfidModal = document.getElementById('rfidModal');
+  if (existingProfileModal && existingProfileModal.style.display === 'flex') {
+    existingProfileModal.style.display = 'none';
+    // Clear intervals/timeouts for the existing profile modal
+    if (window._profileModalTimeInterval) {
+      clearInterval(window._profileModalTimeInterval);
+      window._profileModalTimeInterval = null;
+    }
+    if (window._profileModalHideTimeout) {
+      clearTimeout(window._profileModalHideTimeout);
+      window._profileModalHideTimeout = null;
+    }
+  }
+  if (existingRfidModal && existingRfidModal.style.display === 'flex') {
+    existingRfidModal.style.display = 'none';
+    // Clear intervals/timeouts for the existing RFID modal
+    if (window._rfidModalTimeInterval) {
+      clearInterval(window._rfidModalTimeInterval);
+      window._rfidModalTimeInterval = null;
+    }
+    if (window._rfidModalHideTimeout) {
+      clearTimeout(window._rfidModalHideTimeout);
+      window._rfidModalHideTimeout = null;
+    }
+  }
+
   const modal = document.getElementById('profileModal');
   const modalBody = document.getElementById('profileModalBody');
 
@@ -1187,7 +1215,7 @@ function showProfileModal(employeeData, scannedAtTime = null) {
   }
   window._profileModalTimeInterval = setInterval(updateModalTime, 1000);
 
-  // Auto-hide after PROFILE_MODAL_DISPLAY_MS (currently 8 seconds).
+  // Auto-hide after PROFILE_MODAL_DISPLAY_MS (currently 4 seconds).
   if (window._profileModalHideTimeout) {
     clearTimeout(window._profileModalHideTimeout);
   }
@@ -1218,12 +1246,11 @@ function showProfileModal(employeeData, scannedAtTime = null) {
 //   • Bottom strip: Last Scan + a RED X + "Not registered".
 
 const RFID_POLL_INTERVAL = 2000;                 // poll every 2 s
-const RFID_MODAL_DISPLAY_MS = 8000;              // auto-hide after 8 s
+const RFID_MODAL_DISPLAY_MS = 4000;              // auto-hide after 4 s (reduced as requested)
 const RFID_API_URL = `${API_ORIGIN}/api/get-latest-rfid`;
 
 let rfidPollTimer = null;
 let lastRfidSeen = null;                         // dedupe: only pop on NEW taps
-let rfidModalHideTimeout = null;
 
 // Fetch the latest RFID tap and render the modal if it's new.
 async function pollLatestRfid() {
@@ -1267,6 +1294,34 @@ async function pollLatestRfid() {
 // `payload.known === true`  → show employee details + green check.
 // `payload.known === false` → show "Unknown" + red X.
 function showRfidTapModal(payload) {
+  // Hide any existing modals before showing a new one (only one modal at a time)
+  const existingProfileModal = document.getElementById('profileModal');
+  const existingRfidModal = document.getElementById('rfidModal');
+  if (existingProfileModal && existingProfileModal.style.display === 'flex') {
+    existingProfileModal.style.display = 'none';
+    // Clear intervals/timeouts for the existing profile modal
+    if (window._profileModalTimeInterval) {
+      clearInterval(window._profileModalTimeInterval);
+      window._profileModalTimeInterval = null;
+    }
+    if (window._profileModalHideTimeout) {
+      clearTimeout(window._profileModalHideTimeout);
+      window._profileModalHideTimeout = null;
+    }
+  }
+  if (existingRfidModal && existingRfidModal.style.display === 'flex') {
+    existingRfidModal.style.display = 'none';
+    // Clear intervals/timeouts for the existing RFID modal
+    if (window._rfidModalTimeInterval) {
+      clearInterval(window._rfidModalTimeInterval);
+      window._rfidModalTimeInterval = null;
+    }
+    if (window._rfidModalHideTimeout) {
+      clearTimeout(window._rfidModalHideTimeout);
+      window._rfidModalHideTimeout = null;
+    }
+  }
+
   const modal = document.getElementById('rfidModal');
   const body = document.getElementById('rfidModalBody');
   if (!modal || !body) return;
@@ -1393,8 +1448,8 @@ function showRfidTapModal(payload) {
   modal.style.display = 'flex';
 
   // Auto-hide after RFID_MODAL_DISPLAY_MS.
-  if (rfidModalHideTimeout) clearTimeout(rfidModalHideTimeout);
-  rfidModalHideTimeout = setTimeout(() => {
+  if (window._rfidModalHideTimeout) clearTimeout(window._rfidModalHideTimeout);
+  window._rfidModalHideTimeout = setTimeout(() => {
     modal.style.display = 'none';
   }, RFID_MODAL_DISPLAY_MS);
 }
