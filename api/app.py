@@ -8,17 +8,114 @@ import secrets
 import io
 import re
 import socket
+import ssl
+import pymysql
+
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 
 from flask import Flask, jsonify, request, session, send_from_directory, send_file, make_response
 from flask_cors import CORS
+from dotenv import load_dotenv
+from pymysql.cursors import DictCursor
 from werkzeug.utils import secure_filename
 
-# MySQL configuration + helpers (Aiven)
-#   get_cursor()  -> context manager yielding a DictCursor
-#   ping()        -> True if the DB is reachable
-#   get_db_connection() -> raw PyMySQL connection
-from config import get_cursor, ping, get_db_connection
+# Load the local config file for development. On Vercel, configuration comes
+# from the project's Environment Variables; existing process variables always
+# take precedence over values loaded from config.env.
+IS_VERCEL = os.getenv("VERCEL") == "1"
+CONFIG_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.env")
+if not IS_VERCEL:
+    load_dotenv(CONFIG_ENV_PATH, override=False)
+
+# MySQL configuration
+DB_HOST = os.getenv("DB_HOST", "").strip()
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_USER = os.getenv("DB_USER", "").strip()
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_NAME = os.getenv("DB_NAME", "").strip()
+DB_CA_CONTENT = os.getenv("DB_CA_CONTENT", "").strip()
+
+if DB_CA_CONTENT:
+    DB_SSL_CONTEXT = ssl.create_default_context(cadata=DB_CA_CONTENT)
+    SSL_MODE = "verified with configured CA"
+else:
+    DB_SSL_CONTEXT = ssl.create_default_context()
+    SSL_MODE = "verified with system CA certificates"
+
+DB_CONFIG = {
+    "host": DB_HOST,
+    "port": DB_PORT,
+    "user": DB_USER,
+    "password": DB_PASSWORD,
+    "database": DB_NAME,
+    "charset": "utf8mb4",
+    "cursorclass": DictCursor,
+    "autocommit": False,
+    "connect_timeout": 10,
+    "read_timeout": 30,
+    "write_timeout": 30,
+    "ssl": DB_SSL_CONTEXT,
+}
+
+# SMTP configuration
+EMAIL_HOST = os.getenv("TAPIN_EMAIL_HOST", "smtp-relay.brevo.com").strip()
+EMAIL_PORT = int(os.getenv("TAPIN_EMAIL_PORT", "587"))
+EMAIL_USER = os.getenv("TAPIN_EMAIL_USER", "").strip()
+EMAIL_PASSWORD = os.getenv("TAPIN_EMAIL_PASSWORD", "")
+EMAIL_FROM = os.getenv("TAPIN_EMAIL_FROM", "noreply.tapin@gmail.com").strip()
+
+
+def get_db_connection():
+    """Return a fresh PyMySQL connection. Caller must close it."""
+    return pymysql.connect(**DB_CONFIG)
+
+
+@contextmanager
+def get_cursor(commit=False):
+    """Yield a DictCursor and always close its cursor and connection."""
+    conn = get_db_connection()
+    cur = None
+    try:
+        cur = conn.cursor()
+        yield cur
+        if commit:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        try:
+            if cur is not None:
+                cur.close()
+        except Exception:
+            pass
+        conn.close()
+
+
+def ping():
+    """Return True if the database is reachable."""
+    try:
+        with get_cursor() as cur:
+            cur.execute("SELECT 1 AS ok, VERSION() AS version, DATABASE() AS db")
+            row = cur.fetchone()
+            print(f"[app] DB OK — MySQL {row['version']} on '{row['db']}'")
+            return True
+    except Exception as e:
+        print(f"[app] DB ping FAILED: {e}")
+        return False
+
+
+def get_db_info():
+    """Return non-secret connection information for logging."""
+    return {
+        "host": DB_HOST,
+        "port": DB_PORT,
+        "user": DB_USER,
+        "database": DB_NAME,
+        "ca_configured": bool(DB_CA_CONTENT),
+        "ssl_mode": SSL_MODE,
+    }
 
 # Try to import PIL for image processing
 try:
@@ -1787,9 +1884,6 @@ def send_email(to_email, subject, body):
         return False
 
     try:
-        # Import email config
-        from config import EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, EMAIL_FROM
-
         # Check if email is configured
         if not EMAIL_USER or not EMAIL_PASSWORD:
             print("Warning: Email credentials not configured. Cannot send email.")

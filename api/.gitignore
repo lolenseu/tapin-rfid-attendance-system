@@ -3,10 +3,9 @@
 .env.*
 *.ini
 *.key
-config.py
-db_config.py
-credentials.py
 ca.pem
+config.env
+config.py
 
 # Python files
 __pycache__/

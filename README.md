@@ -197,11 +197,15 @@ Configure these environment variables in the API hosting environment to enable B
 
 Do not put SMTP keys in source code. After configuring variables on the host, restart/reload the API. The first recovery-code request sends the email and starts the 60-second resend cooldown.
 
-## PostgreSQL Database
+## MySQL Database
 
-TAP-IN uses **PostgreSQL** as its primary database system.
+The API continues to use JSON files under `storage/` as its working storage. Application requests read and write those files; they do not write JSON documents to MySQL. At the scheduled midnight sync, the API copies the JSON files into `tapin_storage_documents` and refreshes the relational MySQL tables. The database account must be allowed to create tables and read/write data.
 
-The database stores information required by the attendance system, including employee information, RFID identifiers, attendance records, user accounts, and device-related information.
+On Vercel, configure `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and `DB_CA_CONTENT` as environment variables. Local development loads these settings from `api/config.env`.
+
+Vercel Cron triggers the sync daily at 00:00 UTC+08:00 (16:00 UTC). Set a strong `CRON_SECRET` environment variable so the scheduled endpoint can authenticate. The local scheduler runs the sync at local midnight. The sync endpoint is not exposed as a manual write route.
+
+**Vercel storage limitation:** Vercel Functions do not provide a durable, shared writable filesystem for `storage/`. Files created or changed by one function invocation may not be available to another invocation or to the Cron function, and writes to the deployed project directory may fail. Therefore the file-first workflow and its midnight copy are reliable only on a host with persistent shared disk; on Vercel, use a persistent/shared storage service if data must survive requests and be available to the midnight sync. Image and other binary uploads also require durable storage.
 
 The database-related files are located in:
 

@@ -2208,8 +2208,8 @@ async function loadFaceScanFeed(allowPageCorrection = true) {
         }
 
         if (result.logs.length === 0) {
-            body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">No face scans recorded yet.</td></tr>';
-            if (countDisplay) countDisplay.textContent = '';
+            body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">No face scans recorded today.</td></tr>';
+            if (countDisplay) countDisplay.textContent = 'Showing 0 - 0 of 0';
             if (paginationContainer) paginationContainer.innerHTML = '';
             return;
         }
