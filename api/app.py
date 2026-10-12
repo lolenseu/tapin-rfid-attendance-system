@@ -20,13 +20,30 @@ from dotenv import load_dotenv
 from pymysql.cursors import DictCursor
 from werkzeug.utils import secure_filename
 
-# Load the local config file for development. On Vercel, configuration comes
-# from the project's Environment Variables; existing process variables always
-# take precedence over values loaded from config.env.
+# Load config.env locally when available. Existing process variables take
+# precedence; if the file is unavailable, os.environ remains the fallback.
+# Vercel configuration comes directly from the project's Environment Variables.
 IS_VERCEL = os.getenv("VERCEL") == "1"
 CONFIG_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.env")
-if not IS_VERCEL:
-    load_dotenv(CONFIG_ENV_PATH, override=False)
+CONFIG_ENV_LOADED = False
+if IS_VERCEL:
+    print("[app] Using Vercel environment variables for configuration.")
+else:
+    try:
+        CONFIG_ENV_LOADED = load_dotenv(CONFIG_ENV_PATH, override=False)
+    except (OSError, UnicodeError, ValueError) as error:
+        print(
+            "[app] Could not load config.env; falling back to process "
+            f"environment variables ({type(error).__name__}: {error})."
+        )
+
+    if CONFIG_ENV_LOADED:
+        print("[app] Loaded local configuration from config.env.")
+    else:
+        print(
+            "[app] config.env is unavailable; using process environment "
+            "variables for configuration."
+        )
 
 # MySQL configuration
 DB_HOST = os.getenv("DB_HOST", "").strip()
