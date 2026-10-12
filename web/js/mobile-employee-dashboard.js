@@ -358,7 +358,7 @@ async function loadMyDTR() {
 
   const tbody = document.getElementById('myDtrTableBody');
   if (tbody) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">Loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-cell">Loading…</td></tr>`;
   }
 
   try {
@@ -376,7 +376,7 @@ async function loadMyDTR() {
 
     if (!tbody) return;
     if (!dtr.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="empty-cell">No records for this month.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-cell">No records for this month.</td></tr>`;
       return;
     }
 
@@ -384,8 +384,19 @@ async function loadMyDTR() {
       const isWeekend = day.day === 'Sat' || day.day === 'Sun';
       const isWorkStatus = day.status === 'on_work_status' || (day.work_status && day.work_status.is_active);
       let rowStyle = '';
+      let statusText = day.status || '';
       if (isWorkStatus) rowStyle = 'background:#FEF3C7;';
-      else if (isWeekend) rowStyle = 'background:#F3F4F6;color:#94A3B8;';
+      else if (isWeekend) {
+        rowStyle = 'background:#F3F4F6;color:#94A3B8;';
+        statusText = 'Weekend';
+      }
+      if (day.calendar_event) {
+        const eventType = (day.calendar_event.event_type || 'event').replace(/_/g, ' ').toUpperCase();
+        const eventDetails = day.calendar_event.details ? ` — ${day.calendar_event.details}` : '';
+        const eventLabel = `${eventType}: ${day.calendar_event.title || ''}${eventDetails}`;
+        statusText = statusText ? `${statusText} · ${eventLabel}` : eventLabel;
+        if (!isWorkStatus && !isWeekend) rowStyle = 'background:#EDE9FE;';
+      }
 
       return `<tr style="${rowStyle}">
         <td>${escapeHtml(day.date || '')}</td>
@@ -396,6 +407,7 @@ async function loadMyDTR() {
         <td>${escapeHtml(day.hours || '0.00')}</td>
         <td>${escapeHtml(day.ut || '0.00')}</td>
         <td>${escapeHtml(day.ot || '0.00')}</td>
+        <td>${escapeHtml(statusText)}</td>
       </tr>`;
     }).join('');
   } catch (err) {
@@ -1000,7 +1012,7 @@ async function loadEmployeeSettingsForMobile() {
       document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
       document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
       document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
-      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period ?? 10;
     }
 
     // Set notification preferences (default to true if not specified)
@@ -1038,7 +1050,7 @@ async function loadSystemSettingsForMobile() {
       document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
       document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
       document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
-      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period ?? 10;
     }
 
     // Set notification preferences (default to true if not specified)
@@ -1060,16 +1072,18 @@ async function loadSystemSettingsForMobile() {
   }
 }
 
-async function saveSettingsMobile() {
+async function saveSettingsMobile(event) {
+  event?.preventDefault();
   if (!currentUser || !currentUser.rfid) return;
 
+  const gracePeriod = Number(document.getElementById('gracePeriod').value);
   const settingsData = {
     attendance: {
       work_start: document.getElementById('workStartTime').value,
       work_end: document.getElementById('workEndTime').value,
       lunch_start: document.getElementById('lunchStartTime').value,
       lunch_end: document.getElementById('lunchEndTime').value,
-      grace_period: parseInt(document.getElementById('gracePeriod').value) || 10
+      grace_period: Number.isFinite(gracePeriod) ? gracePeriod : 10
     },
     notify_time_in: document.getElementById('notifyTimeIn').checked,
     notify_time_out: document.getElementById('notifyTimeOut').checked,
@@ -1080,20 +1094,16 @@ async function saveSettingsMobile() {
     const res = await fetch(`${apiBaseUrl}/api/settings/${currentUser.rfid}`, {
       method: 'PUT',
       headers: {
+        ...getAuthHeaders(),
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
       },
       credentials: 'include',
       body: JSON.stringify(settingsData)
     });
 
     if (res.status === 401) { redirectToLogin(); return; }
-    if (!res.ok) {
-      throw new Error(`Failed to save settings: ${res.status}`);
-    }
-
     const result = await res.json();
-    if (result.status !== 'success') {
+    if (!res.ok || result.status !== 'success') {
       throw new Error(result.message || 'Failed to save settings');
     }
 

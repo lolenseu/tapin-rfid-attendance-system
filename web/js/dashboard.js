@@ -2,6 +2,9 @@ const dashboardApiBaseUrl = (window.TAPIN_API_URL || '').replace(/\/+$/, '');
 
 // The logged-in admin's own user record, populated once the session is verified
 let currentAdminUser = null;
+let organizationCalendarMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let organizationCalendarEvents = new Map();
+let selectedCalendarDate = '';
 
 /* ============ WORK STATUS REQUEST STATE (declared up front) ============ */
 
@@ -23,6 +26,7 @@ let workStatusRequestSort = {
 
 // Work Status Request employee search dropdown state
 let workStatusRequestSelectedSuggestionIndex = -1;
+let workStatusRequestSuggestions = [];
 
 /* ============ END WORK STATUS REQUEST STATE ============ */
 
@@ -2013,6 +2017,9 @@ let attendanceData = [];
 let attendanceCurrentPage = 1;
 const ATTENDANCE_PER_PAGE = 20;
 let attendanceFilteredData = [];
+let faceScanCurrentPage = 1;
+const FACE_SCANS_PER_PAGE = 20;
+let faceScanTotalItems = 0;
 
 // Update attendance table with pagination
 function updateAttendanceTable(scans) {
@@ -2027,10 +2034,8 @@ function updateAttendanceTable(scans) {
 // Apply filters and render attendance table
 function applyAttendanceFilters() {
     const deptFilter = document.getElementById('attendanceFilterDept');
-    const statusFilter = document.getElementById('attendanceFilterStatus');
     
     const dept = deptFilter ? deptFilter.value : 'all';
-    const status = statusFilter ? statusFilter.value : 'all';
     
     // Filter data
     attendanceFilteredData = attendanceData.filter(scan => {
@@ -2043,22 +2048,7 @@ function applyAttendanceFilters() {
             matchesDept = empDept.toLowerCase() === dept.toLowerCase();
         }
         
-        // Status filter - only filter by present/absent/work_status
-        let matchesStatus = true;
-        if (status !== 'all') {
-            const isPresent = employee ? true : false;
-            const isOnWorkStatus = false; // We don't have work status in scan data
-            
-            if (status === 'present') {
-                matchesStatus = isPresent;
-            } else if (status === 'absent') {
-                matchesStatus = !isPresent;
-            } else if (status === 'work_status') {
-                matchesStatus = isOnWorkStatus;
-            }
-        }
-        
-        return matchesDept && matchesStatus;
+        return matchesDept;
     });
     
     // Reset to page 1 when filtering
@@ -2082,7 +2072,7 @@ function renderAttendanceTable() {
     const pageData = attendanceFilteredData.slice(startIndex, endIndex);
     
     if (pageData.length === 0) {
-        body.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text-muted);">
+        body.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text-muted);">
             <i class="fa-solid fa-info-circle" style="font-size:20px;display:block;margin-bottom:10px;"></i>
             No attendance records found.
         </td></tr>`;
@@ -2095,22 +2085,16 @@ function renderAttendanceTable() {
     body.innerHTML = pageData.map((scan) => {
         const employee = scan.employee;
         const name = employee ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim() : 'Unknown card';
-        const role = employee ? employee.role || 'Unregistered' : 'Unregistered';
         const department = employee ? employee.department || '--' : '--';
-        const position = employee ? employee.position || '--' : '--';
         const rfid = scan.rfid || '--';
         const scannedAt = scan.scanned_at || '--';
-        const isPresent = employee ? true : false;
         
         return `<tr>
             <td><strong>${escapeHtml(employee ? employee.employeeid || employee.uid || '--' : '--')}</strong></td>
             <td>${escapeHtml(name)}</td>
             <td>${escapeHtml(department)}</td>
-            <td>${escapeHtml(capitalizeFirstLetter(position))}</td>
             <td><code>${escapeHtml(rfid)}</code></td>
             <td>${escapeHtml(scannedAt)}</td>
-            <td>--</td>
-            <td><span class="badge ${isPresent ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${isPresent ? 'Present' : 'Unknown'}</span></td>
             <td>RFID device</td>
             <td>Live scan</td>
         </tr>`;
@@ -2186,6 +2170,129 @@ function renderAttendanceTable() {
 }
 
 // Go to specific attendance page
+async function loadFaceScanFeed(allowPageCorrection = true) {
+    const body = document.getElementById('dashboardFaceScanBody');
+    const countDisplay = document.getElementById('faceScanCountDisplay');
+    const paginationContainer = document.getElementById('faceScanPagination');
+    if (!body) return;
+
+    try {
+        const offset = (faceScanCurrentPage - 1) * FACE_SCANS_PER_PAGE;
+        const response = await fetch(
+            `${dashboardApiBaseUrl}/api/faces/scan-log?limit=${FACE_SCANS_PER_PAGE}&offset=${offset}`,
+            {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+            }
+        );
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        const result = await response.json();
+        if (!response.ok || result.status !== 'success' || !Array.isArray(result.logs) || !Number.isInteger(result.count)) {
+            throw new Error(result.message || 'Failed to load face scan records');
+        }
+
+        const totalItems = result.count;
+        faceScanTotalItems = totalItems;
+        const totalPages = Math.ceil(totalItems / FACE_SCANS_PER_PAGE);
+        if (totalPages === 0 && faceScanCurrentPage !== 1) {
+            faceScanCurrentPage = 1;
+            if (allowPageCorrection) return loadFaceScanFeed(false);
+        } else if (totalPages > 0 && faceScanCurrentPage > totalPages) {
+            faceScanCurrentPage = totalPages;
+            if (allowPageCorrection) return loadFaceScanFeed(false);
+        }
+
+        if (result.logs.length === 0) {
+            body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--text-muted);">No face scans recorded yet.</td></tr>';
+            if (countDisplay) countDisplay.textContent = '';
+            if (paginationContainer) paginationContainer.innerHTML = '';
+            return;
+        }
+
+        body.innerHTML = result.logs.map((scan) => {
+            const employee = scan.employee || {};
+            const name = `${employee.firstname || ''} ${employee.lastname || ''}`.trim() || 'Unknown employee';
+            const employeeId = employee.employeeid || employee.uid || '';
+            const timestamp = scan.timestamp
+                ? new Date(scan.timestamp).toLocaleString()
+                : '--';
+            const confidence = Number(scan.confidence);
+            const confidenceText = Number.isFinite(confidence) ? `${confidence.toFixed(1)}%` : '--';
+            return `
+                <tr>
+                    <td>
+                        <strong>${escapeHtml(name)}</strong>
+                        ${employeeId ? `<small class="text-muted" style="display:block;">${escapeHtml(employeeId)}</small>` : ''}
+                    </td>
+                    <td><code>${escapeHtml(scan.rfid || '--')}</code></td>
+                    <td>${escapeHtml(confidenceText)}</td>
+                    <td>${escapeHtml(timestamp)}</td>
+                </tr>
+            `;
+        }).join('');
+        const startIndex = offset + 1;
+        const endIndex = Math.min(offset + result.logs.length, totalItems);
+        if (countDisplay) {
+            countDisplay.textContent = `Showing ${startIndex} - ${endIndex} of ${totalItems}`;
+        }
+        if (paginationContainer) {
+            if (totalPages > 1) {
+                let paginationHTML = '<div class="pagination-controls" style="display:flex;gap:6px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:8px;">';
+                paginationHTML += `
+                    <button class="btn btn-outline btn-sm pagination-btn" onclick="goToFaceScanPage(${faceScanCurrentPage - 1})"
+                        ${faceScanCurrentPage <= 1 ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>Prev</button>
+                `;
+                const maxVisiblePages = 5;
+                let startPage = Math.max(1, faceScanCurrentPage - Math.floor(maxVisiblePages / 2));
+                let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+                if (endPage - startPage < maxVisiblePages - 1) {
+                    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+                }
+                if (startPage > 1) {
+                    paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToFaceScanPage(1)">1</button>`;
+                    if (startPage > 2) paginationHTML += '<span style="color:var(--text-muted);padding:0 4px;">…</span>';
+                }
+                for (let page = startPage; page <= endPage; page += 1) {
+                    const isActive = page === faceScanCurrentPage;
+                    paginationHTML += `
+                        <button class="btn ${isActive ? 'btn-primary' : 'btn-outline'} btn-sm pagination-btn"
+                            onclick="goToFaceScanPage(${page})" ${isActive ? 'style="font-weight:700;"' : ''}>${page}</button>
+                    `;
+                }
+                if (endPage < totalPages) {
+                    if (endPage < totalPages - 1) paginationHTML += '<span style="color:var(--text-muted);padding:0 4px;">…</span>';
+                    paginationHTML += `<button class="btn btn-outline btn-sm pagination-btn" onclick="goToFaceScanPage(${totalPages})">${totalPages}</button>`;
+                }
+                paginationHTML += `
+                    <button class="btn btn-outline btn-sm pagination-btn" onclick="goToFaceScanPage(${faceScanCurrentPage + 1})"
+                        ${faceScanCurrentPage >= totalPages ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>Next</button>
+                `;
+                paginationHTML += '</div>';
+                paginationContainer.innerHTML = paginationHTML;
+            } else {
+                paginationContainer.innerHTML = '';
+            }
+        }
+    } catch (error) {
+        console.error('Load face scan feed error:', error);
+        body.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:24px;color:var(--danger);">Unable to load face scan records.</td></tr>';
+        if (countDisplay) countDisplay.textContent = '';
+        if (paginationContainer) paginationContainer.innerHTML = '';
+    }
+}
+
+function goToFaceScanPage(page) {
+    const totalPages = Math.ceil(faceScanTotalItems / FACE_SCANS_PER_PAGE);
+    if (page < 1 || page > totalPages) return;
+    faceScanCurrentPage = page;
+    loadFaceScanFeed();
+}
+
 function goToAttendancePage(page) {
     const totalPages = Math.ceil(attendanceFilteredData.length / ATTENDANCE_PER_PAGE);
     if (page < 1 || page > totalPages) return;
@@ -2489,6 +2596,252 @@ function applyDailyStatsToCards(dailyStats) {
 // ============ END DAILY STATS FETCHER ============
 
 // ============ DTR FUNCTIONS ============
+
+function formatCalendarDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
+
+function showCalendarMessage(message, type = 'info', targetId = 'calendarMessage') {
+    const element = document.getElementById(targetId);
+    if (!element) return;
+    element.textContent = message;
+    element.className = `calendar-message calendar-message-${type}`;
+    element.style.display = 'block';
+}
+
+async function loadOrganizationCalendar() {
+    const year = organizationCalendarMonth.getFullYear();
+    const month = String(organizationCalendarMonth.getMonth() + 1).padStart(2, '0');
+    const monthKey = `${year}-${month}`;
+    const monthLabel = document.getElementById('calendarMonthLabel');
+    if (monthLabel) {
+        monthLabel.textContent = organizationCalendarMonth.toLocaleDateString(undefined, {
+            month: 'long',
+            year: 'numeric'
+        });
+    }
+
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/calendar-events?month=${monthKey}`, {
+            method: 'GET',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            cache: 'no-store'
+        });
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        const result = await response.json();
+        if (!response.ok || result.status !== 'success' || !Array.isArray(result.data)) {
+            throw new Error(result.message || 'Failed to load calendar events');
+        }
+
+        organizationCalendarEvents = new Map(result.data.map((item) => [item.date, item]));
+        renderOrganizationCalendar();
+        const message = document.getElementById('calendarMessage');
+        if (message) message.style.display = 'none';
+    } catch (error) {
+        console.error('Load organization calendar error:', error);
+        showCalendarMessage(error.message || 'Failed to load calendar events.', 'error');
+        const calendar = document.getElementById('organizationCalendar');
+        if (calendar) calendar.replaceChildren();
+    }
+}
+
+function renderOrganizationCalendar() {
+    const calendar = document.getElementById('organizationCalendar');
+    if (!calendar) return;
+
+    const year = organizationCalendarMonth.getFullYear();
+    const month = organizationCalendarMonth.getMonth();
+    const firstWeekday = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const today = formatCalendarDate(new Date());
+    const cells = [];
+
+    for (let blank = 0; blank < firstWeekday; blank += 1) {
+        cells.push('<span class="calendar-day calendar-day-empty" aria-hidden="true"></span>');
+    }
+
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = formatCalendarDate(new Date(year, month, day));
+        const item = organizationCalendarEvents.get(date);
+        const typeLabel = item?.event_type === 'school_event'
+            ? 'School Event'
+            : item?.event_type === 'holiday' ? 'Holiday' : item ? 'Other' : '';
+        cells.push(`
+            <button type="button" class="calendar-day${date === today ? ' calendar-day-today' : ''}${item ? ' calendar-day-has-event' : ''}"
+                onclick="openCalendarEventModal('${date}')"
+                aria-label="${escapeHtml(date)}${item ? `: ${escapeHtml(typeLabel)} - ${escapeHtml(item.title)}` : ': Add calendar note'}">
+                <span class="calendar-day-number">${day}</span>
+                ${item ? `<span class="calendar-day-event">${escapeHtml(typeLabel)}: ${escapeHtml(item.title)}</span>` : '<span class="calendar-day-add">+ Add note</span>'}
+            </button>
+        `);
+    }
+    calendar.innerHTML = cells.join('');
+}
+
+function openCalendarEventModal(date) {
+    selectedCalendarDate = date;
+    const item = organizationCalendarEvents.get(date);
+    if (item) {
+        openCalendarEventViewModal(date, item);
+        return;
+    }
+
+    const modal = document.getElementById('calendarEventModal');
+    document.getElementById('calendarEventModalTitle').textContent = 'Add Calendar Note';
+    document.getElementById('calendarEventDateLabel').textContent =
+        new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { dateStyle: 'full' });
+    document.getElementById('calendarEventType').value = 'holiday';
+    document.getElementById('calendarEventTitle').value = '';
+    document.getElementById('calendarEventDetails').value = '';
+    document.getElementById('deleteCalendarEventButton').style.display = 'none';
+    const message = document.getElementById('calendarEventMessage');
+    message.style.display = 'none';
+    modal.classList.remove('hidden');
+    document.getElementById('calendarEventTitle').focus();
+}
+
+function openCalendarEventViewModal(date, item) {
+    selectedCalendarDate = date;
+    const typeLabels = {
+        holiday: 'Holiday',
+        school_event: 'School Event',
+        other: 'Other'
+    };
+    document.getElementById('calendarEventViewDate').textContent =
+        new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { dateStyle: 'full' });
+    document.getElementById('calendarEventViewType').textContent =
+        typeLabels[item.event_type] || 'Calendar Event';
+    document.getElementById('calendarEventViewEventTitle').textContent = item.title || '';
+    const details = document.getElementById('calendarEventViewDetails');
+    details.textContent = item.details || 'No additional details.';
+    details.style.display = item.details ? 'block' : 'none';
+    document.getElementById('calendarEventViewModal').classList.remove('hidden');
+}
+
+function closeCalendarEventViewModal() {
+    document.getElementById('calendarEventViewModal')?.classList.add('hidden');
+}
+
+function editCalendarEvent() {
+    const date = selectedCalendarDate;
+    const item = organizationCalendarEvents.get(date);
+    if (!item) {
+        closeCalendarEventViewModal();
+        return;
+    }
+
+    closeCalendarEventViewModal();
+    document.getElementById('calendarEventModalTitle').textContent = 'Edit Calendar Note';
+    document.getElementById('calendarEventDateLabel').textContent =
+        new Date(`${date}T00:00:00`).toLocaleDateString(undefined, { dateStyle: 'full' });
+    document.getElementById('calendarEventType').value = item.event_type || 'holiday';
+    document.getElementById('calendarEventTitle').value = item.title || '';
+    document.getElementById('calendarEventDetails').value = item.details || '';
+    document.getElementById('deleteCalendarEventButton').style.display = 'inline-flex';
+    document.getElementById('calendarEventMessage').style.display = 'none';
+    document.getElementById('calendarEventModal').classList.remove('hidden');
+    document.getElementById('calendarEventTitle').focus();
+}
+
+function closeCalendarEventModal() {
+    document.getElementById('calendarEventModal')?.classList.add('hidden');
+}
+
+async function saveCalendarEvent(event) {
+    event.preventDefault();
+    if (!selectedCalendarDate) return;
+
+    const button = document.getElementById('saveCalendarEventButton');
+    button.disabled = true;
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/calendar-events`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({
+                date: selectedCalendarDate,
+                event_type: document.getElementById('calendarEventType').value,
+                title: document.getElementById('calendarEventTitle').value.trim(),
+                details: document.getElementById('calendarEventDetails').value.trim()
+            })
+        });
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        const result = await response.json();
+        if (!response.ok || result.status !== 'success') {
+            throw new Error(result.message || 'Failed to save calendar note');
+        }
+        closeCalendarEventModal();
+        await loadOrganizationCalendar();
+        showCalendarMessage('Calendar note saved and added to employee DTRs.', 'success');
+    } catch (error) {
+        console.error('Save calendar event error:', error);
+        showCalendarMessage(error.message || 'Failed to save calendar note.', 'error', 'calendarEventMessage');
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function deleteCalendarEvent(buttonId = 'deleteCalendarEventButton') {
+    if (!selectedCalendarDate) return;
+    const button = document.getElementById(buttonId);
+    if (!window.confirm('Remove this calendar note? It will also be removed from employee DTRs.')) return;
+    button.disabled = true;
+    try {
+        const response = await fetch(`${dashboardApiBaseUrl}/api/calendar-events/${encodeURIComponent(selectedCalendarDate)}`, {
+            method: 'DELETE',
+            headers: getAuthHeaders(),
+            credentials: 'include'
+        });
+        if (response.status === 401) {
+            redirectToLogin();
+            return;
+        }
+        const result = await response.json();
+        if (!response.ok || result.status !== 'success') {
+            throw new Error(result.message || 'Failed to delete calendar note');
+        }
+        closeCalendarEventModal();
+        closeCalendarEventViewModal();
+        await loadOrganizationCalendar();
+        showCalendarMessage('Calendar note removed from employee DTRs.', 'success');
+    } catch (error) {
+        console.error('Delete calendar event error:', error);
+        const messageTarget = document.getElementById('calendarEventViewModal').classList.contains('hidden')
+            ? 'calendarEventMessage'
+            : 'calendarMessage';
+        showCalendarMessage(error.message || 'Failed to delete calendar note.', 'error', messageTarget);
+    } finally {
+        if (button) button.disabled = false;
+    }
+}
+
+document.getElementById('calendarPreviousMonth')?.addEventListener('click', () => {
+    organizationCalendarMonth = new Date(
+        organizationCalendarMonth.getFullYear(),
+        organizationCalendarMonth.getMonth() - 1,
+        1
+    );
+    loadOrganizationCalendar();
+});
+
+document.getElementById('calendarNextMonth')?.addEventListener('click', () => {
+    organizationCalendarMonth = new Date(
+        organizationCalendarMonth.getFullYear(),
+        organizationCalendarMonth.getMonth() + 1,
+        1
+    );
+    loadOrganizationCalendar();
+});
 
 // Employees available for the DTR search box (populated below)
 let dtrEmployeesList = [];
@@ -2939,6 +3292,13 @@ async function loadDTRRecord() {
                 } else if (isWeekend) {
                     rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
                     statusText = 'Weekend';
+                }
+                if (day.calendar_event) {
+                    const eventType = (day.calendar_event.event_type || 'event').replace(/_/g, ' ').toUpperCase();
+                    const eventDetails = day.calendar_event.details ? ` — ${day.calendar_event.details}` : '';
+                    const eventLabel = `${eventType}: ${day.calendar_event.title || ''}${eventDetails}`;
+                    statusText = statusText ? `${statusText} · ${eventLabel}` : eventLabel;
+                    if (!isWorkStatus && !hasWorkStatus && !isWeekend) rowStyle = 'background-color:#EDE9FE;';
                 }
                 
                 return `<tr style="${rowStyle}">
@@ -4601,7 +4961,144 @@ function clearWorkStatusRequestFilters() {
     workStatusRequestFilters = {
         employeeSearch: ''
     };
+    workStatusRequestsCurrentPage = 1;
     filterWorkStatusRequests();
+    renderWorkStatusRequestTable();
+}
+
+function applyWorkStatusRequestFilters(event) {
+    event.preventDefault();
+    const dropdown = document.getElementById('workStatusEmployeeDropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    const searchInput = document.getElementById('workStatusEmployeeSearch');
+    workStatusRequestFilters.employeeSearch = searchInput ? searchInput.value.trim() : '';
+    workStatusRequestsCurrentPage = 1;
+    filterWorkStatusRequests();
+    renderWorkStatusRequestTable();
+}
+
+function searchWorkStatusRequestEmployees() {
+    const input = document.getElementById('workStatusEmployeeSearch');
+    const dropdown = document.getElementById('workStatusEmployeeDropdown');
+    if (!input || !dropdown) return;
+
+    const term = input.value.trim().toLowerCase();
+    workStatusRequestSelectedSuggestionIndex = -1;
+    const uniqueEmployees = Array.from(new Map(
+        workStatusRequests.map((request) => {
+            const employee = {
+                fullname: request.fullname || '',
+                employeeid: request.employeeid || request.uid || ''
+            };
+            return [`${employee.employeeid}|${employee.fullname}`, employee];
+        })
+    ).values());
+    workStatusRequestSuggestions = uniqueEmployees.filter((employee) =>
+        !term ||
+        employee.fullname.toLowerCase().includes(term) ||
+        employee.employeeid.toLowerCase().includes(term)
+    ).slice(0, 8);
+
+    dropdown.innerHTML = workStatusRequestSuggestions.length
+        ? workStatusRequestSuggestions.map((employee, index) => `
+            <div class="dtr-suggestion" role="option"
+                onclick="selectWorkStatusRequestEmployee(${index})">
+                <div class="dtr-suggestion-avatar">${escapeHtml(initialsFromFullname(employee.fullname))}</div>
+                <div class="dtr-suggestion-body">
+                    <div class="dtr-suggestion-name">${highlightMatchText(employee.fullname, term)}</div>
+                    <div class="dtr-suggestion-meta">${highlightMatchText(employee.employeeid || 'N/A', term)}</div>
+                </div>
+            </div>
+        `).join('')
+        : '<div class="dtr-suggestion-empty">No employees found in work status requests</div>';
+    dropdown.style.display = 'block';
+}
+
+function selectWorkStatusRequestEmployee(index) {
+    const employee = workStatusRequestSuggestions[index];
+    if (!employee) return;
+    const input = document.getElementById('workStatusEmployeeSearch');
+    const dropdown = document.getElementById('workStatusEmployeeDropdown');
+    if (input) input.value = employee.fullname;
+    if (dropdown) dropdown.style.display = 'none';
+    workStatusRequestFilters.employeeSearch = employee.fullname;
+    workStatusRequestsCurrentPage = 1;
+    filterWorkStatusRequests();
+    renderWorkStatusRequestTable();
+}
+
+function handleWorkStatusRequestSearchKeydown(event) {
+    const dropdown = document.getElementById('workStatusEmployeeDropdown');
+    if (!dropdown || dropdown.style.display === 'none') return;
+    const items = dropdown.querySelectorAll('.dtr-suggestion');
+    if (!items.length) return;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        workStatusRequestSelectedSuggestionIndex = Math.min(workStatusRequestSelectedSuggestionIndex + 1, items.length - 1);
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        workStatusRequestSelectedSuggestionIndex = Math.max(workStatusRequestSelectedSuggestionIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+        event.preventDefault();
+        const target = workStatusRequestSelectedSuggestionIndex >= 0
+            ? items[workStatusRequestSelectedSuggestionIndex]
+            : items[0];
+        target.click();
+        return;
+    } else if (event.key === 'Escape') {
+        dropdown.style.display = 'none';
+        return;
+    } else {
+        return;
+    }
+
+    items.forEach((item) => item.classList.remove('active'));
+    items[workStatusRequestSelectedSuggestionIndex].classList.add('active');
+    items[workStatusRequestSelectedSuggestionIndex].scrollIntoView({ block: 'nearest' });
+}
+
+document.addEventListener('click', (event) => {
+    const input = document.getElementById('workStatusEmployeeSearch');
+    const dropdown = document.getElementById('workStatusEmployeeDropdown');
+    if (dropdown && input && !input.contains(event.target) && !dropdown.contains(event.target)) {
+        dropdown.style.display = 'none';
+    }
+});
+
+function renderWorkStatusRequestFilterArea() {
+    return `
+        <div id="workStatusRequestFilterArea">
+            <div class="card mb-6">
+                <div class="card-header">
+                    <div class="card-title"><i class="fa-solid fa-filter"></i> Filter Work Status Requests</div>
+                </div>
+                <div class="card-body">
+                    <form onsubmit="applyWorkStatusRequestFilters(event)">
+                        <div class="work-status-filter-controls">
+                            <div class="form-group work-status-filter-search" style="margin:0;">
+                                <label for="workStatusEmployeeSearch">Search employee</label>
+                                <input class="form-control" id="workStatusEmployeeSearch" type="search"
+                                    placeholder="Name or employee ID"
+                                    autocomplete="off"
+                                    oninput="searchWorkStatusRequestEmployees()"
+                                    onfocus="searchWorkStatusRequestEmployees()"
+                                    onkeydown="handleWorkStatusRequestSearchKeydown(event)"
+                                    value="${escapeHtml(workStatusRequestFilters.employeeSearch)}">
+                                <div class="dtr-search-dropdown" id="workStatusEmployeeDropdown" role="listbox" style="display:none;"></div>
+                            </div>
+                            <div class="work-status-filter-actions">
+                                <button type="submit" class="btn btn-primary"><i class="fa-solid fa-search"></i> Apply</button>
+                                <button type="button" class="btn btn-outline" onclick="clearWorkStatusRequestFilters()">
+                                    <i class="fa-solid fa-undo"></i> Clear
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    `;
 }
 
 // Toggle work status request filter visibility
@@ -4677,6 +5174,7 @@ function renderWorkStatusRequestTable() {
 
     if (totalItems === 0) {
         tableSection.innerHTML = `
+            ${renderWorkStatusRequestFilterArea()}
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><i class="fa-solid fa-briefcase"></i> Work Status Requests</div>
@@ -4749,6 +5247,7 @@ function renderWorkStatusRequestTable() {
     }
 
     tableSection.innerHTML = `
+        ${renderWorkStatusRequestFilterArea()}
         <div class="card">
             <div class="card-header">
                 <div class="card-title">
@@ -5666,7 +6165,9 @@ async function verifyDashboardSession() {
         const data = await response.json();
         currentAdminUser = data.user || null;
         updateUserDisplay(data.user);
+        await loadOrganizationCalendar();
         await loadDashboardData();
+        await loadFaceScanFeed();
         // Load DTR data after dashboard loads
         await loadDTREmployees();
         await loadDTRMonths();
@@ -5799,6 +6300,11 @@ const pageHeaderMap = {
         breadcrumb: 'IPO — Employees Personal Info',
         title: 'Employee Register',
         subtitle: 'Register new employees and manage user accounts.'
+    },
+    '#calendar': {
+        breadcrumb: 'Organization',
+        title: 'Calendar',
+        subtitle: 'Manage calendar notes shared with employees and shown in their DTRs.'
     },
     '#dtr': {
         breadcrumb: 'IPO — Employees Personal Info',
@@ -5995,6 +6501,7 @@ if (logoutConfirmYes) {
 window.addEventListener('pageshow', verifyDashboardSession);
 setInterval(updateClock, 1000);
 setInterval(loadDashboardData, 5000);
+setInterval(loadFaceScanFeed, 5000);
 setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds
 
 // Poll the lightweight daily-stats endpoint every 3 seconds so the

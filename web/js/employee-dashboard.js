@@ -698,6 +698,13 @@ async function loadMyDTR() {
         rowStyle = 'background-color:#F3F4F6;color:#9CA3AF;';
         statusText = 'Weekend';
       }
+      if (day.calendar_event) {
+        const eventType = (day.calendar_event.event_type || 'event').replace(/_/g, ' ').toUpperCase();
+        const eventDetails = day.calendar_event.details ? ` — ${day.calendar_event.details}` : '';
+        const eventLabel = `${eventType}: ${day.calendar_event.title || ''}${eventDetails}`;
+        statusText = statusText ? `${statusText} · ${eventLabel}` : eventLabel;
+        if (!isHoliday && !isWorkStatus && !isWeekend) rowStyle = 'background-color:#EDE9FE;';
+      }
 
       return `<tr style="${rowStyle}">
         <td>${escapeHtml(formatDTRDate(day.date))}</td>
@@ -1585,7 +1592,7 @@ async function loadEmployeeSettingsForModal() {
       document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
       document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
       document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
-      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period ?? 10;
     }
 
     // Set notification preferences (default to true if not specified)
@@ -1623,7 +1630,7 @@ async function loadSystemSettingsForModal() {
       document.getElementById('workEndTime').value = settings.attendance.work_end || '17:00';
       document.getElementById('lunchStartTime').value = settings.attendance.lunch_start || '12:00';
       document.getElementById('lunchEndTime').value = settings.attendance.lunch_end || '13:00';
-      document.getElementById('gracePeriod').value = settings.attendance.grace_period || 10;
+      document.getElementById('gracePeriod').value = settings.attendance.grace_period ?? 10;
     }
 
     // Set notification preferences (default to true if not specified)
@@ -1645,16 +1652,18 @@ async function loadSystemSettingsForModal() {
   }
 }
 
-async function saveSettings() {
+async function saveSettings(event) {
+  event?.preventDefault();
   if (!currentUser || !currentUser.rfid) return;
 
+  const gracePeriod = Number(document.getElementById('gracePeriod').value);
   const settingsData = {
     attendance: {
       work_start: document.getElementById('workStartTime').value,
       work_end: document.getElementById('workEndTime').value,
       lunch_start: document.getElementById('lunchStartTime').value,
       lunch_end: document.getElementById('lunchEndTime').value,
-      grace_period: parseInt(document.getElementById('gracePeriod').value) || 10
+      grace_period: Number.isFinite(gracePeriod) ? gracePeriod : 10
     },
     notify_time_in: document.getElementById('notifyTimeIn').checked,
     notify_time_out: document.getElementById('notifyTimeOut').checked,
@@ -1665,20 +1674,16 @@ async function saveSettings() {
     const res = await fetch(`${dashboardApiBaseUrl}/api/settings/${currentUser.rfid}`, {
       method: 'PUT',
       headers: {
+        ...getAuthHeaders(),
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('tapinToken')}`
       },
       credentials: 'include',
       body: JSON.stringify(settingsData)
     });
 
     if (res.status === 401) { redirectToLogin(); return; }
-    if (!res.ok) {
-      throw new Error(`Failed to save settings: ${res.status}`);
-    }
-
     const result = await res.json();
-    if (result.status !== 'success') {
+    if (!res.ok || result.status !== 'success') {
       throw new Error(result.message || 'Failed to save settings');
     }
 
@@ -2142,50 +2147,6 @@ function buildMyDtrHTML(record, dtr, employee) {
         </body>
         </html>
     `;
-}
-
-async function fetchMyDtrData() {
-  const monthSelect = document.getElementById('myDtrMonthSelect');
-  const month = monthSelect ? monthSelect.value : '';
-  if (!month) { showMyDtrMessage('Please select a month.', 'warning'); return null; }
-
-  const res = await fetch(`${dashboardApiBaseUrl}/api/dtr/record/${currentUser.rfid}?month=${month}`, {
-    method: 'GET', headers: getAuthHeaders(), credentials: 'include', cache: 'no-store'
-  });
-  if (res.status === 401) { redirectToLogin(); return null; }
-  if (!res.ok) { showMyDtrMessage('Failed to load DTR.', 'error'); return null; }
-  const result = await res.json();
-  if (result.status !== 'success' || !result.data) { showMyDtrMessage('No DTR data.', 'error'); return null; }
-  return result.data;
-}
-
-async function printMyDTR() {
-  const data = await fetchMyDtrData();
-  if (!data) return;
-  const record = data.record;
-  const dtr = record.dtr || [];
-  const employee = resolveMyEmployeeInfo(currentUser, record.employee);
-  const html = buildMyDtrHTML(record, dtr, employee);
-  const w = window.open('', '_blank', 'width=1100,height=800');
-  if (!w) { showMyDtrMessage('Allow popups to print.', 'warning'); return; }
-  w.document.write(html);
-  w.document.close();
-  w.onload = () => setTimeout(() => w.print(), 400);
-}
-
-async function generateMyDTRPDF() {
-  const data = await fetchMyDtrData();
-  if (!data) return;
-  const record = data.record;
-  const dtr = record.dtr || [];
-  const employee = resolveMyEmployeeInfo(currentUser, record.employee);
-  const html = buildMyDtrHTML(record, dtr, employee);
-  const w = window.open('', '_blank', 'width=1100,height=800');
-  if (!w) { showMyDtrMessage('Allow popups to export PDF.', 'warning'); return; }
-  w.document.write(html);
-  w.document.close();
-  w.onload = () => setTimeout(() => w.print(), 400);
-  showMyDtrMessage('Use "Save as PDF" from the print dialog.', 'info');
 }
 
 /* ---------------- LOGOUT ---------------- */

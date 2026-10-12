@@ -17,10 +17,58 @@
     <div class="forgot-password-modal-overlay" id="forgotPasswordModal" aria-hidden="true">
       <div class="forgot-password-modal" role="dialog" aria-modal="true" aria-labelledby="forgotPasswordTitle">
         <button type="button" class="forgot-password-close" id="closeForgotPasswordModal" aria-label="Close forgot password dialog">×</button>
-        <div class="forgot-password-icon"><i class="fa-solid fa-headset"></i></div>
-        <h2 id="forgotPasswordTitle">Password Reset</h2>
-        <p>Please contact the system administrator to reset your password.</p>
-        <button type="button" class="btn-primary forgot-password-btn" id="forgotPasswordOk">OK</button>
+
+        <!-- Step 1: Enter Email -->
+        <div id="forgotPasswordStep1" class="forgot-password-step active">
+          <div class="forgot-password-icon"><i class="fa-solid fa-envelope"></i></div>
+          <h2 id="forgotPasswordTitle">Password Reset</h2>
+          <p>Enter your email address to reset your password</p>
+          <form id="forgotPasswordEmailForm">
+            <div class="field">
+              <input type="email" name="email" id="forgotPasswordEmail" placeholder="Enter your email address" required>
+            </div>
+            <button type="submit" class="btn-primary" id="forgotPasswordEmailSubmit">Send Code</button>
+            <p class="form-message" id="forgotPasswordEmailMessage" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <!-- Step 2: Enter Code -->
+        <div id="forgotPasswordStep2" class="forgot-password-step" style="display: none;">
+          <div class="forgot-password-icon"><i class="fa-solid fa-key"></i></div>
+          <h2 id="forgotPasswordTitle">Verify Code</h2>
+          <p>If your email is registered, we've sent a 6-digit code. Enter it below to verify your identity.</p>
+          <form id="forgotPasswordCodeForm">
+            <div class="code-inputs-wrapper">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 1">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 2">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 3">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 4">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 5">
+              <input type="text" maxlength="1" class="code-input" inputmode="numeric" pattern="[0-9]" aria-label="Digit 6">
+            </div>
+            <input type="hidden" name="code" id="forgotPasswordCode">
+            <button type="submit" class="btn-primary" id="forgotPasswordCodeSubmit">Verify Code</button>
+            <button type="button" class="btn-link" id="forgotPasswordResendCode">Resend code (<span id="resendTimer">60</span>s)</button>
+            <p class="form-message" id="forgotPasswordCodeMessage" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+
+        <!-- Step 3: Enter New Password -->
+        <div id="forgotPasswordStep3" class="forgot-password-step" style="display: none;">
+          <div class="forgot-password-icon"><i class="fa-solid fa-lock"></i></div>
+          <h2 id="forgotPasswordTitle">Set New Password</h2>
+          <p>Enter your new password (minimum 8 characters)</p>
+          <form id="forgotPasswordResetForm">
+            <div class="field">
+              <input type="password" name="newPassword" id="forgotPasswordNewPassword" placeholder="Enter new password" required>
+            </div>
+            <div class="field">
+              <input type="password" name="confirmPassword" id="forgotPasswordConfirmPassword" placeholder="Confirm new password" required>
+            </div>
+            <button type="submit" class="btn-primary" id="forgotPasswordResetSubmit">Reset Password</button>
+            <p class="form-message" id="forgotPasswordResetMessage" role="status" aria-live="polite"></p>
+          </form>
+        </div>
       </div>
     </div>
 
@@ -41,8 +89,8 @@
       <form id="loginForm" novalidate>
 
         <label class="field">
-          <span class="field-label">Username</span>
-          <input type="text" name="username" id="username" placeholder="Enter your username" autocomplete="username" required>
+          <span class="field-label">Username or Email</span>
+          <input type="text" name="username" id="username" placeholder="Enter your username or email" autocomplete="username email" required>
         </label>
 
         <label class="field">

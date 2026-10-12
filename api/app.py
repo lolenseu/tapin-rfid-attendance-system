@@ -48,6 +48,16 @@ try:
     REQUESTS_AVAILABLE = True
 except ImportError:
     REQUESTS_AVAILABLE = False
+
+# Email imports for password recovery
+try:
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    EMAIL_AVAILABLE = True
+except ImportError:
+    EMAIL_AVAILABLE = False
+    print("Warning: Email dependencies not installed. Password recovery via email will be disabled.")
     print("Warning: requests not installed. Version checking will be disabled.")
 
 # Try to import threading + time for the nightly wipe scheduler.
@@ -205,6 +215,7 @@ ATTENDANCE_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "attendance
 # Structure: {"requests": [...], "approved": [...], "rejected": [...]}
 # This is the NEW work-status.json — it lives alongside users.json and is NEVER wiped.
 WORK_STATUS_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "work-status.json")
+CALENDAR_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "database", "calendar-events.json")
 
 # ============================================================================
 # DAILY STATS LOG FILES - PERSISTENT DAILY COUNTERS
@@ -1472,19 +1483,40 @@ settings = load_settings()
 # Compute the required daily work hours from the current settings.
 # This is what UT / OT are measured against — it replaces the old
 # hardcoded "8 hours" so the Settings page actually affects the DTR.
-def get_required_hours():
-    """Compute required daily hours from settings (work_end − work_start − lunch).
-
-    Reads settings["attendance"] for work_start, work_end, lunch_start, and
-    lunch_end. Returns the required hours as a float. Falls back to 8.0 if
-    anything is missing or malformed so attendance recording never breaks.
-    """
+def get_required_hours(employee=None):
+    """Compute required daily hours using employee overrides and system defaults."""
     try:
-        att = settings.get("attendance", {})
-        ws = datetime.strptime(att.get("work_start", "08:00"), "%H:%M")
-        we = datetime.strptime(att.get("work_end", "17:00"), "%H:%M")
-        ls = datetime.strptime(att.get("lunch_start", "12:00"), "%H:%M")
-        le = datetime.strptime(att.get("lunch_end", "13:00"), "%H:%M")
+        system_attendance = settings.get("attendance", {})
+        if not isinstance(system_attendance, dict):
+            system_attendance = {}
+
+        employee_settings = {}
+        rfid = employee.get("rfid") if isinstance(employee, dict) else None
+        if rfid:
+            employee_settings = load_employee_settings(rfid).get("settings", {})
+            if not isinstance(employee_settings, dict):
+                employee_settings = {}
+
+        def schedule_time(key, default):
+            value = employee_settings.get(
+                key,
+                employee_settings.get(
+                    f"attendance.{key}",
+                    system_attendance.get(key, default)
+                )
+            )
+            try:
+                return datetime.strptime(str(value).strip(), "%H:%M")
+            except (TypeError, ValueError):
+                return datetime.strptime(
+                    str(system_attendance.get(key, default)).strip(),
+                    "%H:%M"
+                )
+
+        ws = schedule_time("work_start", "08:00")
+        we = schedule_time("work_end", "17:00")
+        ls = schedule_time("lunch_start", "12:00")
+        le = schedule_time("lunch_end", "13:00")
         work_span = (we - ws).total_seconds() / 3600
         lunch_span = (le - ls).total_seconds() / 3600
         required = work_span - lunch_span
@@ -1737,6 +1769,54 @@ def mark_notification_read(rfid, notification_id):
 
     save_notifications(safe_rfid, doc)
     return True
+
+
+def send_email(to_email, subject, body):
+    """Send an email using SMTP configuration.
+
+    Args:
+        to_email (str): Recipient email address
+        subject (str): Email subject
+        body (str): Email body (plain text)
+
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    if not EMAIL_AVAILABLE:
+        print("Warning: Email dependencies not available. Cannot send email.")
+        return False
+
+    try:
+        # Import email config
+        from config import EMAIL_HOST, EMAIL_PORT, EMAIL_USER, EMAIL_PASSWORD, EMAIL_FROM
+
+        # Check if email is configured
+        if not EMAIL_USER or not EMAIL_PASSWORD:
+            print("Warning: Email credentials not configured. Cannot send email.")
+            return False
+
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_FROM
+        msg['To'] = to_email
+        msg['Subject'] = subject
+
+        # Add body to email
+        msg.attach(MIMEText(body, 'plain'))
+
+        with smtplib.SMTP(EMAIL_HOST, EMAIL_PORT, timeout=20) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(EMAIL_USER, EMAIL_PASSWORD)
+            server.send_message(msg, from_addr=EMAIL_FROM, to_addrs=[to_email])
+
+        print("Password recovery email sent successfully")
+        return True
+
+    except Exception as e:
+        print(f"Failed to send email ({type(e).__name__}): {e}")
+        return False
 
 def mark_all_notifications_read(rfid):
     """Mark every notification for a given RFID as read."""
@@ -2853,9 +2933,9 @@ def record_attendance_scan(employee, scanned_at):
         day_data.get("pm_in") and day_data.get("pm_out")
     )
 
-    # Required daily hours now come from settings.json (work_start,
-    # work_end, lunch_start, lunch_end) instead of a hardcoded 8.
-    required_hours = get_required_hours()
+    # Required hours use this employee's schedule overrides, falling back
+    # to the system attendance schedule for any unset employee values.
+    required_hours = get_required_hours(employee)
 
     day_data["hours"] = f"{total_hours:.2f}"
 
@@ -3022,6 +3102,10 @@ def load_employee_database():
     return db
 
 employee_database = load_employee_database()
+
+# In-memory storage for password recovery codes
+# Format: {email: {"code": "123456", "expires": datetime, "attempts": int}}
+recovery_codes = {}
 
 # Delete devices that have stopped sending heartbeat pings.
 def remove_offline_devices():
@@ -4051,6 +4135,161 @@ def delete_single_notification(rfid, notification_id):
 
     return jsonify({"status": "success", "message": "Notification deleted"}), 200
 
+def load_calendar_events():
+    """Load persistent, organization-wide calendar events."""
+    if not os.path.exists(CALENDAR_EVENTS_FILE):
+        return []
+    with open(CALENDAR_EVENTS_FILE, "r", encoding="utf-8") as f:
+        events = json.load(f)
+    if not isinstance(events, list) or any(
+        not isinstance(event, dict) or not isinstance(event.get("date"), str)
+        for event in events
+    ):
+        raise ValueError("Calendar events file contains invalid data")
+    return events
+
+
+def save_calendar_events(events):
+    """Atomically persist organization-wide calendar events."""
+    os.makedirs(os.path.dirname(CALENDAR_EVENTS_FILE), exist_ok=True)
+    temp_path = CALENDAR_EVENTS_FILE + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
+        json.dump(events, f, indent=2)
+        f.write("\n")
+    os.replace(temp_path, CALENDAR_EVENTS_FILE)
+
+
+def get_calendar_request_user():
+    """Return the authenticated user or an API error response."""
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        user_data, error_response, status_code = verify_token()
+        if error_response:
+            return None, error_response, status_code
+        return user_data, None, None
+
+    user_data = session.get("user")
+    if not user_data:
+        return None, jsonify({
+            "status": "error",
+            "message": "Session expired or user is not logged in"
+        }), 401
+    return user_data, None, None
+
+
+def calendar_manager_required(user_data):
+    return isinstance(user_data, dict) and str(user_data.get("role", "")).lower() in ("admin", "hr")
+
+
+@app.route("/api/calendar-events", methods=["GET"])
+def get_calendar_events():
+    _, error_response, status_code = get_calendar_request_user()
+    if error_response:
+        return error_response, status_code
+
+    month = request.args.get("month", "")
+    if not re.fullmatch(r"\d{4}-\d{2}", month):
+        return jsonify({"status": "error", "message": "Month must use YYYY-MM format"}), 400
+    try:
+        datetime.strptime(month, "%Y-%m")
+    except ValueError:
+        return jsonify({"status": "error", "message": "Month must be a valid calendar month"}), 400
+    try:
+        events = [event for event in load_calendar_events() if event.get("date", "").startswith(month)]
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to load calendar events: {e}")
+        return jsonify({"status": "error", "message": "Failed to load calendar events"}), 500
+
+    return jsonify({"status": "success", "data": events}), 200
+
+
+@app.route("/api/calendar-events", methods=["POST"])
+def save_calendar_event():
+    user_data, error_response, status_code = get_calendar_request_user()
+    if error_response:
+        return error_response, status_code
+    if not calendar_manager_required(user_data):
+        return jsonify({"status": "error", "message": "Only admins or HR can manage calendar events"}), 403
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"status": "error", "message": "A calendar event is required"}), 400
+
+    event_date = str(data.get("date", "")).strip()
+    try:
+        parsed_date = datetime.strptime(event_date, "%Y-%m-%d")
+        if parsed_date.strftime("%Y-%m-%d") != event_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"status": "error", "message": "Date must use YYYY-MM-DD format"}), 400
+
+    event_type = str(data.get("event_type", "")).strip().lower()
+    if event_type not in ("holiday", "school_event", "other"):
+        return jsonify({"status": "error", "message": "Choose a valid event type"}), 400
+    title = str(data.get("title", "")).strip()
+    if not title or len(title) > 100:
+        return jsonify({"status": "error", "message": "Title must be between 1 and 100 characters"}), 400
+    details = str(data.get("details", "")).strip()
+    if len(details) > 500:
+        return jsonify({"status": "error", "message": "Details must be 500 characters or fewer"}), 400
+
+    try:
+        events = load_calendar_events()
+        event = {
+            "date": event_date,
+            "event_type": event_type,
+            "title": title,
+            "details": details,
+            "updated_at": datetime.now().isoformat()
+        }
+        existing_index = next(
+            (index for index, existing in enumerate(events) if existing.get("date") == event_date),
+            None
+        )
+        if existing_index is None:
+            events.append(event)
+        else:
+            events[existing_index] = event
+        save_calendar_events(events)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to save calendar event: {e}")
+        return jsonify({"status": "error", "message": "Failed to save calendar event"}), 500
+
+    return jsonify({
+        "status": "success",
+        "message": "Calendar event saved and will appear on employee DTRs",
+        "data": event
+    }), 200
+
+
+@app.route("/api/calendar-events/<event_date>", methods=["DELETE"])
+def delete_calendar_event(event_date):
+    user_data, error_response, status_code = get_calendar_request_user()
+    if error_response:
+        return error_response, status_code
+    if not calendar_manager_required(user_data):
+        return jsonify({"status": "error", "message": "Only admins or HR can manage calendar events"}), 403
+
+    try:
+        parsed_date = datetime.strptime(event_date, "%Y-%m-%d")
+        if parsed_date.strftime("%Y-%m-%d") != event_date:
+            raise ValueError
+    except ValueError:
+        return jsonify({"status": "error", "message": "Date must use YYYY-MM-DD format"}), 400
+
+    try:
+        events = load_calendar_events()
+        updated_events = [event for event in events if event.get("date") != event_date]
+        if len(updated_events) == len(events):
+            return jsonify({"status": "error", "message": "Calendar event not found"}), 404
+        save_calendar_events(updated_events)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to delete calendar event: {e}")
+        return jsonify({"status": "error", "message": "Failed to delete calendar event"}), 500
+
+    return jsonify({"status": "success", "message": "Calendar event deleted"}), 200
+
+
 ## DTR GENERATION ROUTES ------------------------------------
 # Get all employees (excluding admin and hr) for DTR selection
 @app.route("/api/dtr/employees", methods=["GET"])
@@ -4140,9 +4379,18 @@ def get_dtr_record(rfid):
         attendance_record = get_attendance_record(employee, scan_date)
         save_attendance_data()
 
+    try:
+        calendar_events_by_date = {
+            event["date"]: event for event in load_calendar_events()
+        }
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to load calendar events for DTR: {e}")
+        return jsonify({"status": "error", "message": "Failed to load calendar events"}), 500
+
     # Prepare the response with DTR data
     dtr_data = []
     for date_key, day_data in attendance_record.get("dtr", {}).items():
+        calendar_event = calendar_events_by_date.get(day_data.get("date"))
         dtr_data.append({
             "date": day_data.get("date", ""),
             "day": day_data.get("day", ""),
@@ -4154,7 +4402,8 @@ def get_dtr_record(rfid):
             "ut": day_data.get("ut", "0.00"),
             "ot": day_data.get("ot", "0.00"),
             "status": day_data.get("status", ""),
-            "work_status": day_data.get("work_status")
+            "work_status": day_data.get("work_status"),
+            "calendar_event": calendar_event
         })
 
     # Log activity
@@ -4325,6 +4574,13 @@ def generate_dtr_pdf(rfid):
     dtr_data = []
     header = ['Day', 'Date', 'AM In', 'AM Out', 'PM In', 'PM Out', 'Hours', 'UT', 'OT', 'Status']
     dtr_data.append(header)
+    try:
+        calendar_events_by_date = {
+            event["date"]: event for event in load_calendar_events()
+        }
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"Failed to load calendar events for DTR PDF: {e}")
+        return jsonify({"status": "error", "message": "Failed to load calendar events"}), 500
 
     for date_key, day in attendance_record.get("dtr", {}).items():
         # Determine display status
@@ -4332,6 +4588,12 @@ def generate_dtr_pdf(rfid):
         if day.get("work_status"):
             ws = day["work_status"]
             display_status = f"Work Status ({ws.get('period', 'whole_day').replace('_', ' ')})"
+        calendar_event = calendar_events_by_date.get(day.get("date"))
+        if calendar_event:
+            event_label = f"{calendar_event.get('event_type', 'event').replace('_', ' ').title()}: {calendar_event.get('title', '')}"
+            if calendar_event.get("details"):
+                event_label += f" — {calendar_event['details']}"
+            display_status = f"{display_status} · {event_label}" if display_status else event_label
 
         row = [
             day.get("day", ""),
@@ -5571,6 +5833,8 @@ def get_employee_settings(rfid):
                         if "attendance" not in merged_settings:
                             merged_settings["attendance"] = {}
                         merged_settings["attendance"][key] = employee_settings_doc["settings"][key]
+                    elif key in ["notify_time_in", "notify_time_out", "notify_leave_approval"]:
+                        merged_settings[key] = employee_settings_doc["settings"][key]
                     elif key in ["name", "system_name", "academic_year", "hr_email"]:
                         if "institution" not in merged_settings:
                             merged_settings["institution"] = {}
@@ -5590,6 +5854,9 @@ def get_employee_settings(rfid):
             "data": {
                 "rfid": safe_rfid,
                 "settings": merged_settings,
+                "notify_time_in": merged_settings.get("notify_time_in", True),
+                "notify_time_out": merged_settings.get("notify_time_out", True),
+                "notify_leave_approval": merged_settings.get("notify_leave_approval", True),
                 "employee": {
                     "uid": uid,
                     "fullname": fullname,
@@ -5669,9 +5936,17 @@ def update_employee_settings(rfid):
         # Flatten the incoming data for storage as employee-specific overrides
         # We'll store user preferences as flat keys for simplicity
         if "attendance" in data:
+            if not isinstance(data["attendance"], dict):
+                return jsonify({"status": "error", "message": "Attendance settings must be an object"}), 400
             for key in ["work_start", "work_end", "lunch_start", "lunch_end", "grace_period"]:
                 if key in data["attendance"]:
                     employee_settings_doc["settings"][key] = data["attendance"][key]
+
+        for key in ["notify_time_in", "notify_time_out", "notify_leave_approval"]:
+            if key in data:
+                if not isinstance(data[key], bool):
+                    return jsonify({"status": "error", "message": f"{key} must be a boolean"}), 400
+                employee_settings_doc["settings"][key] = data[key]
 
         if "institution" in data:
             for key in ["name", "system_name", "academic_year", "hr_email"]:
@@ -5831,7 +6106,8 @@ def serve_work_status_attachment(filename):
 # back here. No RFID tap is required — a confident face match is enough.
 
 FACE_LOG_DIR = os.path.join(BASE_DIR, "storage", "logs")
-FACE_SCAN_LOG_FILE = os.path.join(FACE_LOG_DIR, "face_scans.json")
+FACE_SCAN_LOG_FILE = os.path.join(BASE_DIR, "storage", "database", "face-scans.json")
+LEGACY_FACE_SCAN_LOG_FILE = os.path.join(FACE_LOG_DIR, "face_scans.json")
 FACE_MIN_CONFIDENCE = float(os.environ.get("FACE_MIN_CONFIDENCE", "60.0"))
 FACE_ATTENDANCE_COOLDOWN = int(os.environ.get("FACE_ATTENDANCE_COOLDOWN", "10"))
 
@@ -5913,7 +6189,6 @@ def _face_load_employee_templates():
 
 
 def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verification"):
-    os.makedirs(FACE_LOG_DIR, exist_ok=True)
     log_entry = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "rfid": rfid,
@@ -5927,20 +6202,25 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
         "status": status,
         "scan_type": scan_type,
     }
-    log_data = []
-    if os.path.exists(FACE_SCAN_LOG_FILE):
-        try:
-            with open(FACE_SCAN_LOG_FILE, "r", encoding="utf-8") as f:
-                log_data = json.load(f)
-                if not isinstance(log_data, list):
-                    log_data = []
-        except Exception:
-            log_data = []
+    os.makedirs(os.path.dirname(FACE_SCAN_LOG_FILE), exist_ok=True)
+    source_path = FACE_SCAN_LOG_FILE
+    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
+        source_path = LEGACY_FACE_SCAN_LOG_FILE
+    if os.path.exists(source_path):
+        with open(source_path, "r", encoding="utf-8") as f:
+            log_data = json.load(f)
+        if not isinstance(log_data, list):
+            raise ValueError("Face scan database must contain a JSON list")
+    else:
+        log_data = []
     log_data.insert(0, log_entry)
     if len(log_data) > 1000:
         log_data = log_data[:1000]
-    with open(FACE_SCAN_LOG_FILE, "w", encoding="utf-8") as f:
+    temp_path = FACE_SCAN_LOG_FILE + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2)
+        f.write("\n")
+    os.replace(temp_path, FACE_SCAN_LOG_FILE)
     return log_entry
 
 
@@ -6025,6 +6305,21 @@ def faces_record():
         except ValueError:
             scanned_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    try:
+        _face_log_scan(
+            employee_rfid,
+            employee,
+            confidence,
+            "face_verified",
+            "face_verification",
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Face scan could not be saved to persistent storage: {exc}")
+        return jsonify({
+            "status": "error",
+            "message": "Face scan could not be saved. Please try again.",
+        }), 500
+
     # Check if face scans are allowed to write directly to DTR
     if FACE_SCAN_ALLOW_DIRECT_DTR:
         # Original behavior: face scan writes directly to DTR
@@ -6040,7 +6335,6 @@ def faces_record():
             except Exception as e:
                 print(f"Warning: failed to update daily stats from face scan: {e}")
 
-            _face_log_scan(employee_rfid, employee, confidence, "face_verified", "face_verification")
             add_scan_to_feed(employee_rfid, scanned_at, employee, True, scan_type="face_recognition")
             scan_events.append({
                 "rfid": employee_rfid,
@@ -6133,19 +6427,34 @@ def faces_dashboard_stats():
 
 @app.route("/api/faces/scan-log", methods=["GET"])
 def faces_scan_log():
-    limit = request.args.get("limit", default=50, type=int)
-    log_data = []
-    if os.path.exists(FACE_SCAN_LOG_FILE):
-        try:
-            with open(FACE_SCAN_LOG_FILE, "r", encoding="utf-8") as f:
+    limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), 100)
+    offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
+    source_path = FACE_SCAN_LOG_FILE
+    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
+        source_path = LEGACY_FACE_SCAN_LOG_FILE
+    try:
+        if os.path.exists(source_path):
+            with open(source_path, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
-                if not isinstance(log_data, list):
-                    log_data = []
-        except Exception:
+            if not isinstance(log_data, list):
+                raise ValueError("Face scan database must contain a JSON list")
+        else:
             log_data = []
-    if limit and limit > 0:
-        log_data = log_data[:limit]
-    return jsonify({"status": "success", "count": len(log_data), "logs": log_data})
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"Failed to load face scan database: {exc}")
+        return jsonify({
+            "status": "error",
+            "message": "Failed to load face scan records",
+        }), 500
+    total = len(log_data)
+    page_logs = log_data[offset:offset + limit]
+    return jsonify({
+        "status": "success",
+        "count": total,
+        "offset": offset,
+        "limit": limit,
+        "logs": page_logs,
+    })
 
 
 @app.route("/api/faces/recent-attendance", methods=["GET"])
@@ -6237,77 +6546,128 @@ def login():
             }), 400
 
         username = str(data.get("username", "")).strip()
-        password = str(data.get("password", "")).strip()
+        password = str(data.get("password", ""))
         password_hash = hashlib.md5(password.encode("utf-8")).hexdigest()
 
-        print(f"Login attempt - Username: '{username}'")
-        print(f"Password hash: '{password_hash}'")
-        print(f"Total users in database: {len(employee_database)}")
+        # Determine if we are searching by username or email
+        login_identifier = username.strip()
+        is_email = '@' in login_identifier
 
         for emp in employee_database.values():
-            print(f"  User in DB: '{emp.get('username')}' with role: {emp.get('role')}")
+            if is_email:
+                stored_email = str(emp.get("email") or "").strip()
+                if stored_email and stored_email.casefold() == login_identifier.casefold():
+                    stored_hash = str(emp.get("password_hash") or "").strip().casefold()
 
-        for emp in employee_database.values():
-            stored_username = emp.get("username")
-            if stored_username and stored_username == username:
-                print(f"Username match found for: {username}")
-                stored_hash = emp.get("password_hash", "").lower()
-                print(f"Stored hash: '{stored_hash}'")
-                print(f"Input hash:  '{password_hash}'")
+                    if password_hash == stored_hash:
+                        role = get_user_role(emp)
+                        user_data = {
+                            "uid": emp.get("uid"),
+                            "employeeid": emp.get("employeeid"),
+                            "username": emp.get("username"),
+                            "fullname": emp.get("firstname", "") + " " + emp.get("lastname", ""),
+                            "role": role,
+                            "rfid": emp.get("rfid")
+                        }
 
-                if password_hash == stored_hash:
-                    role = get_user_role(emp)
-                    user_data = {
-                        "uid": emp.get("uid"),
-                        "employeeid": emp.get("employeeid"),
-                        "username": emp.get("username"),
-                        "fullname": emp.get("firstname", "") + " " + emp.get("lastname", ""),
-                        "role": role,
-                        "rfid": emp.get("rfid")
-                    }
+                        token = jwt.encode({
+                            'user': user_data,
+                            'exp': datetime.utcnow() + JWT_EXPIRATION
+                        }, JWT_SECRET, algorithm='HS256')
 
-                    token = jwt.encode({
-                        'user': user_data,
-                        'exp': datetime.utcnow() + JWT_EXPIRATION
-                    }, JWT_SECRET, algorithm='HS256')
+                        session.permanent = True
+                        session["user"] = user_data
+                        session.modified = True
 
-                    session.permanent = True
-                    session["user"] = user_data
-                    session.modified = True
+                        print("Login successful for:", login_identifier)
 
-                    print("Login successful for:", username)
-
-                    # Log login activity
-                    add_activity(
-                        "user_login",
-                        f"{user_data.get('fullname')} ({username}) logged in as {role.upper()}",
-                        {"name": user_data.get('fullname'), "uid": user_data.get('uid')},
-                        "system"
-                    )
-
-                    # Push a login notification to this user's own file.
-                    try:
-                        push_notification(
-                            emp.get("rfid"),
-                            "Login Successful",
-                            f"Your account was accessed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
-                            notif_type="system",
-                            uid=emp.get("uid"),
-                            fullname=f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
-                            role=role
+                        # Log login activity
+                        add_activity(
+                            "user_login",
+                            f"{user_data.get('fullname')} ({login_identifier}) logged in as {role.upper()}",
+                            {"name": user_data.get('fullname'), "uid": user_data.get('uid')},
+                            "system"
                         )
-                    except Exception as e:
-                        print(f"Warning: failed to push login notification: {e}")
 
-                    return jsonify({
-                        "status": "success",
-                        "message": "Login successful",
-                        "redirect": get_role_redirect(role),
-                        "user": user_data,
-                        "token": token
-                    }), 200
+                        # Push a login notification to this user's own file.
+                        try:
+                            push_notification(
+                                emp.get("rfid"),
+                                "Login Successful",
+                                f"Your account was accessed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+                                notif_type="system",
+                                uid=emp.get("uid"),
+                                fullname=f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                                role=role
+                            )
+                        except Exception as e:
+                            print(f"Warning: failed to push login notification: {e}")
 
-        print(f"Login failed for: {username} - User not found or password mismatch")
+                        return jsonify({
+                            "status": "success",
+                            "message": "Login successful",
+                            "redirect": get_role_redirect(role),
+                            "user": user_data,
+                            "token": token
+                        }), 200
+            else:
+                stored_username = emp.get("username")
+                if stored_username and stored_username == login_identifier:
+                    stored_hash = str(emp.get("password_hash") or "").strip().casefold()
+
+                    if password_hash == stored_hash:
+                        role = get_user_role(emp)
+                        user_data = {
+                            "uid": emp.get("uid"),
+                            "employeeid": emp.get("employeeid"),
+                            "username": emp.get("username"),
+                            "fullname": emp.get("firstname", "") + " " + emp.get("lastname", ""),
+                            "role": role,
+                            "rfid": emp.get("rfid")
+                        }
+
+                        token = jwt.encode({
+                            'user': user_data,
+                            'exp': datetime.utcnow() + JWT_EXPIRATION
+                        }, JWT_SECRET, algorithm='HS256')
+
+                        session.permanent = True
+                        session["user"] = user_data
+                        session.modified = True
+
+                        print("Login successful for:", login_identifier)
+
+                        # Log login activity
+                        add_activity(
+                            "user_login",
+                            f"{user_data.get('fullname')} ({login_identifier}) logged in as {role.upper()}",
+                            {"name": user_data.get('fullname'), "uid": user_data.get('uid')},
+                            "system"
+                        )
+
+                        # Push a login notification to this user's own file.
+                        try:
+                            push_notification(
+                                emp.get("rfid"),
+                                "Login Successful",
+                                f"Your account was accessed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+                                notif_type="system",
+                                uid=emp.get("uid"),
+                                fullname=f"{emp.get('firstname', '')} {emp.get('lastname', '')}".strip(),
+                                role=role
+                            )
+                        except Exception as e:
+                            print(f"Warning: failed to push login notification: {e}")
+
+                        return jsonify({
+                            "status": "success",
+                            "message": "Login successful",
+                            "redirect": get_role_redirect(role),
+                            "user": user_data,
+                            "token": token
+                        }), 200
+
+        print("Login failed: user not found or password mismatch")
         return jsonify({
             "status": "error",
             "message": "Invalid username or password"
@@ -6515,6 +6875,310 @@ def change_password():
             "status": "error",
             "message": f"Failed to update password: {str(e)}"
         }), 500
+
+# ============================================================================
+# FORGOT PASSWORD ROUTES
+# ============================================================================
+@app.route("/api/forgot-password/check-email", methods=["POST"])
+def forgot_password_check_email():
+    """Check if email exists in the system.
+
+    Body (JSON):
+        {
+            "email": "user@example.com"
+        }
+    """
+    try:
+        data = request.get_json() or {}
+        email = str(data.get("email", "")).strip().casefold()
+
+        if not email:
+            return jsonify({
+                "status": "error",
+                "message": "Email is required"
+            }), 400
+
+        # Basic email format validation
+        if "@" not in email or "." not in email.split("@")[-1]:
+            return jsonify({
+                "status": "error",
+                "message": "Invalid email format"
+            }), 400
+
+        # Check if email exists in employee database
+        email_exists = False
+        for emp in employee_database.values():
+            emp_email = str(emp.get("email") or "").strip().casefold()
+            if emp_email == email:
+                email_exists = True
+                break
+
+        # For security, always return success (don't reveal if email exists or not)
+        # But we'll track internally whether to send the code
+        return jsonify({
+            "status": "success",
+            "message": "If the email exists in our system, you will receive a recovery code"
+        }), 200
+
+    except Exception as e:
+        print(f"Forgot password email check error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error"
+        }), 500
+
+
+@app.route("/api/forgot-password/send-code", methods=["POST"])
+def forgot_password_send_code():
+    """Send a 6-digit recovery code to the email.
+
+    Body (JSON):
+        {
+            "email": "user@example.com"
+        }
+    """
+    try:
+        data = request.get_json() or {}
+        email = str(data.get("email", "")).strip().casefold()
+
+        if not email:
+            return jsonify({
+                "status": "error",
+                "message": "Email is required"
+            }), 400
+
+        # Verify email exists
+        email_exists = False
+        user_record = None
+        for emp in employee_database.values():
+            emp_email = str(emp.get("email") or "").strip().casefold()
+            if emp_email == email:
+                email_exists = True
+                user_record = emp
+                break
+
+        if not email_exists:
+            # For security, don't reveal that email doesn't exist
+            # But don't send code either
+            return jsonify({
+                "status": "success",
+                "message": "If the email exists in our system, you will receive a recovery code"
+            }), 200
+
+        # Generate 6-digit code
+        import random
+        code = f"{random.randint(0, 999999):06d}"
+
+        # Store code with expiration (15 minutes from now)
+        from datetime import datetime, timedelta
+        recovery_codes[email] = {
+            "code": code,
+            "expires": datetime.now() + timedelta(minutes=15),
+            "attempts": 0
+        }
+
+        # Send email with code
+        subject = "TapIn Password Recovery Code"
+        body = f"""Hello,
+
+You have requested to reset your password for your TapIn account.
+
+Your 6-digit recovery code is: {code}
+
+This code will expire in 15 minutes.
+
+If you did not request this, please ignore this email or contact your system administrator.
+
+Best regards,
+TapIn Attendance System"""
+
+        email_sent = send_email(email, subject, body)
+
+        if not email_sent:
+            # Clean up the stored code if email failed to send
+            if email in recovery_codes:
+                del recovery_codes[email]
+
+            return jsonify({
+                "status": "error",
+                "message": "Failed to send recovery email. Please check email configuration."
+            }), 500
+
+        return jsonify({
+            "status": "success",
+            "message": "Recovery code has been sent to your email"
+        }), 200
+
+    except Exception as e:
+        print(f"Forgot password send code error: {str(e)}")
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error"
+        }), 500
+
+
+@app.route("/api/forgot-password/verify-code", methods=["POST"])
+def forgot_password_verify_code():
+    """Verify the 6-digit code and reset password.
+
+    Body (JSON):
+        {
+            "email": "user@example.com",
+            "code": "123456",
+            "new_password": "newpassword123"
+        }
+    """
+    try:
+        data = request.get_json() or {}
+        email = str(data.get("email", "")).strip().casefold()
+        code = str(data.get("code", "")).strip()
+        new_password = str(data.get("new_password", ""))
+
+        # Validate inputs
+        if not email:
+            return jsonify({
+                "status": "error",
+                "message": "Email is required"
+            }), 400
+
+        if not code or len(code) != 6 or not code.isdigit():
+            return jsonify({
+                "status": "error",
+                "message": "Valid 6-digit code is required"
+            }), 400
+
+        if new_password and len(new_password) < 8:
+            return jsonify({
+                "status": "error",
+                "message": "New password must be at least 8 characters long"
+            }), 400
+
+        # Check if we have a recovery code for this email
+        if email not in recovery_codes:
+            return jsonify({
+                "status": "error",
+                "message": "No recovery request found for this email. Please request a new code."
+            }), 400
+
+        # Get stored code data
+        stored_data = recovery_codes[email]
+
+        # Check if code has expired
+        from datetime import datetime
+        if datetime.now() > stored_data["expires"]:
+            # Clean up expired code
+            del recovery_codes[email]
+            return jsonify({
+                "status": "error",
+                "message": "Recovery code has expired. Please request a new code."
+            }), 400
+
+        # Check attempts limit (max 3 attempts)
+        if stored_data["attempts"] >= 3:
+            # Clean up after too many attempts
+            del recovery_codes[email]
+            return jsonify({
+                "status": "error",
+                "message": "Too many failed attempts. Please request a new code."
+            }), 400
+
+        # Verify code
+        if code != stored_data["code"]:
+            stored_data["attempts"] += 1
+            attempts_left = 3 - stored_data["attempts"]
+            if attempts_left > 0:
+                return jsonify({
+                    "status": "error",
+                    "message": f"Invalid code. {attempts_left} attempt(s) remaining."
+                }), 400
+            else:
+                # Clean up after failed attempts
+                del recovery_codes[email]
+                return jsonify({
+                    "status": "error",
+                    "message": "Too many failed attempts. Please request a new code."
+                }), 400
+
+        # The first verification request only validates the code. The reset
+        # request sends new_password and performs the update below.
+        if not new_password:
+            return jsonify({
+                "status": "success",
+                "message": "Recovery code verified"
+            }), 200
+
+        # Code is valid! Now reset the password
+        # Find the employee by email and update password
+        updated = False
+        new_hash = hashlib.md5(new_password.encode("utf-8")).hexdigest()
+
+        if not os.path.exists(USER_DATA_FILE):
+            return jsonify({
+                "status": "error",
+                "message": "User database not found"
+            }), 404
+
+        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
+            database = json.load(f)
+
+        # Find employee by email and update password
+        for category in ["admin", "hr", "employees"]:
+            for emp in database.get(category, []):
+                emp_email = str(emp.get("email") or "").strip().casefold()
+                if emp_email == email:
+                    emp["password_hash"] = new_hash
+                    emp["timestamp_modified"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    updated = True
+                    break
+            if updated:
+                break
+
+        if not updated:
+            return jsonify({
+                "status": "error",
+                "message": "User not found"
+            }), 404
+
+        # Backup and save
+        import shutil
+        try:
+            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+        except Exception as e:
+            print(f"Warning: could not back up users.json: {e}")
+
+        with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(database, f, indent=4)
+            f.write("\n")
+
+        # Refresh in-memory database
+        global employee_database
+        employee_database = load_employee_database()
+
+        # Log the activity
+        add_activity(
+            "password_reset_via_email",
+            f"Password reset for email {email}",
+            {"name": "System", "uid": "system"},
+            "system"
+        )
+
+        # Clean up the used recovery code
+        del recovery_codes[email]
+
+        return jsonify({
+            "status": "success",
+            "message": "Password has been reset successfully. You can now log in with your new password."
+        }), 200
+
+    except Exception as e:
+        print(f"Forgot password verify code error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "status": "error",
+            "message": "Internal server error"
+        }), 500
+
 
 ## Employee Management Routes ------------------------------------
 # Register a new admin, HR, or employee account.
@@ -7309,6 +7973,8 @@ def page_not_found(e):
 @app.route("/api/work-status-types", methods=["OPTIONS"])
 @app.route("/api/dtr/employees", methods=["OPTIONS"])
 @app.route("/api/dtr/record/<rfid>", methods=["OPTIONS"])
+@app.route("/api/calendar-events", methods=["OPTIONS"])
+@app.route("/api/calendar-events/<event_date>", methods=["OPTIONS"])
 @app.route("/api/dtr/generate-pdf/<rfid>", methods=["OPTIONS"])
 @app.route("/api/dtr/months", methods=["OPTIONS"])
 @app.route("/api/settings", methods=["OPTIONS"])

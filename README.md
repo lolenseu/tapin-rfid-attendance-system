@@ -12,6 +12,7 @@ The system is designed to automate employee attendance recording through RFID sc
 * RFID registration and management
 * Employee profile management
 * Attendance and DTR monitoring
+* Organization calendar notes displayed on each employee's DTR
 * Dashboard statistics
 * Recent RFID scan monitoring
 * IoT device online/offline monitoring
@@ -183,6 +184,18 @@ Example endpoints include:
 ```
 
 As of v0.3, the API server has been updated with improved RFID attendance processing and enhanced device monitoring capabilities.
+
+### Password recovery email
+
+Configure these environment variables in the API hosting environment to enable Brevo SMTP delivery. Verify the sender address in Brevo before sending:
+
+* `TAPIN_EMAIL_USER`: the Brevo SMTP login
+* `TAPIN_EMAIL_PASSWORD`: the Brevo SMTP key
+* `TAPIN_EMAIL_FROM` (optional): a sender address/name verified in Brevo; defaults to `noreply.tapin@gmail.com`
+* `TAPIN_EMAIL_HOST` (optional): defaults to `smtp-relay.brevo.com`
+* `TAPIN_EMAIL_PORT` (optional): defaults to `587` (STARTTLS)
+
+Do not put SMTP keys in source code. After configuring variables on the host, restart/reload the API. The first recovery-code request sends the email and starts the 60-second resend cooldown.
 
 ## PostgreSQL Database
 

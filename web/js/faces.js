@@ -1510,9 +1510,9 @@ if (rfidModalClose) {
   rfidModalClose.addEventListener('click', () => {
     const modal = document.getElementById('rfidModal');
     if (modal) modal.style.display = 'none';
-    if (rfidModalHideTimeout) {
-      clearTimeout(rfidModalHideTimeout);
-      rfidModalHideTimeout = null;
+    if (window._rfidModalHideTimeout) {
+      clearTimeout(window._rfidModalHideTimeout);
+      window._rfidModalHideTimeout = null;
     }
   });
 }
