@@ -10,11 +10,14 @@ import re
 import socket
 import ssl
 import pymysql
+import tempfile
+import mimetypes
+import threading
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from flask import Flask, jsonify, request, session, send_from_directory, send_file, make_response
+from flask import Flask, Response, abort, jsonify, request, session, send_file, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 from pymysql.cursors import DictCursor
@@ -319,6 +322,11 @@ if not os.path.exists(os.path.join(BASE_DIR, "storage")):
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# Use a stable path anchor for Vercel Blob keys. Storage data itself is not
+# written to this temporary directory when running on Vercel.
+if IS_VERCEL:
+    BASE_DIR = os.path.join(tempfile.gettempdir(), "tapin-rfid-attendance-system")
+
 # Store user records in the storage/database folder (outside app folder)
 USER_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "users.json")
 
@@ -570,6 +578,256 @@ os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
 os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
 os.makedirs(WORK_STATUS_REQUEST_STORAGE, exist_ok=True)
 
+# On Vercel, file-shaped storage paths map directly to private Blob objects.
+# Local development continues to use the filesystem.
+_vercel_blob_client = None
+STORAGE_BLOB_PREFIX = "storage/"
+_filesystem_open = open
+
+
+def _storage_blob_path(file_path):
+    storage_root = os.path.abspath(os.path.join(BASE_DIR, "storage"))
+    absolute_path = os.path.abspath(file_path)
+    try:
+        if os.path.commonpath((storage_root, absolute_path)) != storage_root:
+            return None
+    except ValueError:
+        return None
+    relative_path = os.path.relpath(absolute_path, storage_root).replace(os.sep, "/")
+    if relative_path in ("", ".") or relative_path.startswith("../"):
+        return None
+    return STORAGE_BLOB_PREFIX + relative_path
+
+
+def _initialize_vercel_blob_storage():
+    global _vercel_blob_client
+
+    if not IS_VERCEL:
+        return
+
+    blob_token = (
+        os.getenv("BLOB_READ_WRITE_TOKEN")
+        or os.getenv("VERCEL_BLOB_READ_WRITE_TOKEN")
+        or os.getenv("storage_READ_WRITE_TOKEN")
+    )
+    if not blob_token:
+        raise RuntimeError(
+            "Vercel Blob storage is enabled, but BLOB_READ_WRITE_TOKEN "
+            "or an equivalent read/write token is not configured."
+        )
+
+    from vercel.blob import BlobClient
+
+    _vercel_blob_client = BlobClient(token=blob_token)
+    print("[Blob] Direct private Blob storage enabled for storage/.")
+
+
+_initialize_vercel_blob_storage()
+
+
+def _storage_read_bytes(file_path):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is not None and blob_path:
+        from vercel.blob import BlobNotFoundError
+
+        try:
+            return _vercel_blob_client.get(blob_path, access="private").content
+        except BlobNotFoundError as error:
+            raise FileNotFoundError(file_path) from error
+
+    with _filesystem_open(file_path, "rb") as source:
+        return source.read()
+
+
+def _storage_write_bytes(file_path, content):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is not None and blob_path:
+        _vercel_blob_client.put(
+            blob_path,
+            content,
+            access="private",
+            content_type=mimetypes.guess_type(os.fspath(file_path))[0],
+            add_random_suffix=False,
+            overwrite=True,
+            multipart=len(content) > 5 * 1024 * 1024,
+        )
+        return
+
+    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
+    with _filesystem_open(file_path, "wb") as destination:
+        destination.write(content)
+
+
+@contextmanager
+def _open_storage_file(file_path, mode="r", *args, **kwargs):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is None or not blob_path:
+        with _filesystem_open(file_path, mode, *args, **kwargs) as file_handle:
+            yield file_handle
+        return
+
+    binary = "b" in mode
+    readable = "r" in mode or "+" in mode
+    writable = any(flag in mode for flag in ("w", "a", "x", "+"))
+    if not readable and not writable:
+        raise ValueError(f"Unsupported file mode: {mode}")
+
+    initial = b""
+    if readable or "a" in mode or "+" in mode:
+        try:
+            initial = _storage_read_bytes(file_path)
+        except FileNotFoundError:
+            if "r" in mode and not writable:
+                raise
+
+    if binary:
+        buffer = io.BytesIO(initial if "w" not in mode else b"")
+    else:
+        encoding = kwargs.get("encoding") or "utf-8"
+        buffer = io.StringIO(
+            initial.decode(encoding) if "w" not in mode else ""
+        )
+    if "a" in mode:
+        buffer.seek(0, io.SEEK_END)
+
+    try:
+        yield buffer
+    except Exception:
+        buffer.close()
+        raise
+    else:
+        if writable:
+            content = buffer.getvalue()
+            _storage_write_bytes(
+                file_path,
+                content if binary else content.encode(kwargs.get("encoding") or "utf-8"),
+            )
+        buffer.close()
+
+
+# All existing open(..., ...) calls in this module target storage paths.
+# Route them through Blob on Vercel without changing local file behavior.
+open = _open_storage_file
+
+
+def _storage_exists(file_path):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is not None and blob_path:
+        from vercel.blob import BlobNotFoundError
+
+        try:
+            _vercel_blob_client.head(blob_path)
+            return True
+        except BlobNotFoundError:
+            return False
+    return os.path.exists(file_path)
+
+
+def _storage_listdir(directory):
+    blob_path = _storage_blob_path(os.path.join(directory, "placeholder"))
+    if _vercel_blob_client is None or not blob_path:
+        return os.listdir(directory)
+
+    prefix = blob_path.rsplit("/", 1)[0] + "/"
+    names = set()
+    for item in _vercel_blob_client.iter_objects(prefix=prefix):
+        remainder = item.pathname[len(prefix):]
+        if remainder:
+            names.add(remainder.split("/", 1)[0])
+    return sorted(names)
+
+
+def _storage_isdir(directory):
+    blob_path = _storage_blob_path(os.path.join(directory, "placeholder"))
+    if _vercel_blob_client is not None and blob_path:
+        prefix = blob_path.rsplit("/", 1)[0] + "/"
+        return next(_vercel_blob_client.iter_objects(prefix=prefix), None) is not None
+    return os.path.isdir(directory)
+
+
+def _storage_getsize(file_path):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is not None and blob_path:
+        return len(_storage_read_bytes(file_path))
+    return os.path.getsize(file_path)
+
+
+def _storage_isfile(file_path):
+    return _storage_exists(file_path)
+
+
+def _storage_delete(file_path):
+    blob_path = _storage_blob_path(file_path)
+    if _vercel_blob_client is not None and blob_path:
+        _vercel_blob_client.delete(blob_path)
+        return
+    os.remove(file_path)
+
+
+def _storage_copy(source_path, destination_path):
+    if _vercel_blob_client is None:
+        import shutil
+
+        shutil.copy2(source_path, destination_path)
+        return
+    _storage_write_bytes(destination_path, _storage_read_bytes(source_path))
+
+
+def _storage_replace(source_path, destination_path):
+    if _vercel_blob_client is None:
+        os.replace(source_path, destination_path)
+        return
+    _storage_copy(source_path, destination_path)
+    _storage_delete(source_path)
+
+
+def _storage_save_upload(file_path, uploaded_file):
+    if _vercel_blob_client is None:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        uploaded_file.save(file_path)
+        return
+
+    stream = getattr(uploaded_file, "stream", uploaded_file)
+    if hasattr(stream, "seek"):
+        stream.seek(0)
+    _storage_write_bytes(file_path, stream.read())
+
+
+def _storage_serve_file(file_path, *, as_attachment=False, download_name=None):
+    if _vercel_blob_client is None or not _storage_blob_path(file_path):
+        return send_file(
+            file_path,
+            as_attachment=as_attachment,
+            download_name=download_name,
+        )
+
+    try:
+        content = _storage_read_bytes(file_path)
+    except FileNotFoundError:
+        abort(404)
+    return Response(
+        content,
+        mimetype=mimetypes.guess_type(os.fspath(file_path))[0],
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{download_name}"'
+                if as_attachment and download_name
+                else "inline"
+            )
+        },
+    )
+
+
+def _storage_save_image(image, file_path, **options):
+    if _vercel_blob_client is None:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        image.save(file_path, **options)
+        return
+    buffer = io.BytesIO()
+    image.save(buffer, **options)
+    _storage_write_bytes(file_path, buffer.getvalue())
+
+
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
 print(f"USER_DATA_FILE: {USER_DATA_FILE}")
@@ -724,7 +982,7 @@ def load_daily_stats():
     """
     today = datetime.now().date().isoformat()
 
-    if not os.path.exists(DAILY_STATS_FILE):
+    if not _storage_exists(DAILY_STATS_FILE):
         stats = _empty_daily_stats(today)
         _write_daily_stats(stats)
         return stats
@@ -849,7 +1107,7 @@ def reset_daily_stats_if_needed():
 
 def _mysql_sync_users():
     """Copy users.json -> users table."""
-    if not os.path.exists(USER_DATA_FILE):
+    if not _storage_exists(USER_DATA_FILE):
         return 0
     with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -905,7 +1163,7 @@ def _mysql_sync_users():
 
 def _mysql_sync_attendance():
     """Copy attendance.json -> attendance_records + dtr_days tables."""
-    if not os.path.exists(ATTENDANCE_DATA_FILE):
+    if not _storage_exists(ATTENDANCE_DATA_FILE):
         return 0, 0
     with open(ATTENDANCE_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -964,7 +1222,7 @@ def _mysql_sync_attendance():
 
 def _mysql_sync_work_status():
     """Copy work-status.json -> work_status_requests + work_status_days."""
-    if not os.path.exists(WORK_STATUS_DATA_FILE):
+    if not _storage_exists(WORK_STATUS_DATA_FILE):
         return 0, 0
     with open(WORK_STATUS_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1022,7 +1280,7 @@ def _mysql_sync_scans_and_activities():
     act_count = 0
 
     # scan_feed.json -> scans
-    if os.path.exists(SCAN_FEED_FILE):
+    if _storage_exists(SCAN_FEED_FILE):
         with open(SCAN_FEED_FILE, "r", encoding="utf-8") as f:
             feed = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1049,7 +1307,7 @@ def _mysql_sync_scans_and_activities():
                 scan_count += 1
 
     # scan_events.json -> scan_events
-    if os.path.exists(SCAN_EVENTS_FILE):
+    if _storage_exists(SCAN_EVENTS_FILE):
         with open(SCAN_EVENTS_FILE, "r", encoding="utf-8") as f:
             ev = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1068,7 +1326,7 @@ def _mysql_sync_scans_and_activities():
                 event_count += 1
 
     # activity_feed.json -> activities
-    if os.path.exists(ACTIVITY_FEED_FILE):
+    if _storage_exists(ACTIVITY_FEED_FILE):
         with open(ACTIVITY_FEED_FILE, "r", encoding="utf-8") as f:
             af = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1093,7 +1351,7 @@ def _mysql_sync_scans_and_activities():
 
 def _mysql_sync_daily_stats():
     """Copy daily_stats.json -> daily_stats + daily_present."""
-    if not os.path.exists(DAILY_STATS_FILE):
+    if not _storage_exists(DAILY_STATS_FILE):
         return 0
     with open(DAILY_STATS_FILE, "r", encoding="utf-8") as f:
         stats = json.load(f)
@@ -1129,10 +1387,10 @@ def _mysql_sync_daily_stats():
 def _mysql_sync_notifications():
     """Copy every storage/notification/<RFID>.json -> notifications."""
     total = 0
-    if not os.path.isdir(NOTIFICATION_STORAGE):
+    if not _storage_isdir(NOTIFICATION_STORAGE):
         return 0
     with get_cursor(commit=True) as cur:
-        for fname in os.listdir(NOTIFICATION_STORAGE):
+        for fname in _storage_listdir(NOTIFICATION_STORAGE):
             if not fname.endswith(".json"):
                 continue
             path = os.path.join(NOTIFICATION_STORAGE, fname)
@@ -1166,7 +1424,7 @@ def _mysql_sync_notifications():
 
 def _mysql_sync_system_settings():
     """Copy settings.json -> system_settings (flat key/value)."""
-    if not os.path.exists(SETTINGS_FILE):
+    if not _storage_exists(SETTINGS_FILE):
         return 0
     with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1467,7 +1725,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
         rfid_filename = secure_filename(rfid)
         os.makedirs(PROFILE_STORAGE, exist_ok=True)
         filename = rfid_filename + extension
-        image_file.save(os.path.join(PROFILE_STORAGE, filename))
+        _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
         return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
     try:
@@ -1504,8 +1762,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 size_kb = len(buffer.getvalue()) / 1024
 
                 if size_kb <= max_size_kb:
-                    # Save to file
-                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
+                    _storage_save_image(img, filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"Image compressed to {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
@@ -1513,7 +1770,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 current_quality -= 5
 
             # If still too large, save with minimum quality
-            img.save(filepath, format='JPEG', quality=10, optimize=True)
+            _storage_save_image(img, filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         elif extension in ['.png']:
@@ -1529,20 +1786,20 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 size_kb = len(buffer.getvalue()) / 1024
 
                 if size_kb <= max_size_kb:
-                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
+                    _storage_save_image(img, filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"PNG compressed to JPEG {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
                 current_quality -= 5
 
-            img.save(filepath, format='JPEG', quality=10, optimize=True)
+            _storage_save_image(img, filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         else:
             # For other formats, try to save as JPEG
             filename = rfid_filename + '.jpg'
             filepath = os.path.join(PROFILE_STORAGE, filename)
-            img.save(filepath, format='JPEG', quality=quality, optimize=True)
+            _storage_save_image(img, filepath, format='JPEG', quality=quality, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
     except Exception as e:
@@ -1553,7 +1810,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
             rfid_filename = secure_filename(rfid)
             os.makedirs(PROFILE_STORAGE, exist_ok=True)
             filename = rfid_filename + extension
-            image_file.save(os.path.join(PROFILE_STORAGE, filename))
+            _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
         except:
             return None
@@ -1561,7 +1818,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
 # Load settings
 def load_settings():
     """Load settings from JSON file"""
-    if not os.path.exists(SETTINGS_FILE):
+    if not _storage_exists(SETTINGS_FILE):
         # Create default settings file
         save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS.copy()
@@ -1740,7 +1997,7 @@ def load_notifications(rfid, uid=None, fullname=None, role=None):
     if not path:
         return _empty_notification_doc(rfid, uid, fullname, role)
 
-    if not os.path.exists(path):
+    if not _storage_exists(path):
         doc = _empty_notification_doc(rfid, uid, fullname, role)
         # Persist the empty doc so the user has a real file going forward.
         try:
@@ -1789,7 +2046,7 @@ def save_notifications(rfid, doc, backup=True):
         return False
 
     existing = None
-    if os.path.exists(path):
+    if _storage_exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
@@ -2032,7 +2289,7 @@ def load_employee_settings(rfid, uid=None, fullname=None, role=None):
     if not path:
         return _empty_employee_settings_doc(rfid, uid, fullname, role)
 
-    if not os.path.exists(path):
+    if not _storage_exists(path):
         doc = _empty_employee_settings_doc(rfid, uid, fullname, role)
         # Persist the empty doc so the employee has a real file going forward.
         try:
@@ -2078,7 +2335,7 @@ def save_employee_settings(rfid, doc, backup=True):
         return False
 
     existing = None
-    if os.path.exists(path):
+    if _storage_exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
@@ -2176,7 +2433,7 @@ def load_work_status_data():
 
     Structure matches the feed: {requests, approved, rejected}.
     """
-    if not os.path.exists(WORK_STATUS_DATA_FILE):
+    if not _storage_exists(WORK_STATUS_DATA_FILE):
         default_data = _empty_work_status()
         with open(WORK_STATUS_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2205,7 +2462,7 @@ def load_work_status_feed_data():
 
     Structure matches the persistent file: {requests, approved, rejected}.
     """
-    if not os.path.exists(WORK_STATUS_FEED_FILE):
+    if not _storage_exists(WORK_STATUS_FEED_FILE):
         default_data = _empty_work_status()
         with open(WORK_STATUS_FEED_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2263,7 +2520,7 @@ if not work_status_feed_data.get("requests") and not work_status_feed_data.get("
 # Load activity feed data
 def load_activity_feed():
     """Load activity feed data from JSON file"""
-    if not os.path.exists(ACTIVITY_FEED_FILE):
+    if not _storage_exists(ACTIVITY_FEED_FILE):
         default_data = {
             "activities": [],
             "total_activities": 0,
@@ -2338,7 +2595,7 @@ def add_activity(action, details, user=None, activity_type="system"):
 
 # Load scan events
 def load_scan_events():
-    if not os.path.exists(SCAN_EVENTS_FILE):
+    if not _storage_exists(SCAN_EVENTS_FILE):
         default_data = {"scan_events": []}
         with open(SCAN_EVENTS_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2369,7 +2626,7 @@ def load_attendance_data():
     # Ensure the directory exists
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 
-    if not os.path.exists(ATTENDANCE_DATA_FILE):
+    if not _storage_exists(ATTENDANCE_DATA_FILE):
         # Create empty file with proper structure
         default_data = {"records": []}
         with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
@@ -2389,10 +2646,10 @@ def load_attendance_data():
             return data
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"Error reading attendance file: {e}")
-        if os.path.exists(ATTENDANCE_DATA_FILE):
+        if _storage_exists(ATTENDANCE_DATA_FILE):
             backup_file = ATTENDANCE_DATA_FILE + ".backup"
             try:
-                os.rename(ATTENDANCE_DATA_FILE, backup_file)
+                _storage_replace(ATTENDANCE_DATA_FILE, backup_file)
                 print(f"Corrupted file backed up to: {backup_file}")
             except:
                 pass
@@ -2401,7 +2658,7 @@ def load_attendance_data():
 # Load scan feed data
 def load_scan_feed():
     """Load scan feed data from JSON file"""
-    if not os.path.exists(SCAN_FEED_FILE):
+    if not _storage_exists(SCAN_FEED_FILE):
         default_data = {
             "scans": [],
             "total_scans": 0,
@@ -2526,11 +2783,11 @@ def save_attendance_data():
     """Save attendance records to attendance.json file - ONLY records, no scan events"""
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 
-    if os.path.exists(ATTENDANCE_DATA_FILE):
+    if _storage_exists(ATTENDANCE_DATA_FILE):
         backup_file = ATTENDANCE_DATA_FILE + ".backup"
         try:
             import shutil
-            shutil.copy2(ATTENDANCE_DATA_FILE, backup_file)
+            _storage_copy(ATTENDANCE_DATA_FILE, backup_file)
         except:
             pass
 
@@ -3170,7 +3427,7 @@ def initialize_attendance_records():
 def load_employee_database():
     os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-    if not os.path.exists(USER_DATA_FILE):
+    if not _storage_exists(USER_DATA_FILE):
         print("File not found: storage/database/users.json - database is empty")
         default_data = {"admin": [], "hr": [], "employees": []}
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
@@ -3183,10 +3440,10 @@ def load_employee_database():
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print("Error reading storage/database/users.json:", str(e))
-        if os.path.exists(USER_DATA_FILE):
+        if _storage_exists(USER_DATA_FILE):
             backup_file = USER_DATA_FILE + ".backup"
             try:
-                os.rename(USER_DATA_FILE, backup_file)
+                _storage_replace(USER_DATA_FILE, backup_file)
                 print(f"Corrupted users.json backed up to: {backup_file}")
             except:
                 pass
@@ -3302,7 +3559,7 @@ def get_dashboard_statistics():
         os.makedirs(PROFILE_STORAGE, exist_ok=True)
         _allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
         profile_images = sum(
-            1 for f in os.listdir(PROFILE_STORAGE)
+            1 for f in _storage_listdir(PROFILE_STORAGE)
             if os.path.splitext(f)[1].lower() in _allowed_exts
         )
     except Exception:
@@ -4248,7 +4505,7 @@ def delete_single_notification(rfid, notification_id):
 
 def load_calendar_events():
     """Load persistent, organization-wide calendar events."""
-    if not os.path.exists(CALENDAR_EVENTS_FILE):
+    if not _storage_exists(CALENDAR_EVENTS_FILE):
         return []
     with open(CALENDAR_EVENTS_FILE, "r", encoding="utf-8") as f:
         events = json.load(f)
@@ -4267,7 +4524,7 @@ def save_calendar_events(events):
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(events, f, indent=2)
         f.write("\n")
-    os.replace(temp_path, CALENDAR_EVENTS_FILE)
+    _storage_replace(temp_path, CALENDAR_EVENTS_FILE)
 
 
 def get_calendar_request_user():
@@ -5185,7 +5442,7 @@ def request_work_status():
                 file_path = os.path.join(employee_work_status_dir, filename)
 
                 # Save the file
-                attachment_file.save(file_path)
+                _storage_save_upload(file_path, attachment_file)
 
                 # Store relative path for web access
                 attachment_path = os.path.join("storage", "work-status", rfid, filename).replace(os.sep, "/")
@@ -5430,11 +5687,11 @@ def get_work_status_attachment_meta(rfid, filename):
 
     file_path = os.path.join(WORK_STATUS_REQUEST_STORAGE, safe_rfid, safe_filename)
 
-    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+    if not _storage_exists(file_path) or not _storage_isfile(file_path):
         return jsonify({"status": "error", "message": "File not found"}), 404
 
     try:
-        size = os.path.getsize(file_path)
+        size = _storage_getsize(file_path)
     except Exception:
         size = 0
 
@@ -6173,13 +6430,18 @@ def serve_js(filename):
 # Serve profile images from storage folder (outside app)
 @app.route('/storage/profiles/<filename>')
 def serve_profile_image(filename):
-    return send_from_directory(PROFILE_STORAGE, filename)
+    if secure_filename(filename) != filename:
+        return jsonify({"status": "error", "message": "File not found"}), 404
+    return _storage_serve_file(os.path.join(PROFILE_STORAGE, filename))
 
 # Serve assets (logo, etc.)
 @app.route('/storage/assets/<path:filename>')
 def serve_asset(filename):
     assets_dir = os.path.join(BASE_DIR, "storage", "assets")
-    return send_from_directory(assets_dir, filename)
+    safe_path = os.path.abspath(os.path.join(assets_dir, filename))
+    if os.path.commonpath((os.path.abspath(assets_dir), safe_path)) != os.path.abspath(assets_dir):
+        return jsonify({"status": "error", "message": "File not found"}), 404
+    return _storage_serve_file(safe_path)
 
 # Serve work status request attachments from storage folder.
 #
@@ -6191,9 +6453,13 @@ def serve_asset(filename):
 def serve_work_status_attachment(filename):
     inline = request.args.get("inline") in ("1", "true", "yes")
 
-    # send_from_directory handles path traversal safely and returns the
-    # correct Content-Type based on the file extension.
-    response = send_from_directory(WORK_STATUS_REQUEST_STORAGE, filename)
+    # Keep the stored object path confined to this employee's attachment folder.
+    safe_path = os.path.abspath(os.path.join(WORK_STATUS_REQUEST_STORAGE, filename))
+    if os.path.commonpath(
+        (os.path.abspath(WORK_STATUS_REQUEST_STORAGE), safe_path)
+    ) != os.path.abspath(WORK_STATUS_REQUEST_STORAGE):
+        return jsonify({"status": "error", "message": "File not found"}), 404
+    response = _storage_serve_file(safe_path, download_name=os.path.basename(filename))
 
     # Set explicit Content-Disposition so the caller controls download vs
     # preview. We keep the original filename so a "Save as…" still works.
@@ -6227,7 +6493,7 @@ def _face_list_profile_images():
     os.makedirs(PROFILE_STORAGE, exist_ok=True)
     allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
     return sorted(
-        f for f in os.listdir(PROFILE_STORAGE)
+        f for f in _storage_listdir(PROFILE_STORAGE)
         if os.path.splitext(f)[1].lower() in allowed_exts
     )
 
@@ -6240,10 +6506,10 @@ def _face_find_profile_image_for_rfid(rfid):
     allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
     for ext in allowed_exts:
         candidate = os.path.join(PROFILE_STORAGE, f"{rfid_clean}{ext}")
-        if os.path.exists(candidate):
+        if _storage_exists(candidate):
             return candidate
     try:
-        for filename in os.listdir(PROFILE_STORAGE):
+        for filename in _storage_listdir(PROFILE_STORAGE):
             name, ext = os.path.splitext(filename)
             if name.upper() == rfid_clean and ext.lower() in allowed_exts:
                 return os.path.join(PROFILE_STORAGE, filename)
@@ -6315,9 +6581,9 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
     }
     os.makedirs(os.path.dirname(FACE_SCAN_LOG_FILE), exist_ok=True)
     source_path = FACE_SCAN_LOG_FILE
-    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
+    if not _storage_exists(source_path) and _storage_exists(LEGACY_FACE_SCAN_LOG_FILE):
         source_path = LEGACY_FACE_SCAN_LOG_FILE
-    if os.path.exists(source_path):
+    if _storage_exists(source_path):
         with open(source_path, "r", encoding="utf-8") as f:
             log_data = json.load(f)
         if not isinstance(log_data, list):
@@ -6331,7 +6597,7 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2)
         f.write("\n")
-    os.replace(temp_path, FACE_SCAN_LOG_FILE)
+    _storage_replace(temp_path, FACE_SCAN_LOG_FILE)
     return log_entry
 
 
@@ -6541,10 +6807,10 @@ def faces_scan_log():
     limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), 100)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
     source_path = FACE_SCAN_LOG_FILE
-    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
+    if not _storage_exists(source_path) and _storage_exists(LEGACY_FACE_SCAN_LOG_FILE):
         source_path = LEGACY_FACE_SCAN_LOG_FILE
     try:
-        if os.path.exists(source_path):
+        if _storage_exists(source_path):
             with open(source_path, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
             if not isinstance(log_data, list):
@@ -6912,7 +7178,7 @@ def change_password():
             }), 400
 
         # ---- 4) Load users.json ------------------------------------------
-        if not os.path.exists(USER_DATA_FILE):
+        if not _storage_exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "User database not found"
@@ -6951,7 +7217,7 @@ def change_password():
         # ---- 6) Backup + save --------------------------------------------
         import shutil
         try:
-            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
         except Exception as e:
             print(f"Warning: could not back up users.json: {e}")
 
@@ -7223,7 +7489,7 @@ def forgot_password_verify_code():
         updated = False
         new_hash = hashlib.md5(new_password.encode("utf-8")).hexdigest()
 
-        if not os.path.exists(USER_DATA_FILE):
+        if not _storage_exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "User database not found"
@@ -7253,7 +7519,7 @@ def forgot_password_verify_code():
         # Backup and save
         import shutil
         try:
-            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
         except Exception as e:
             print(f"Warning: could not back up users.json: {e}")
 
@@ -7319,7 +7585,7 @@ def register_employee():
 
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-        if os.path.exists(USER_DATA_FILE):
+        if _storage_exists(USER_DATA_FILE):
             with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
                 database = json.load(f)
         else:
@@ -7362,7 +7628,7 @@ def register_employee():
                 rfid_filename = secure_filename(rfid)
                 os.makedirs(PROFILE_STORAGE, exist_ok=True)
                 filename = rfid_filename + extension
-                image_file.save(os.path.join(PROFILE_STORAGE, filename))
+                _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         employee = {
@@ -7389,9 +7655,9 @@ def register_employee():
         }
         database.setdefault(category, []).append(employee)
 
-        if os.path.exists(USER_DATA_FILE):
+        if _storage_exists(USER_DATA_FILE):
             import shutil
-            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
 
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(database, f, indent=4)
@@ -7443,7 +7709,7 @@ def update_employee(rfid):
 
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-        if not os.path.exists(USER_DATA_FILE):
+        if not _storage_exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "Database file not found"
@@ -7545,9 +7811,9 @@ def update_employee(rfid):
             old_image = updated_employee.get("image")
             if old_image:
                 old_image_path = os.path.join(BASE_DIR, old_image)
-                if os.path.exists(old_image_path):
+                if _storage_exists(old_image_path):
                     try:
-                        os.remove(old_image_path)
+                        _storage_delete(old_image_path)
                         print(f"Deleted old image: {old_image_path}")
                     except Exception as e:
                         print(f"Error deleting old image: {e}")
@@ -7563,7 +7829,7 @@ def update_employee(rfid):
                 rfid_filename = secure_filename(rfid)
                 os.makedirs(PROFILE_STORAGE, exist_ok=True)
                 filename = rfid_filename + extension
-                image_file.save(os.path.join(PROFILE_STORAGE, filename))
+                _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
                 updated_employee["image"] = image_path
                 print(f"New image saved (fallback): {image_path}")
@@ -7608,7 +7874,7 @@ def update_employee(rfid):
 
         # Create backup
         import shutil
-        shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+        _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
 
         # Save to file
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
@@ -7799,7 +8065,7 @@ def get_latest_rfid():
                     image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
                     for ext in image_extensions:
                         image_path = os.path.join(PROFILE_STORAGE, rfid_filename + ext)
-                        if os.path.exists(image_path):
+                        if _storage_exists(image_path):
                             image_url = f"{request.host_url}storage/profiles/{rfid_filename}{ext}"
                             break
 
@@ -8139,7 +8405,10 @@ def handle_scanner_options():
 # block never runs — the WSGI server just imports the module — so the
 # scheduler must be started here to guarantee the midnight wipe fires.
 try:
-    start_nightly_wipe_scheduler()
+    if IS_VERCEL:
+        print("[Scheduler] Background scheduler disabled on Vercel; cron handles scheduled work.")
+    else:
+        start_nightly_wipe_scheduler()
 except Exception as e:
     print(f"⚠️ Could not start nightly wipe scheduler: {e}")
 
@@ -8205,7 +8474,11 @@ if __name__ == "__main__":
     print(f"🚀 Starting TapIn API Server")
     print(f"📍 Environment: {'Production' if is_production() else 'Development'}")
     print(f"🔗 Base URL: {get_base_url()}")
-    print(f"📁 Storage: {BASE_DIR}/storage")
+    print(
+        f"📁 Storage: private Vercel Blob ({STORAGE_BLOB_PREFIX})"
+        if _vercel_blob_client is not None
+        else f"📁 Storage: {BASE_DIR}/storage"
+    )
     print(f"🌐 Port: {port}")
     print(f"{'='*60}\n")
 

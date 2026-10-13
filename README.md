@@ -205,7 +205,9 @@ On Vercel, configure `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, 
 
 Vercel Cron triggers the sync daily at 00:00 UTC+08:00 (16:00 UTC). Set a strong `CRON_SECRET` environment variable so the scheduled endpoint can authenticate. The local scheduler runs the sync at local midnight. The sync endpoint is not exposed as a manual write route.
 
-**Vercel storage limitation:** Vercel Functions do not provide a durable, shared writable filesystem for `storage/`. Files created or changed by one function invocation may not be available to another invocation or to the Cron function, and writes to the deployed project directory may fail. Therefore the file-first workflow and its midnight copy are reliable only on a host with persistent shared disk; on Vercel, use a persistent/shared storage service if data must survive requests and be available to the midnight sync. Image and other binary uploads also require durable storage.
+On Vercel, all application data under `storage/` is read directly from and written directly to the connected private Vercel Blob store, using object names such as `storage/database/users.json` and `storage/profiles/<rfid>.jpg`. This includes employee records, settings, attendance and feed JSON, profile images, and work-status attachments. The API does not hydrate or sync a local storage copy. Configure a Blob read/write token as `BLOB_READ_WRITE_TOKEN` (also accepted: `VERCEL_BLOB_READ_WRITE_TOKEN` or `storage_READ_WRITE_TOKEN`). The store ID and webhook public key alone do not grant permission to read or write blobs. The midnight MySQL sync reads the JSON documents directly from Blob.
+
+Blob object writes are durable, but a read-modify-write operation is not transactional: simultaneous requests updating the same JSON object can overwrite each other's changes. Local development continues to use the local `storage/` directory and does not require a Blob token.
 
 The database-related files are located in:
 
