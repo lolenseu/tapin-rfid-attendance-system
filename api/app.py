@@ -28,10 +28,10 @@ from werkzeug.utils import secure_filename
 # Vercel configuration comes directly from the project's Environment Variables.
 #
 # FIX: Broaden Vercel detection. Vercel sets VERCEL=1 on every deployment,
-# but VERCEL_ENV ("production" | "preview" | "development") is also a reliable
-# signal. Checking both prevents the app from silently running in
-# "local mode" on a preview deployment and then failing when it tries to
-# write to a read-only filesystem.
+# but VERCEL_ENV ("production" | "preview" | "development") and VERCEL_URL
+# are also reliable signals. Checking all three prevents the app from
+# silently running in "local mode" on a preview deployment and then failing
+# when it tries to write to a read-only filesystem.
 IS_VERCEL = (
     os.getenv("VERCEL") == "1"
     or bool(os.getenv("VERCEL_ENV"))
@@ -340,12 +340,9 @@ if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Use a stable path anchor for Vercel Blob keys. Storage data itself is not
-# written to this temporary directory when running on Vercel.
-#
-# NOTE: /tmp is the ONLY writable directory on Vercel's serverless runtime.
-# If BLOB_READ_WRITE_TOKEN is missing, all storage operations fall back to
-# writing here — which works for a single invocation but is NOT persistent
-# across requests. The Blob token is required for real persistence.
+# written to this temporary directory when running on Vercel — it lives in
+# the Blob store. The /tmp path is only used as a fallback if Blob is
+# unavailable, and as the base for computing relative Blob keys.
 if IS_VERCEL:
     BASE_DIR = os.path.join(tempfile.gettempdir(), "tapin-rfid-attendance-system")
 
@@ -646,30 +643,47 @@ def _initialize_vercel_blob_storage():
         produce a clear log line telling you to add BLOB_READ_WRITE_TOKEN.
       • You can hit /api/faces/status to confirm the app is alive while
         you configure the token.
+
+    Env vars used:
+      • BLOB_READ_WRITE_TOKEN — required. Vercel auto-injects this when a
+        Blob store is connected to the project. It has the form
+        "vercel_blob_rw_<store>_<secret>".
+      • BLOB_STORE_ID — optional. Vercel auto-injects this for the linked
+        store (e.g. "store_ytDrd6RS0JPIi7U1"). Only pass it explicitly if
+        your project has multiple Blob stores and you want to pin one.
     """
     global _vercel_blob_client
 
     if not IS_VERCEL:
         return
 
-    blob_token = (
-        os.getenv("BLOB_READ_WRITE_TOKEN")
-        or os.getenv("VERCEL_BLOB_READ_WRITE_TOKEN")
-        or os.getenv("storage_READ_WRITE_TOKEN")
-    )
+    blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
     if not blob_token:
         print(
             "[Blob] ⚠️  Vercel Blob storage token is not configured. "
-            "Set BLOB_READ_WRITE_TOKEN in your Vercel project's Environment "
-            "Variables and redeploy. Falling back to /tmp storage for now — "
-            "data will NOT persist across requests."
+            "Connect a Blob store in Vercel Dashboard → Storage, then redeploy. "
+            "Falling back to /tmp storage for now — data will NOT persist "
+            "across requests."
         )
         return
 
+    # Vercel auto-injects BLOB_STORE_ID when a store is linked. It is
+    # optional for the SDK — passing it is only needed if the project has
+    # more than one Blob store and you want to pin a specific one.
+    store_id = os.getenv("BLOB_STORE_ID")
+
     try:
         from vercel.blob import BlobClient
-        _vercel_blob_client = BlobClient(token=blob_token)
-        print("[Blob] Direct private Blob storage enabled for storage/.")
+
+        # BlobClient accepts store_id as a keyword. If it's None, the SDK
+        # derives the store from the token itself, which is the normal case
+        # for a single-store project.
+        if store_id:
+            _vercel_blob_client = BlobClient(token=blob_token, store_id=store_id)
+            print(f"[Blob] Private Blob storage enabled (store_id={store_id}).")
+        else:
+            _vercel_blob_client = BlobClient(token=blob_token)
+            print("[Blob] Private Blob storage enabled (store_id auto-detected).")
     except Exception as e:
         # The `vercel` package may not be installed, or the token may be
         # malformed. Either way, do NOT crash the app — fall back to /tmp.
