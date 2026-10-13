@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 API_BASE_URL = os.getenv(
     "TAPIN_API_URL",
-    "http://lolenseu.pythonanywhere.com",
+    "https://lolenseu.pythonanywhere.com",
 ).rstrip("/")
 RFID = "0987654"
 DEVICE_ID = "esp32-rfid-001"

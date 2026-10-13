@@ -13,7 +13,7 @@
 // ============================================================================
 // API CONNECTION — mirrors dashboard.js
 // ============================================================================
-const API_ORIGIN = (window.TAPIN_API_URL || 'https://tapin-api.up.railway.app').replace(/\/+$/, '');
+const API_ORIGIN = (window.TAPIN_API_URL || 'https://lolenseu.pythonanywhere.com').replace(/\/+$/, '');
 const API_BASE = API_ORIGIN + '/api/faces';
 
 // Diagnostic — remove once everything works

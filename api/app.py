@@ -183,12 +183,13 @@ def is_production():
     """Detect if running in production environment."""
     return os.environ.get("ENVIRONMENT", "").lower() in ["production", "prod"] or \
            os.environ.get("RAILWAY_ENVIRONMENT", "").lower() == "production" or \
-           os.environ.get("RENDER", "").lower() == "true"
+           os.environ.get("RENDER", "").lower() == "true" or \
+           bool(os.environ.get("PYTHONANYWHERE_SITE") or os.environ.get("PYTHONANYWHERE_DOMAIN"))
 
 def get_base_url():
     """Get the base URL for the application."""
     if is_production():
-        return os.environ.get("BASE_URL", "https://tapin-api.up.railway.app")
+        return os.environ.get("BASE_URL", "https://lolenseu.pythonanywhere.com")
     else:
         return "http://localhost:5000"
 
@@ -228,7 +229,7 @@ def is_port_in_use(port):
 # Allowed origins for both local and production
 ALLOWED_ORIGINS = [
     # Production
-    "https://tapin-api.up.railway.app",
+    "https://lolenseu.pythonanywhere.com",
     # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -322,7 +323,8 @@ CALENDAR_EVENTS_FILE = os.path.join(BASE_DIR, "storage", "database", "calendar-e
 # Structure of daily_stats.json:
 #     {
 #         "date": "2026-09-28",              # the calendar day these counts are for
-#         "present_uids": ["021", "045"],    # unique UIDs of employees who tapped in
+#         "rfid_present_uids": ["021", "045"], # successful RFID attendance, source of truth
+#         "present_uids": ["021", "045"],    # dashboard-compatible mirror
 #         "present_count": 2,                # len(present_uids)
 #         "scan_count": 15,                  # total scans today (RFID + face)
 #         "rfid_scan_count": 12,             # RFID taps only
@@ -683,6 +685,7 @@ def _empty_daily_stats(date_str=None):
     return {
         "date": date_str,
         "present_uids": [],
+        "rfid_present_uids": [],
         "present_count": 0,
         "scan_count": 0,
         "rfid_scan_count": 0,
@@ -690,16 +693,64 @@ def _empty_daily_stats(date_str=None):
         "last_updated": datetime.now().isoformat()
     }
 
+def _get_today_rfid_present_uids():
+    """Return employee UIDs with a successful RFID attendance entry today."""
+    present_uids = set()
+    valid_attendance_scan_types = {"am_in", "am_out", "pm_in", "pm_out"}
+    today = datetime.now().date().isoformat()
+    face_scan_keys = _get_face_scan_keys()
+
+    for scan in load_scan_feed().get("scans", []):
+        if not isinstance(scan, dict):
+            continue
+        rfid = str(scan.get("rfid", "")).strip().upper()
+        scanned_at = str(scan.get("scanned_at", "")).strip()
+        if (
+            str(scan.get("source", "")).strip().lower() == "face"
+            or (rfid, scanned_at) in face_scan_keys
+        ):
+            continue
+        if scan.get("scanned_on") != today:
+            continue
+        if str(scan.get("scan_type", "")).strip().lower() not in valid_attendance_scan_types:
+            continue
+
+        employee = scan.get("employee") or {}
+        if rfid:
+            employee = employee_database.get(rfid) or employee
+        if str(employee.get("role", "")).strip().lower() != "employee":
+            continue
+
+        uid = str(employee.get("uid", "")).strip()
+        if uid:
+            present_uids.add(uid)
+
+    return sorted(present_uids)
+
+def _get_face_scan_keys():
+    """Return RFID/timestamp pairs known to have originated at the face scanner."""
+    keys = set()
+    for event in scan_events:
+        if not isinstance(event, dict) or event.get("scan_type") != "face":
+            continue
+        rfid = str(event.get("rfid", "")).strip().upper()
+        scanned_at = str(event.get("scanned_at", "")).strip()
+        if rfid and scanned_at:
+            keys.add((rfid, scanned_at))
+    return keys
+
 def load_daily_stats():
     """Load the daily stats file, resetting it if the date has changed.
 
-    Returns a dict with keys: date, present_uids, present_count, scan_count,
-    rfid_scan_count, face_scan_count, last_updated.
+    Returns a dict with today's RFID-only presence and scan counters.
     """
     today = datetime.now().date().isoformat()
 
     if not os.path.exists(DAILY_STATS_FILE):
         stats = _empty_daily_stats(today)
+        stats["rfid_present_uids"] = _get_today_rfid_present_uids()
+        stats["present_uids"] = stats["rfid_present_uids"][:]
+        stats["present_count"] = len(stats["present_uids"])
         _write_daily_stats(stats)
         return stats
 
@@ -709,6 +760,9 @@ def load_daily_stats():
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"Error reading daily stats file: {e}")
         stats = _empty_daily_stats(today)
+        stats["rfid_present_uids"] = _get_today_rfid_present_uids()
+        stats["present_uids"] = stats["rfid_present_uids"][:]
+        stats["present_count"] = len(stats["present_uids"])
         _write_daily_stats(stats)
         return stats
 
@@ -716,14 +770,21 @@ def load_daily_stats():
     if not isinstance(data, dict) or data.get("date") != today:
         print(f"Daily stats date changed from {data.get('date') if isinstance(data, dict) else '?'} to {today} — resetting counters.")
         stats = _empty_daily_stats(today)
+        stats["rfid_present_uids"] = _get_today_rfid_present_uids()
+        stats["present_uids"] = stats["rfid_present_uids"][:]
+        stats["present_count"] = len(stats["present_uids"])
         _write_daily_stats(stats)
         return stats
 
     # Normalize structure
-    if "present_uids" not in data or not isinstance(data["present_uids"], list):
-        data["present_uids"] = []
-    if "present_count" not in data:
-        data["present_count"] = len(data["present_uids"])
+    rfid_present_uids = data.get("rfid_present_uids")
+    if not isinstance(rfid_present_uids, list):
+        # Legacy stats may include face matches; recover only successful RFID
+        # attendance entries once, then keep the explicit UID list authoritative.
+        rfid_present_uids = _get_today_rfid_present_uids()
+    data["rfid_present_uids"] = sorted({
+        str(uid).strip() for uid in rfid_present_uids if str(uid).strip()
+    })
     if "scan_count" not in data:
         data["scan_count"] = 0
     if "rfid_scan_count" not in data:
@@ -731,6 +792,7 @@ def load_daily_stats():
         data["rfid_scan_count"] = int(data.get("scan_count", 0))
     if "face_scan_count" not in data:
         data["face_scan_count"] = 0
+    data["present_uids"] = data["rfid_present_uids"][:]
     data["present_count"] = len(data["present_uids"])
     if "last_updated" not in data:
         data["last_updated"] = datetime.now().isoformat()
@@ -757,20 +819,21 @@ def save_daily_stats(stats):
     stats["present_count"] = len(stats.get("present_uids", []))
     _write_daily_stats(stats)
 
-def record_daily_scan(uid=None, source="rfid"):
-    """Record one scan for today and, if uid is provided, one present employee.
+def record_daily_scan(uid=None, source="rfid", count_scan=True, mark_rfid_present=False):
+    """Record one RFID or face scan and update today's RFID-only presence.
 
     This is called on EVERY RFID tap and every face match so the daily
     counters are always up to date regardless of whether a dashboard is open.
 
     Args:
-        uid:    The employee's uid if the scan matched a known employee.
-                If None, only the scan counters are incremented.
+        uid: Employee UID associated with a successful attendance scan.
         source: "rfid" or "face" — which sub-counter to increment.
-                Defaults to "rfid" so existing callers keep working.
+        count_scan: Set False when refreshing presence after the RFID feed has
+            been updated for a scan already counted.
+        mark_rfid_present: Set True only after an RFID DTR entry succeeds.
 
-    Both the combined scan_count AND the source-specific counter
-    (rfid_scan_count or face_scan_count) are incremented.
+    When count_scan is True, the combined and source-specific scan counters
+    are incremented.
     """
     stats = load_daily_stats()
 
@@ -778,22 +841,20 @@ def record_daily_scan(uid=None, source="rfid"):
     if source_norm not in ("rfid", "face"):
         source_norm = "rfid"
 
-    # Increment total scan count (combined)
-    stats["scan_count"] = int(stats.get("scan_count", 0)) + 1
+    if count_scan:
+        stats["scan_count"] = int(stats.get("scan_count", 0)) + 1
+        if source_norm == "face":
+            stats["face_scan_count"] = int(stats.get("face_scan_count", 0)) + 1
+        else:
+            stats["rfid_scan_count"] = int(stats.get("rfid_scan_count", 0)) + 1
 
-    # Increment the source-specific counter
-    if source_norm == "face":
-        stats["face_scan_count"] = int(stats.get("face_scan_count", 0)) + 1
-    else:
-        stats["rfid_scan_count"] = int(stats.get("rfid_scan_count", 0)) + 1
+    if mark_rfid_present and source_norm == "rfid" and uid:
+        rfid_present_uids = set(stats.get("rfid_present_uids", []))
+        rfid_present_uids.add(str(uid).strip())
+        stats["rfid_present_uids"] = sorted(rfid_present_uids)
 
-    # Increment unique present count if this is a known employee
-    if uid:
-        uid_str = str(uid).strip()
-        if uid_str and uid_str not in stats.get("present_uids", []):
-            stats.setdefault("present_uids", []).append(uid_str)
-
-    stats["present_count"] = len(stats.get("present_uids", []))
+    stats["present_uids"] = stats.get("rfid_present_uids", [])[:]
+    stats["present_count"] = len(stats["present_uids"])
     save_daily_stats(stats)
     return stats
 
@@ -2396,7 +2457,7 @@ def save_scan_feed(scan_data):
         f.write("\n")
 
 # Add scan to feed
-def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="unknown"):
+def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="unknown", source="rfid"):
     """Add a single scan to the feed with proper formatting.
 
     Deduplicates on (rfid, scanned_at). If the same physical tap is written
@@ -2428,6 +2489,7 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
         "scanned_on": scan_date,
         "found": found,
         "scan_type": scan_type,
+        "source": source,
         "timestamp": datetime.now().isoformat(),
         "employee": employee_snapshot
     }
@@ -2447,6 +2509,7 @@ def add_scan_to_feed(rfid, scanned_at, employee=None, found=False, scan_type="un
         new_type = str(scan_type or "unknown").lower()
         if prev_type in ("unknown", "") and new_type not in ("unknown", ""):
             prev["scan_type"] = scan_type
+        prev["source"] = source
         # Fill in the employee record if it was missing before.
         if not prev.get("employee") and employee_snapshot:
             prev["employee"] = employee_snapshot
@@ -2835,7 +2898,7 @@ def format_dtr_time_24h(scan_time):
     return scan_time.strftime("%H:%M")
 
 # Add a device timestamp to the correct DTR slot.
-def record_attendance_scan(employee, scanned_at):
+def record_attendance_scan(employee, scanned_at, source="rfid"):
     """Record attendance scan - handles creating records for new employees and months"""
     scan_time = parse_scan_time(scanned_at)
     rfid = employee.get("rfid")
@@ -2909,7 +2972,8 @@ def record_attendance_scan(employee, scanned_at):
                 scanned_at,
                 employee,
                 True,
-                f"{period}_in"
+                f"{period}_in",
+                source=source,
             )
             # Log activity
             add_activity(
@@ -2948,7 +3012,8 @@ def record_attendance_scan(employee, scanned_at):
                 scanned_at,
                 employee,
                 True,
-                f"{period}_out"
+                f"{period}_out",
+                source=source,
             )
             # Log activity
             add_activity(
@@ -3289,12 +3354,29 @@ def get_dashboard_statistics():
 # Prepare recent scans and user records for the dashboard UI.
 def get_dashboard_data():
     recent_scans = []
-    for event in reversed(scan_events[-50:]):
-        employee = employee_database.get(event.get("rfid"))
+    face_scan_keys = _get_face_scan_keys()
+    for event in load_scan_feed().get("scans", []):
+        if not isinstance(event, dict):
+            continue
+        rfid = str(event.get("rfid", "")).strip().upper()
+        scanned_at = str(event.get("scanned_at", "")).strip()
+        if (
+            str(event.get("source", "")).strip().lower() == "face"
+            or str(event.get("scan_type", "")).strip().lower().startswith("face")
+            or (rfid, scanned_at) in face_scan_keys
+        ):
+            continue
+        if len(recent_scans) >= 50:
+            break
+
+        employee = employee_database.get(rfid) or event.get("employee") or {}
         recent_scans.append({
-            "rfid": event.get("rfid"),
+            "source": "rfid",
+            "rfid": rfid,
             "scanned_at": event.get("scanned_at"),
-            "found": bool(employee),
+            "scanned_on": event.get("scanned_on"),
+            "scan_type": event.get("scan_type", "unknown"),
+            "found": bool(event.get("found", employee)),
             "employee": {
                 "uid": employee.get("uid"),
                 "employeeid": employee.get("employeeid"),
@@ -6269,6 +6351,12 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
             log_data = json.load(f)
         if not isinstance(log_data, list):
             raise ValueError("Face scan database must contain a JSON list")
+        log_data = [
+            entry for entry in log_data
+            if isinstance(entry, dict)
+            and entry.get("scan_type") == "face_verification"
+            and entry.get("status") == "face_verified"
+        ]
     else:
         log_data = []
     log_data.insert(0, log_entry)
@@ -6382,7 +6470,7 @@ def faces_record():
     if FACE_SCAN_ALLOW_DIRECT_DTR:
         # Original behavior: face scan writes directly to DTR
         try:
-            record, result = record_attendance_scan(employee, scanned_at)
+            record, result = record_attendance_scan(employee, scanned_at, source="face")
             save_attendance_data()
 
             # Record the daily stats (present + face scan counts) so the counters
@@ -6393,7 +6481,14 @@ def faces_record():
             except Exception as e:
                 print(f"Warning: failed to update daily stats from face scan: {e}")
 
-            add_scan_to_feed(employee_rfid, scanned_at, employee, True, scan_type="face_recognition")
+            add_scan_to_feed(
+                employee_rfid,
+                scanned_at,
+                employee,
+                True,
+                scan_type="face_recognition",
+                source="face",
+            )
             scan_events.append({
                 "rfid": employee_rfid,
                 "scanned_at": scanned_at,
@@ -6504,8 +6599,14 @@ def faces_scan_log():
             "status": "error",
             "message": "Failed to load face scan records",
         }), 500
-    total = len(log_data)
-    page_logs = log_data[offset:offset + limit]
+    verified_logs = [
+        entry for entry in log_data
+        if isinstance(entry, dict)
+        and entry.get("scan_type") == "face_verification"
+        and entry.get("status") == "face_verified"
+    ]
+    total = len(verified_logs)
+    page_logs = verified_logs[offset:offset + limit]
     return jsonify({
         "status": "success",
         "count": total,
@@ -7933,17 +8034,16 @@ def receive_rfid():
         employee = employee_database.get(rfid)
         found = bool(employee)
 
-        # Record the daily stats (present + RFID scan counts) IMMEDIATELY,
-        # regardless of whether any dashboard is open. The "rfid" source
-        # increments rfid_scan_count instead of face_scan_count.
+        # Log every physical RFID read, including unknown or unauthorized cards.
+        # record_attendance_scan() later upgrades this entry with its DTR slot.
+        add_scan_to_feed(rfid, scanned_at, employee, found, scan_type="unknown")
+
+        # Count the physical RFID read immediately; presence is marked only
+        # after the attendance state machine records a successful DTR entry.
         try:
-            record_daily_scan(uid=employee.get("uid") if employee else None, source="rfid")
+            record_daily_scan(source="rfid")
         except Exception as e:
             print(f"Warning: failed to update daily stats: {e}")
-
-        # Do NOT call add_scan_to_feed here — record_attendance_scan will do it
-        # with the correct scan_type (am_in / am_out / pm_in / pm_out) once the
-        # in/out state machine runs below.
 
         # Add to scan events (raw data for statistics)
         scan_event = {
@@ -7971,6 +8071,16 @@ def receive_rfid():
             print(f"Attendance record result: {result}")
             # Save attendance data (ONLY records, no scan events)
             save_attendance_data()
+            if result == "success":
+                try:
+                    record_daily_scan(
+                        uid=employee.get("uid"),
+                        source="rfid",
+                        count_scan=False,
+                        mark_rfid_present=True,
+                    )
+                except Exception as e:
+                    print(f"Warning: failed to refresh RFID presence count: {e}")
 
             # In two-factor mode, remove RFID from authorized list after successful recording
             if not FACE_SCAN_ALLOW_DIRECT_DTR:

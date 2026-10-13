@@ -2026,8 +2026,12 @@ function updateAttendanceTable(scans) {
     const body = document.getElementById('dashboardAttendanceBody');
     if (!body) return;
     
-    // Store raw data for filtering
-    attendanceData = scans || [];
+    // This table is the RFID-only feed; face recognition has its own log.
+    attendanceData = (scans || []).filter((scan) => {
+        const source = String(scan.source || '').toLowerCase();
+        const scanType = String(scan.scan_type || '').toLowerCase();
+        return source !== 'face' && !scanType.startsWith('face');
+    });
     applyAttendanceFilters();
 }
 
@@ -2346,15 +2350,25 @@ function populateAttendanceDepartmentFilter(scans) {
 function updateScanTable(scans) {
     const body = document.getElementById('dashboardScanBody');
     if (!body) return;
-    body.innerHTML = scans.slice(0, 10).map((scan) => {
-        const employee = scan.employee;
+    const rfidScans = (scans || []).filter((scan) => {
+        const source = String(scan.source || '').toLowerCase();
+        const scanType = String(scan.scan_type || '').toLowerCase();
+        return source !== 'face' && !scanType.startsWith('face');
+    });
+    body.innerHTML = rfidScans.slice(0, 10).map((scan) => {
+        const employee = scan.employee || null;
         const name = employee ? `${employee.firstname || ''} ${employee.lastname || ''}`.trim() : 'Unknown card';
+        const scanType = String(scan.scan_type || 'unknown').replaceAll('_', ' ').toUpperCase();
+        const status = employee
+            ? (scanType === 'UNKNOWN' ? 'RFID detected' : scanType)
+            : 'Unknown card';
         return `<tr>
-            <td><div class="emp-cell"><div class="emp-avatar">${escapeHtml(employee ? initials(employee) : '--')}</div><div><div class="emp-name">${escapeHtml(name)}</div><div class="emp-id">${escapeHtml(scan.rfid)}</div></div></div></td>
-            <td>${escapeHtml(employee ? employee.role : 'Unregistered')}</td><td>${escapeHtml(scan.scanned_at)}</td><td>--</td>
-            <td><span class="badge ${employee ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${employee ? 'Recognized' : 'Unknown'}</span></td>
+            <td><div class="emp-cell"><div class="emp-avatar">${escapeHtml(employee ? initials(employee) : '--')}</div><div><div class="emp-name">${escapeHtml(name)}</div><div class="emp-id">${escapeHtml(scan.rfid || '--')}</div></div></div></td>
+            <td>${escapeHtml(employee ? employee.department || '--' : '--')}</td>
+            <td>${escapeHtml(scan.scanned_at || '--')}</td>
+            <td><span class="badge ${employee ? 'badge-present' : 'badge-absent'}"><span class="badge-dot"></span>${escapeHtml(status)}</span></td>
         </tr>`;
-    }).join('') || '<tr><td colspan="5">No RFID scans received today.</td></tr>';
+    }).join('') || '<tr><td colspan="4">No RFID scans received today.</td></tr>';
 }
 
 // Update the activity timeline with data from the activity feed
@@ -2556,15 +2570,10 @@ function applyDailyStatsToCards(dailyStats) {
     const presentEl = document.getElementById('statPresentToday');
     if (presentEl) presentEl.textContent = dailyStats.present_count ?? 0;
 
-    // RFID Scans card — RFID-only counter. Falls back to the combined
-    // scan_count if the server for some reason didn't send rfid_scan_count
-    // (keeps older backends working without error).
+    // Never use the combined count here: it includes face-scanner matches.
     const rfidEl = document.getElementById('statRfidScans');
     if (rfidEl) {
-        const rfidValue = (dailyStats.rfid_scan_count !== undefined)
-            ? dailyStats.rfid_scan_count
-            : (dailyStats.scan_count ?? 0);
-        rfidEl.textContent = rfidValue;
+        rfidEl.textContent = dailyStats.rfid_scan_count ?? 0;
     }
 
     // Facial Scans card — face-only counter.
@@ -2585,7 +2594,7 @@ function applyDailyStatsToCards(dailyStats) {
         attendance_rate: (window.__lastStats && window.__lastStats.attendance_rate) || 0,
         rfid_scans_today: (dailyStats.rfid_scan_count !== undefined)
             ? dailyStats.rfid_scan_count
-            : (dailyStats.scan_count ?? 0),
+            : 0,
         face_scans_today: dailyStats.face_scan_count ?? 0,
     });
 

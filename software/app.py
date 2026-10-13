@@ -37,7 +37,7 @@ def get_storage_path():
 # ============================================================================
 # Configuration
 # ============================================================================
-API_URL = "https://tapin-api.up.railway.app"
+API_URL = "https://lolenseu.pythonanywhere.com"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Use external storage path that can be edited
