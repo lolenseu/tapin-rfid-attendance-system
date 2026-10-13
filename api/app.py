@@ -26,7 +26,17 @@ from werkzeug.utils import secure_filename
 # Load config.env locally when available. Existing process variables take
 # precedence; if the file is unavailable, os.environ remains the fallback.
 # Vercel configuration comes directly from the project's Environment Variables.
-IS_VERCEL = os.getenv("VERCEL") == "1"
+#
+# FIX: Broaden Vercel detection. Vercel sets VERCEL=1 on every deployment,
+# but VERCEL_ENV ("production" | "preview" | "development") is also a reliable
+# signal. Checking both prevents the app from silently running in
+# "local mode" on a preview deployment and then failing when it tries to
+# write to a read-only filesystem.
+IS_VERCEL = (
+    os.getenv("VERCEL") == "1"
+    or bool(os.getenv("VERCEL_ENV"))
+    or bool(os.getenv("VERCEL_URL"))
+)
 CONFIG_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.env")
 CONFIG_ENV_LOADED = False
 if IS_VERCEL:
@@ -202,12 +212,19 @@ def is_production():
     """Detect if running in production environment."""
     return os.environ.get("ENVIRONMENT", "").lower() in ["production", "prod"] or \
            os.environ.get("RAILWAY_ENVIRONMENT", "").lower() == "production" or \
-           os.environ.get("RENDER", "").lower() == "true"
+           os.environ.get("RENDER", "").lower() == "true" or \
+           os.environ.get("VERCEL_ENV", "").lower() == "production"
 
 def get_base_url():
     """Get the base URL for the application."""
     if is_production():
-        return os.environ.get("BASE_URL", "https://lolenseu.pythonanywhere.com")
+        # Prefer explicit BASE_URL, then Vercel's auto-injected URL, then a
+        # sensible fallback so logs never show "None".
+        return (
+            os.environ.get("BASE_URL")
+            or os.environ.get("VERCEL_URL")
+            or "https://lolenseu.pythonanywhere.com"
+        )
     else:
         return "http://localhost:5000"
 
@@ -324,6 +341,11 @@ if not os.path.exists(os.path.join(BASE_DIR, "storage")):
 
 # Use a stable path anchor for Vercel Blob keys. Storage data itself is not
 # written to this temporary directory when running on Vercel.
+#
+# NOTE: /tmp is the ONLY writable directory on Vercel's serverless runtime.
+# If BLOB_READ_WRITE_TOKEN is missing, all storage operations fall back to
+# writing here — which works for a single invocation but is NOT persistent
+# across requests. The Blob token is required for real persistence.
 if IS_VERCEL:
     BASE_DIR = os.path.join(tempfile.gettempdir(), "tapin-rfid-attendance-system")
 
@@ -563,20 +585,29 @@ WORK_STATUS_PERIODS = {
     "whole_day": "Whole Day"
 }
 
-# Ensure directories exist
-os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(WORK_STATUS_DATA_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(DAILY_STATS_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
-os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(WORK_STATUS_FEED_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
-os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
-os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
-os.makedirs(WORK_STATUS_REQUEST_STORAGE, exist_ok=True)
+# Ensure directories exist. On Vercel these are created under /tmp and are
+# ephemeral, but the calls must still succeed so the rest of the module can
+# import cleanly. Wrapped in try/except so a read-only filesystem never
+# crashes the app at import time.
+for _dir in (
+    os.path.dirname(USER_DATA_FILE),
+    os.path.dirname(ATTENDANCE_DATA_FILE),
+    os.path.dirname(WORK_STATUS_DATA_FILE),
+    os.path.dirname(DAILY_STATS_FILE),
+    PROFILE_STORAGE,
+    os.path.dirname(SCAN_FEED_FILE),
+    os.path.dirname(SCAN_EVENTS_FILE),
+    os.path.dirname(WORK_STATUS_FEED_FILE),
+    os.path.dirname(ACTIVITY_FEED_FILE),
+    os.path.dirname(SETTINGS_FILE),
+    NOTIFICATION_STORAGE,
+    EMPLOYEE_SETTINGS_STORAGE,
+    WORK_STATUS_REQUEST_STORAGE,
+):
+    try:
+        os.makedirs(_dir, exist_ok=True)
+    except Exception as _e:
+        print(f"[Boot] Warning: could not create directory {_dir}: {_e}")
 
 # On Vercel, file-shaped storage paths map directly to private Blob objects.
 # Local development continues to use the filesystem.
@@ -600,6 +631,22 @@ def _storage_blob_path(file_path):
 
 
 def _initialize_vercel_blob_storage():
+    """Initialize the Vercel Blob client if running on Vercel.
+
+    FIX: This function is now NON-FATAL. If the token is missing it prints a
+    loud warning and returns None instead of raising RuntimeError. Raising
+    here was the root cause of the 500 FUNCTION_INVOCATION_FAILED errors —
+    the exception happened at module import time, so Flask never even
+    started and every single request (including /favicon.ico) returned 500.
+
+    With the warning-only behavior:
+      • The app boots and serves requests.
+      • All _storage_* helpers fall back to /tmp on Vercel.
+      • The first request that actually needs persistent storage will
+        produce a clear log line telling you to add BLOB_READ_WRITE_TOKEN.
+      • You can hit /api/faces/status to confirm the app is alive while
+        you configure the token.
+    """
     global _vercel_blob_client
 
     if not IS_VERCEL:
@@ -611,15 +658,23 @@ def _initialize_vercel_blob_storage():
         or os.getenv("storage_READ_WRITE_TOKEN")
     )
     if not blob_token:
-        raise RuntimeError(
-            "Vercel Blob storage is enabled, but BLOB_READ_WRITE_TOKEN "
-            "or an equivalent read/write token is not configured."
+        print(
+            "[Blob] ⚠️  Vercel Blob storage token is not configured. "
+            "Set BLOB_READ_WRITE_TOKEN in your Vercel project's Environment "
+            "Variables and redeploy. Falling back to /tmp storage for now — "
+            "data will NOT persist across requests."
         )
+        return
 
-    from vercel.blob import BlobClient
-
-    _vercel_blob_client = BlobClient(token=blob_token)
-    print("[Blob] Direct private Blob storage enabled for storage/.")
+    try:
+        from vercel.blob import BlobClient
+        _vercel_blob_client = BlobClient(token=blob_token)
+        print("[Blob] Direct private Blob storage enabled for storage/.")
+    except Exception as e:
+        # The `vercel` package may not be installed, or the token may be
+        # malformed. Either way, do NOT crash the app — fall back to /tmp.
+        print(f"[Blob] ⚠️  Could not initialize Vercel Blob client: {e}")
+        print("[Blob] Falling back to /tmp storage. Data will NOT persist.")
 
 
 _initialize_vercel_blob_storage()
@@ -847,6 +902,7 @@ print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
 print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
 print(f"Environment: {'Production' if is_production() else 'Development'}")
 print(f"Base URL: {get_base_url()}")
+print(f"Blob storage: {'ENABLED' if _vercel_blob_client is not None else 'DISABLED (using filesystem)'}")
 
 # Default settings
 DEFAULT_SETTINGS = {
