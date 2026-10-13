@@ -209,24 +209,42 @@ app.permanent_session_lifetime = timedelta(minutes=30)
 # ============================================================================
 
 def is_production():
-    """Detect if running in production environment."""
+    """Detect if running in a production-like environment.
+
+    IMPORTANT: On Vercel, we treat BOTH "production" and "preview" as
+    production for security purposes. If preview were treated as development,
+    the CORS config below would add "*" to the allowed origins — and since
+    we set supports_credentials=True, browsers would reject every
+    cross-origin request with credentials (because "*" + credentials is
+    forbidden by the CORS spec).
+
+    Local development is the only case where we allow "*".
+    """
     return os.environ.get("ENVIRONMENT", "").lower() in ["production", "prod"] or \
            os.environ.get("RAILWAY_ENVIRONMENT", "").lower() == "production" or \
            os.environ.get("RENDER", "").lower() == "true" or \
-           os.environ.get("VERCEL_ENV", "").lower() == "production"
+           bool(os.environ.get("VERCEL_ENV"))   # any Vercel environment
 
 def get_base_url():
     """Get the base URL for the application."""
+    if IS_VERCEL:
+        # Vercel injects VERCEL_URL for both production and preview deploys.
+        # Prefer an explicit BASE_URL if set, otherwise use VERCEL_URL, and
+        # finally fall back to the production alias.
+        vercel_url = os.environ.get("VERCEL_URL", "").strip()
+        if vercel_url and not vercel_url.startswith("http"):
+            vercel_url = f"https://{vercel_url}"
+        return (
+            os.environ.get("BASE_URL", "").strip()
+            or vercel_url
+            or "https://api-tapin.vercel.app"
+        )
     if is_production():
-        # Prefer explicit BASE_URL, then Vercel's auto-injected URL, then a
-        # sensible fallback so logs never show "None".
         return (
             os.environ.get("BASE_URL")
-            or os.environ.get("VERCEL_URL")
-            or "https://lolenseu.pythonanywhere.com"
+            or "https://api-tapin.vercel.app"
         )
-    else:
-        return "http://localhost:5000"
+    return "http://localhost:5000"
 
 # ============================================================================
 # PORT UTILITY - Find a free port if the default is in use
@@ -268,6 +286,8 @@ ALLOWED_ORIGINS = [
     "https://tapin-api.up.railway.app",
     # Face scanner frontend on Vercel — the actual deployed URL
     "https://tapin-ispsctagudin.vercel.app",
+    # The API itself (for same-origin requests routed through Vercel)
+    "https://api-tapin.vercel.app",
     # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -284,11 +304,19 @@ ALLOWED_ORIGINS = [
 # FACE_SCANNER_ORIGINS=https://your-project.vercel.app,https://your-custom-domain.com
 # on the API host so you don't have to edit this file every time the Vercel
 # preview URL changes.
+#
+# On Vercel, every preview deployment gets a unique URL like
+# "api-tapin-<hash>-<team>.vercel.app". Rather than editing this file, set
+# FACE_SCANNER_ORIGINS in the project's Environment Variables to include
+# your face-scanner frontend origin(s).
 _extra_origins = os.environ.get("FACE_SCANNER_ORIGINS", "")
 if _extra_origins.strip():
     ALLOWED_ORIGINS.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
 
-# For development, allow all origins
+# Wildcard origins are ONLY allowed for local development. On Vercel (any
+# environment) we keep the explicit list, because combining "*" with
+# supports_credentials=True is forbidden by the CORS spec and breaks
+# authenticated cross-origin requests.
 if not is_production():
     ALLOWED_ORIGINS.append("*")
 
@@ -326,11 +354,16 @@ app.config.update(
 JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
 JWT_EXPIRATION = timedelta(hours=3)
 
-# FIXED: Get the base directory more reliably
-# Try multiple ways to find the storage folder
+# FIXED: Get the base directory more reliably.
+#
+# The default is the parent of the folder containing app.py. On Vercel the
+# entire /tmp directory is writable but ephemeral, and BASE_DIR is only used
+# as an anchor for computing Blob keys (the real data lives in Blob). On
+# local dev, BASE_DIR points at the project root so the storage/ folder
+# sits next to app.py.
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# If app.py is in the root folder (not in app/ subfolder), adjust
+# If app.py is in the root folder (not in an app/ subfolder), adjust
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     # Try using the current working directory
     BASE_DIR = os.getcwd()
@@ -586,6 +619,11 @@ WORK_STATUS_PERIODS = {
 # ephemeral, but the calls must still succeed so the rest of the module can
 # import cleanly. Wrapped in try/except so a read-only filesystem never
 # crashes the app at import time.
+#
+# On Vercel, these directories are only used by the fallback path (when
+# Blob isn't available). Once Blob is initialized, all file-shaped storage
+# operations go through the Blob client instead, and these local
+# directories are effectively dead weight — but they cost nothing.
 for _dir in (
     os.path.dirname(USER_DATA_FILE),
     os.path.dirname(ATTENDANCE_DATA_FILE),
@@ -614,6 +652,14 @@ _filesystem_open = open
 
 
 def _storage_blob_path(file_path):
+    """Return the Blob object key for a local storage path, or None.
+
+    Returns None when the path is outside the storage/ tree (in which case
+    the caller must fall back to the local filesystem) or when the path
+    cannot be normalized. On Vercel, a None return means the file will be
+    written to /tmp and lost — so we log when that happens with a token
+    configured, to make silent fallbacks visible.
+    """
     storage_root = os.path.abspath(os.path.join(BASE_DIR, "storage"))
     absolute_path = os.path.abspath(file_path)
     try:
@@ -630,7 +676,7 @@ def _storage_blob_path(file_path):
 def _initialize_vercel_blob_storage():
     """Initialize the Vercel Blob client if running on Vercel.
 
-    FIX: This function is now NON-FATAL. If the token is missing it prints a
+    FIX: This function is NON-FATAL. If the token is missing it prints a
     loud warning and returns None instead of raising RuntimeError. Raising
     here was the root cause of the 500 FUNCTION_INVOCATION_FAILED errors —
     the exception happened at module import time, so Flask never even
@@ -651,6 +697,8 @@ def _initialize_vercel_blob_storage():
       • BLOB_STORE_ID — optional. Vercel auto-injects this for the linked
         store (e.g. "store_ytDrd6RS0JPIi7U1"). Only pass it explicitly if
         your project has multiple Blob stores and you want to pin one.
+        Older Vercel projects may name this "storage_STORE_ID" instead —
+        both names are checked below.
     """
     global _vercel_blob_client
 
@@ -670,7 +718,10 @@ def _initialize_vercel_blob_storage():
     # Vercel auto-injects BLOB_STORE_ID when a store is linked. It is
     # optional for the SDK — passing it is only needed if the project has
     # more than one Blob store and you want to pin a specific one.
-    store_id = os.getenv("BLOB_STORE_ID")
+    #
+    # Older Vercel integrations named the variable "storage_STORE_ID".
+    # We check both so either naming convention works.
+    store_id = os.getenv("BLOB_STORE_ID") or os.getenv("storage_STORE_ID")
 
     try:
         from vercel.blob import BlobClient
@@ -1169,6 +1220,7 @@ def reset_daily_stats_if_needed():
 # Called from:
 #   • the scheduler thread when the local date changes at 00:00
 #   • POST /api/mysql/sync  (manual trigger, useful for testing)
+#   • GET  /api/mysql/sync  (Vercel Cron — cron only sends GET)
 #   • app startup (only if the last sync is more than 24h old)
 #
 # All work happens inside a single transaction per logical group so a
@@ -4439,11 +4491,48 @@ def get_work_status_types():
 # ============================================================================
 # MYSQL SYNC ROUTES
 # ============================================================================
-# Manual trigger for the JSON → MySQL sync. Useful for testing and for
-# running the sync on demand without waiting for midnight.
+# Manual trigger for the JSON → MySQL sync. Two flavors:
+#   • POST /api/mysql/sync  — for manual/ad-hoc calls and testing
+#   • GET  /api/mysql/sync  — for Vercel Cron, which only sends GET requests
+#
+# Both call the same run_mysql_sync() helper, so they are functionally
+# identical. If you only ever hit the API by hand, POST is the one to use.
+# If you wire up a Vercel Cron in vercel.json, the GET route is the one it
+# will hit.
+
 @app.route("/api/mysql/sync", methods=["POST"])
 def mysql_sync_route():
-    """Force an immediate JSON → MySQL sync. Returns per-table counts."""
+    """Force an immediate JSON → MySQL sync. Returns per-table counts.
+
+    This is the manual/testing trigger. Use GET /api/mysql/sync for the
+    Vercel Cron variant.
+    """
+    try:
+        result = run_mysql_sync()
+        if result.get("status") == "success":
+            return jsonify(result), 200
+        return jsonify(result), 500
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/api/mysql/sync", methods=["GET"])
+def mysql_sync_route_get():
+    """GET variant of the MySQL sync, for Vercel Cron.
+
+    Vercel Cron only sends GET requests, so a POST-only route can never
+    be scheduled. This route calls exactly the same run_mysql_sync()
+    helper as the POST route, so the JSON→MySQL push happens the same way.
+
+    To schedule it, add this to vercel.json:
+
+        "crons": [
+          { "path": "/api/mysql/sync", "schedule": "0 16 * * *" }
+        ]
+
+    The schedule "0 16 * * *" runs the job at 16:00 UTC daily, which is
+    00:00 Philippine Time (UTC+8) — matching the app's intent of syncing
+    at midnight.
+    """
     try:
         result = run_mysql_sync()
         if result.get("status") == "success":
@@ -4454,7 +4543,15 @@ def mysql_sync_route():
 
 @app.route("/api/mysql/status", methods=["GET"])
 def mysql_status_route():
-    """Check MySQL connectivity and report the last sync date."""
+    """Check MySQL connectivity and report the last sync date.
+
+    NOTE: `last_sync_date` is stored in a module-level variable, which is
+    per-Lambda-instance and resets whenever Vercel spins up a fresh
+    instance. A value of null does NOT mean the sync failed — it just
+    means this particular instance has not run a sync yet. The MySQL
+    database itself is the source of truth. To verify a sync happened,
+    hit the sync route and check the `counts` object in its response.
+    """
     reachable = ping()
     return jsonify({
         "status": "success" if reachable else "error",
@@ -8481,7 +8578,7 @@ def debug_blob():
     import os as _os
 
     token_present = bool(_os.getenv("BLOB_READ_WRITE_TOKEN"))
-    store_id_env = _os.getenv("BLOB_STORE_ID")
+    store_id_env = _os.getenv("BLOB_STORE_ID") or _os.getenv("storage_STORE_ID")
     client_ok = _vercel_blob_client is not None
 
     # Compute the exact Blob key the app would use for users.json
@@ -8533,7 +8630,12 @@ def debug_blob():
 # scheduler must be started here to guarantee the midnight wipe fires.
 try:
     if IS_VERCEL:
-        print("[Scheduler] Background scheduler disabled on Vercel; cron handles scheduled work.")
+        print(
+            "[Scheduler] Background scheduler disabled on Vercel.\n"
+            "            The daily stats reset and MySQL sync will NOT run automatically.\n"
+            "            To enable them, add a Vercel Cron in vercel.json pointing at\n"
+            "            GET /api/mysql/sync — see the route's docstring for the schedule."
+        )
     else:
         start_nightly_wipe_scheduler()
 except Exception as e:
