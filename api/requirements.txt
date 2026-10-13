@@ -8,10 +8,8 @@ gunicorn==23.0.0
 requests==2.32.3
 PyJWT==2.8.0
 
-# MySQL — Aiven MySQL 8.0 with TLS
-PyMySQL==1.1.1
-cryptography==43.0.3
-DBUtils==3.1.0
+# PostgreSQL
+psycopg[binary]>=3.2,<4
 
 # Reporting / Imaging
 reportlab==4.0.9
@@ -22,6 +20,3 @@ openpyxl==3.1.5
 
 # Config / Environment
 python-dotenv==1.0.0
-
-# Vercel Blob persistent storage
-vercel==0.11.6

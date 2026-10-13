@@ -8,85 +8,40 @@ import secrets
 import io
 import re
 import socket
-import ssl
-import pymysql
-import tempfile
 import mimetypes
-import threading
+import psycopg
+from pathlib import Path
 
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 
-from flask import Flask, Response, abort, jsonify, request, session, send_file, make_response
+from flask import Flask, jsonify, request, session, send_from_directory, send_file, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
-from pymysql.cursors import DictCursor
+from psycopg.rows import dict_row
 from werkzeug.utils import secure_filename
 
-# Load config.env locally when available. Existing process variables take
-# precedence; if the file is unavailable, os.environ remains the fallback.
-# Vercel configuration comes directly from the project's Environment Variables.
-#
-# FIX: Broaden Vercel detection. Vercel sets VERCEL=1 on every deployment,
-# but VERCEL_ENV ("production" | "preview" | "development") and VERCEL_URL
-# are also reliable signals. Checking all three prevents the app from
-# silently running in "local mode" on a preview deployment and then failing
-# when it tries to write to a read-only filesystem.
-IS_VERCEL = (
-    os.getenv("VERCEL") == "1"
-    or bool(os.getenv("VERCEL_ENV"))
-    or bool(os.getenv("VERCEL_URL"))
+# Load local settings when available; platform environment variables take precedence.
+CONFIG_ENV_PATH = Path(__file__).resolve().with_name("config.env")
+try:
+    load_dotenv(dotenv_path=CONFIG_ENV_PATH, override=False)
+except OSError as exc:
+    print(f"[app] Could not load {CONFIG_ENV_PATH.name}; using process environment variables: {exc}")
+
+# PostgreSQL configuration. Prefer Railway's private URL in Railway and the
+# public URL for local development when both are available.
+_railway_runtime = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID"))
+DATABASE_URL = (
+    os.getenv("DATABASE_URL", "").strip()
+    if _railway_runtime
+    else (os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL", "")).strip()
 )
-CONFIG_ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.env")
-CONFIG_ENV_LOADED = False
-if IS_VERCEL:
-    print("[app] Using Vercel environment variables for configuration.")
-else:
-    try:
-        CONFIG_ENV_LOADED = load_dotenv(CONFIG_ENV_PATH, override=False)
-    except (OSError, UnicodeError, ValueError) as error:
-        print(
-            "[app] Could not load config.env; falling back to process "
-            f"environment variables ({type(error).__name__}: {error})."
-        )
-
-    if CONFIG_ENV_LOADED:
-        print("[app] Loaded local configuration from config.env.")
-    else:
-        print(
-            "[app] config.env is unavailable; using process environment "
-            "variables for configuration."
-        )
-
-# MySQL configuration
-DB_HOST = os.getenv("DB_HOST", "").strip()
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_USER = os.getenv("DB_USER", "").strip()
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "").strip()
-DB_CA_CONTENT = os.getenv("DB_CA_CONTENT", "").strip()
-
-if DB_CA_CONTENT:
-    DB_SSL_CONTEXT = ssl.create_default_context(cadata=DB_CA_CONTENT)
-    SSL_MODE = "verified with configured CA"
-else:
-    DB_SSL_CONTEXT = ssl.create_default_context()
-    SSL_MODE = "verified with system CA certificates"
-
-DB_CONFIG = {
-    "host": DB_HOST,
-    "port": DB_PORT,
-    "user": DB_USER,
-    "password": DB_PASSWORD,
-    "database": DB_NAME,
-    "charset": "utf8mb4",
-    "cursorclass": DictCursor,
-    "autocommit": False,
-    "connect_timeout": 10,
-    "read_timeout": 30,
-    "write_timeout": 30,
-    "ssl": DB_SSL_CONTEXT,
-}
+DB_HOST = os.getenv("PGHOST", os.getenv("DB_HOST", "")).strip()
+DB_PORT = int(os.getenv("PGPORT", os.getenv("DB_PORT", "5432")))
+DB_USER = os.getenv("PGUSER", os.getenv("DB_USER", "")).strip()
+DB_PASSWORD = os.getenv("PGPASSWORD", os.getenv("DB_PASSWORD", ""))
+DB_NAME = os.getenv("PGDATABASE", os.getenv("DB_NAME", "")).strip()
+DB_SSLMODE = os.getenv("PGSSLMODE", os.getenv("DB_SSLMODE", "prefer")).strip()
 
 # SMTP configuration
 EMAIL_HOST = os.getenv("TAPIN_EMAIL_HOST", "smtp-relay.brevo.com").strip()
@@ -97,13 +52,29 @@ EMAIL_FROM = os.getenv("TAPIN_EMAIL_FROM", "noreply.tapin@gmail.com").strip()
 
 
 def get_db_connection():
-    """Return a fresh PyMySQL connection. Caller must close it."""
-    return pymysql.connect(**DB_CONFIG)
+    """Return a fresh PostgreSQL connection. Caller must close it."""
+    if DATABASE_URL:
+        return psycopg.connect(
+            DATABASE_URL,
+            connect_timeout=10,
+            sslmode=DB_SSLMODE,
+            row_factory=dict_row,
+        )
+    return psycopg.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        dbname=DB_NAME,
+        connect_timeout=10,
+        sslmode=DB_SSLMODE,
+        row_factory=dict_row,
+    )
 
 
 @contextmanager
 def get_cursor(commit=False):
-    """Yield a DictCursor and always close its cursor and connection."""
+    """Yield a dictionary-row cursor and always close its connection."""
     conn = get_db_connection()
     cur = None
     try:
@@ -124,12 +95,12 @@ def get_cursor(commit=False):
 
 
 def ping():
-    """Return True if the database is reachable."""
+    """Return True if PostgreSQL is reachable."""
     try:
         with get_cursor() as cur:
-            cur.execute("SELECT 1 AS ok, VERSION() AS version, DATABASE() AS db")
+            cur.execute("SELECT 1 AS ok, VERSION() AS version, current_database() AS db")
             row = cur.fetchone()
-            print(f"[app] DB OK — MySQL {row['version']} on '{row['db']}'")
+            print(f"[app] DB OK — PostgreSQL {row['version']} on '{row['db']}'")
             return True
     except Exception as e:
         print(f"[app] DB ping FAILED: {e}")
@@ -143,8 +114,8 @@ def get_db_info():
         "port": DB_PORT,
         "user": DB_USER,
         "database": DB_NAME,
-        "ca_configured": bool(DB_CA_CONTENT),
-        "ssl_mode": SSL_MODE,
+        "url_configured": bool(DATABASE_URL),
+        "ssl_mode": DB_SSLMODE,
     }
 
 # Try to import PIL for image processing
@@ -209,42 +180,17 @@ app.permanent_session_lifetime = timedelta(minutes=30)
 # ============================================================================
 
 def is_production():
-    """Detect if running in a production-like environment.
-
-    IMPORTANT: On Vercel, we treat BOTH "production" and "preview" as
-    production for security purposes. If preview were treated as development,
-    the CORS config below would add "*" to the allowed origins — and since
-    we set supports_credentials=True, browsers would reject every
-    cross-origin request with credentials (because "*" + credentials is
-    forbidden by the CORS spec).
-
-    Local development is the only case where we allow "*".
-    """
+    """Detect if running in production environment."""
     return os.environ.get("ENVIRONMENT", "").lower() in ["production", "prod"] or \
            os.environ.get("RAILWAY_ENVIRONMENT", "").lower() == "production" or \
-           os.environ.get("RENDER", "").lower() == "true" or \
-           bool(os.environ.get("VERCEL_ENV"))   # any Vercel environment
+           os.environ.get("RENDER", "").lower() == "true"
 
 def get_base_url():
     """Get the base URL for the application."""
-    if IS_VERCEL:
-        # Vercel injects VERCEL_URL for both production and preview deploys.
-        # Prefer an explicit BASE_URL if set, otherwise use VERCEL_URL, and
-        # finally fall back to the production alias.
-        vercel_url = os.environ.get("VERCEL_URL", "").strip()
-        if vercel_url and not vercel_url.startswith("http"):
-            vercel_url = f"https://{vercel_url}"
-        return (
-            os.environ.get("BASE_URL", "").strip()
-            or vercel_url
-            or "https://api-tapin.vercel.app"
-        )
     if is_production():
-        return (
-            os.environ.get("BASE_URL")
-            or "https://api-tapin.vercel.app"
-        )
-    return "http://localhost:5000"
+        return os.environ.get("BASE_URL", "https://tapin-api.up.railway.app")
+    else:
+        return "http://localhost:5000"
 
 # ============================================================================
 # PORT UTILITY - Find a free port if the default is in use
@@ -282,12 +228,7 @@ def is_port_in_use(port):
 # Allowed origins for both local and production
 ALLOWED_ORIGINS = [
     # Production
-    "https://tapin-2s5w.onrender.com",
     "https://tapin-api.up.railway.app",
-    # Face scanner frontend on Vercel — the actual deployed URL
-    "https://tapin-ispsctagudin.vercel.app",
-    # The API itself (for same-origin requests routed through Vercel)
-    "https://api-tapin.vercel.app",
     # Local development
     "http://localhost:5000",
     "http://127.0.0.1:5000",
@@ -300,23 +241,13 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:*",
 ]
 
-# Extra allowed origins from an env var (comma-separated), e.g. set
-# FACE_SCANNER_ORIGINS=https://your-project.vercel.app,https://your-custom-domain.com
-# on the API host so you don't have to edit this file every time the Vercel
-# preview URL changes.
-#
-# On Vercel, every preview deployment gets a unique URL like
-# "api-tapin-<hash>-<team>.vercel.app". Rather than editing this file, set
-# FACE_SCANNER_ORIGINS in the project's Environment Variables to include
-# your face-scanner frontend origin(s).
+# Extra allowed origins from an env var (comma-separated), so frontend host
+# changes do not require editing this file.
 _extra_origins = os.environ.get("FACE_SCANNER_ORIGINS", "")
 if _extra_origins.strip():
     ALLOWED_ORIGINS.extend([o.strip() for o in _extra_origins.split(",") if o.strip()])
 
-# Wildcard origins are ONLY allowed for local development. On Vercel (any
-# environment) we keep the explicit list, because combining "*" with
-# supports_credentials=True is forbidden by the CORS spec and breaks
-# authenticated cross-origin requests.
+# For development, allow all origins
 if not is_production():
     ALLOWED_ORIGINS.append("*")
 
@@ -344,8 +275,8 @@ app.config.update(
 # ============================================================================
 # WEB FACIAL RECOGNITION INTEGRATION - FACE SCANNER
 # ============================================================================
-# The face scanner frontend (index.html/app.js/styles.css) is deployed
-# standalone on Vercel and does its own face detection/matching in the
+# The face scanner frontend (index.html/app.js/styles.css) is hosted
+# separately and does its own face detection/matching in the
 # browser with face-api.js. This server only exposes the /api/faces/*
 # routes it calls (defined further down, near the other storage routes) —
 # there is no separate facialrecognition module/file anymore.
@@ -354,16 +285,11 @@ app.config.update(
 JWT_SECRET = os.environ.get("JWT_SECRET", secrets.token_urlsafe(32))
 JWT_EXPIRATION = timedelta(hours=3)
 
-# FIXED: Get the base directory more reliably.
-#
-# The default is the parent of the folder containing app.py. On Vercel the
-# entire /tmp directory is writable but ephemeral, and BASE_DIR is only used
-# as an anchor for computing Blob keys (the real data lives in Blob). On
-# local dev, BASE_DIR points at the project root so the storage/ folder
-# sits next to app.py.
+# FIXED: Get the base directory more reliably
+# Try multiple ways to find the storage folder
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# If app.py is in the root folder (not in an app/ subfolder), adjust
+# If app.py is in the root folder (not in app/ subfolder), adjust
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     # Try using the current working directory
     BASE_DIR = os.getcwd()
@@ -371,13 +297,6 @@ if not os.path.exists(os.path.join(BASE_DIR, "storage")):
 # If still not found, try the directory where app.py is located
 if not os.path.exists(os.path.join(BASE_DIR, "storage")):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Use a stable path anchor for Vercel Blob keys. Storage data itself is not
-# written to this temporary directory when running on Vercel — it lives in
-# the Blob store. The /tmp path is only used as a fallback if Blob is
-# unavailable, and as the base for computing relative Blob keys.
-if IS_VERCEL:
-    BASE_DIR = os.path.join(tempfile.gettempdir(), "tapin-rfid-attendance-system")
 
 # Store user records in the storage/database folder (outside app folder)
 USER_DATA_FILE = os.path.join(BASE_DIR, "storage", "database", "users.json")
@@ -615,338 +534,20 @@ WORK_STATUS_PERIODS = {
     "whole_day": "Whole Day"
 }
 
-# Ensure directories exist. On Vercel these are created under /tmp and are
-# ephemeral, but the calls must still succeed so the rest of the module can
-# import cleanly. Wrapped in try/except so a read-only filesystem never
-# crashes the app at import time.
-#
-# On Vercel, these directories are only used by the fallback path (when
-# Blob isn't available). Once Blob is initialized, all file-shaped storage
-# operations go through the Blob client instead, and these local
-# directories are effectively dead weight — but they cost nothing.
-for _dir in (
-    os.path.dirname(USER_DATA_FILE),
-    os.path.dirname(ATTENDANCE_DATA_FILE),
-    os.path.dirname(WORK_STATUS_DATA_FILE),
-    os.path.dirname(DAILY_STATS_FILE),
-    PROFILE_STORAGE,
-    os.path.dirname(SCAN_FEED_FILE),
-    os.path.dirname(SCAN_EVENTS_FILE),
-    os.path.dirname(WORK_STATUS_FEED_FILE),
-    os.path.dirname(ACTIVITY_FEED_FILE),
-    os.path.dirname(SETTINGS_FILE),
-    NOTIFICATION_STORAGE,
-    EMPLOYEE_SETTINGS_STORAGE,
-    WORK_STATUS_REQUEST_STORAGE,
-):
-    try:
-        os.makedirs(_dir, exist_ok=True)
-    except Exception as _e:
-        print(f"[Boot] Warning: could not create directory {_dir}: {_e}")
-
-# On Vercel, file-shaped storage paths map directly to private Blob objects.
-# Local development continues to use the filesystem.
-_vercel_blob_client = None
-STORAGE_BLOB_PREFIX = "storage/"
-_filesystem_open = open
-
-
-def _storage_blob_path(file_path):
-    """Return the Blob object key for a local storage path, or None.
-
-    Returns None when the path is outside the storage/ tree (in which case
-    the caller must fall back to the local filesystem) or when the path
-    cannot be normalized. On Vercel, a None return means the file will be
-    written to /tmp and lost — so we log when that happens with a token
-    configured, to make silent fallbacks visible.
-    """
-    storage_root = os.path.abspath(os.path.join(BASE_DIR, "storage"))
-    absolute_path = os.path.abspath(file_path)
-    try:
-        if os.path.commonpath((storage_root, absolute_path)) != storage_root:
-            return None
-    except ValueError:
-        return None
-    relative_path = os.path.relpath(absolute_path, storage_root).replace(os.sep, "/")
-    if relative_path in ("", ".") or relative_path.startswith("../"):
-        return None
-    return STORAGE_BLOB_PREFIX + relative_path
-
-
-def _initialize_vercel_blob_storage():
-    """Initialize the Vercel Blob client if running on Vercel.
-
-    FIX: This function is NON-FATAL. If the token is missing it prints a
-    loud warning and returns None instead of raising RuntimeError. Raising
-    here was the root cause of the 500 FUNCTION_INVOCATION_FAILED errors —
-    the exception happened at module import time, so Flask never even
-    started and every single request (including /favicon.ico) returned 500.
-
-    With the warning-only behavior:
-      • The app boots and serves requests.
-      • All _storage_* helpers fall back to /tmp on Vercel.
-      • The first request that actually needs persistent storage will
-        produce a clear log line telling you to add BLOB_READ_WRITE_TOKEN.
-      • You can hit /api/faces/status to confirm the app is alive while
-        you configure the token.
-
-    Env vars used:
-      • BLOB_READ_WRITE_TOKEN — required. Vercel auto-injects this when a
-        Blob store is connected to the project. It has the form
-        "vercel_blob_rw_<store>_<secret>".
-      • BLOB_STORE_ID — optional. Vercel auto-injects this for the linked
-        store (e.g. "store_ytDrd6RS0JPIi7U1"). Only pass it explicitly if
-        your project has multiple Blob stores and you want to pin one.
-        Older Vercel projects may name this "storage_STORE_ID" instead —
-        both names are checked below.
-    """
-    global _vercel_blob_client
-
-    if not IS_VERCEL:
-        return
-
-    blob_token = os.getenv("BLOB_READ_WRITE_TOKEN")
-    if not blob_token:
-        print(
-            "[Blob] ⚠️  Vercel Blob storage token is not configured. "
-            "Connect a Blob store in Vercel Dashboard → Storage, then redeploy. "
-            "Falling back to /tmp storage for now — data will NOT persist "
-            "across requests."
-        )
-        return
-
-    # Vercel auto-injects BLOB_STORE_ID when a store is linked. It is
-    # optional for the SDK — passing it is only needed if the project has
-    # more than one Blob store and you want to pin a specific one.
-    #
-    # Older Vercel integrations named the variable "storage_STORE_ID".
-    # We check both so either naming convention works.
-    store_id = os.getenv("BLOB_STORE_ID") or os.getenv("storage_STORE_ID")
-
-    try:
-        from vercel.blob import BlobClient
-
-        # BlobClient accepts store_id as a keyword. If it's None, the SDK
-        # derives the store from the token itself, which is the normal case
-        # for a single-store project.
-        if store_id:
-            _vercel_blob_client = BlobClient(token=blob_token, store_id=store_id)
-            print(f"[Blob] Private Blob storage enabled (store_id={store_id}).")
-        else:
-            _vercel_blob_client = BlobClient(token=blob_token)
-            print("[Blob] Private Blob storage enabled (store_id auto-detected).")
-    except Exception as e:
-        # The `vercel` package may not be installed, or the token may be
-        # malformed. Either way, do NOT crash the app — fall back to /tmp.
-        print(f"[Blob] ⚠️  Could not initialize Vercel Blob client: {e}")
-        print("[Blob] Falling back to /tmp storage. Data will NOT persist.")
-
-
-_initialize_vercel_blob_storage()
-
-
-def _storage_read_bytes(file_path):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is not None and blob_path:
-        from vercel.blob import BlobNotFoundError
-
-        try:
-            return _vercel_blob_client.get(blob_path, access="private").content
-        except BlobNotFoundError as error:
-            raise FileNotFoundError(file_path) from error
-
-    with _filesystem_open(file_path, "rb") as source:
-        return source.read()
-
-
-def _storage_write_bytes(file_path, content):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is not None and blob_path:
-        _vercel_blob_client.put(
-            blob_path,
-            content,
-            access="private",
-            content_type=mimetypes.guess_type(os.fspath(file_path))[0],
-            add_random_suffix=False,
-            overwrite=True,
-            multipart=len(content) > 5 * 1024 * 1024,
-        )
-        return
-
-    os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
-    with _filesystem_open(file_path, "wb") as destination:
-        destination.write(content)
-
-
-@contextmanager
-def _open_storage_file(file_path, mode="r", *args, **kwargs):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is None or not blob_path:
-        with _filesystem_open(file_path, mode, *args, **kwargs) as file_handle:
-            yield file_handle
-        return
-
-    binary = "b" in mode
-    readable = "r" in mode or "+" in mode
-    writable = any(flag in mode for flag in ("w", "a", "x", "+"))
-    if not readable and not writable:
-        raise ValueError(f"Unsupported file mode: {mode}")
-
-    initial = b""
-    if readable or "a" in mode or "+" in mode:
-        try:
-            initial = _storage_read_bytes(file_path)
-        except FileNotFoundError:
-            if "r" in mode and not writable:
-                raise
-
-    if binary:
-        buffer = io.BytesIO(initial if "w" not in mode else b"")
-    else:
-        encoding = kwargs.get("encoding") or "utf-8"
-        buffer = io.StringIO(
-            initial.decode(encoding) if "w" not in mode else ""
-        )
-    if "a" in mode:
-        buffer.seek(0, io.SEEK_END)
-
-    try:
-        yield buffer
-    except Exception:
-        buffer.close()
-        raise
-    else:
-        if writable:
-            content = buffer.getvalue()
-            _storage_write_bytes(
-                file_path,
-                content if binary else content.encode(kwargs.get("encoding") or "utf-8"),
-            )
-        buffer.close()
-
-
-# All existing open(..., ...) calls in this module target storage paths.
-# Route them through Blob on Vercel without changing local file behavior.
-open = _open_storage_file
-
-
-def _storage_exists(file_path):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is not None and blob_path:
-        from vercel.blob import BlobNotFoundError
-
-        try:
-            _vercel_blob_client.head(blob_path)
-            return True
-        except BlobNotFoundError:
-            return False
-    return os.path.exists(file_path)
-
-
-def _storage_listdir(directory):
-    blob_path = _storage_blob_path(os.path.join(directory, "placeholder"))
-    if _vercel_blob_client is None or not blob_path:
-        return os.listdir(directory)
-
-    prefix = blob_path.rsplit("/", 1)[0] + "/"
-    names = set()
-    for item in _vercel_blob_client.iter_objects(prefix=prefix):
-        remainder = item.pathname[len(prefix):]
-        if remainder:
-            names.add(remainder.split("/", 1)[0])
-    return sorted(names)
-
-
-def _storage_isdir(directory):
-    blob_path = _storage_blob_path(os.path.join(directory, "placeholder"))
-    if _vercel_blob_client is not None and blob_path:
-        prefix = blob_path.rsplit("/", 1)[0] + "/"
-        return next(_vercel_blob_client.iter_objects(prefix=prefix), None) is not None
-    return os.path.isdir(directory)
-
-
-def _storage_getsize(file_path):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is not None and blob_path:
-        return len(_storage_read_bytes(file_path))
-    return os.path.getsize(file_path)
-
-
-def _storage_isfile(file_path):
-    return _storage_exists(file_path)
-
-
-def _storage_delete(file_path):
-    blob_path = _storage_blob_path(file_path)
-    if _vercel_blob_client is not None and blob_path:
-        _vercel_blob_client.delete(blob_path)
-        return
-    os.remove(file_path)
-
-
-def _storage_copy(source_path, destination_path):
-    if _vercel_blob_client is None:
-        import shutil
-
-        shutil.copy2(source_path, destination_path)
-        return
-    _storage_write_bytes(destination_path, _storage_read_bytes(source_path))
-
-
-def _storage_replace(source_path, destination_path):
-    if _vercel_blob_client is None:
-        os.replace(source_path, destination_path)
-        return
-    _storage_copy(source_path, destination_path)
-    _storage_delete(source_path)
-
-
-def _storage_save_upload(file_path, uploaded_file):
-    if _vercel_blob_client is None:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        uploaded_file.save(file_path)
-        return
-
-    stream = getattr(uploaded_file, "stream", uploaded_file)
-    if hasattr(stream, "seek"):
-        stream.seek(0)
-    _storage_write_bytes(file_path, stream.read())
-
-
-def _storage_serve_file(file_path, *, as_attachment=False, download_name=None):
-    if _vercel_blob_client is None or not _storage_blob_path(file_path):
-        return send_file(
-            file_path,
-            as_attachment=as_attachment,
-            download_name=download_name,
-        )
-
-    try:
-        content = _storage_read_bytes(file_path)
-    except FileNotFoundError:
-        abort(404)
-    return Response(
-        content,
-        mimetype=mimetypes.guess_type(os.fspath(file_path))[0],
-        headers={
-            "Content-Disposition": (
-                f'attachment; filename="{download_name}"'
-                if as_attachment and download_name
-                else "inline"
-            )
-        },
-    )
-
-
-def _storage_save_image(image, file_path, **options):
-    if _vercel_blob_client is None:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        image.save(file_path, **options)
-        return
-    buffer = io.BytesIO()
-    image.save(buffer, **options)
-    _storage_write_bytes(file_path, buffer.getvalue())
-
+# Ensure directories exist
+os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(WORK_STATUS_DATA_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(DAILY_STATS_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(PROFILE_STORAGE), exist_ok=True)
+os.makedirs(os.path.dirname(SCAN_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(SCAN_EVENTS_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(WORK_STATUS_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(ACTIVITY_FEED_FILE), exist_ok=True)
+os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+os.makedirs(NOTIFICATION_STORAGE, exist_ok=True)
+os.makedirs(EMPLOYEE_SETTINGS_STORAGE, exist_ok=True)
+os.makedirs(WORK_STATUS_REQUEST_STORAGE, exist_ok=True)
 
 # Debug: Print paths to verify
 print(f"BASE_DIR: {BASE_DIR}")
@@ -967,7 +568,6 @@ print(f"REQUESTS_AVAILABLE: {REQUESTS_AVAILABLE}")
 print(f"PIL_AVAILABLE: {PIL_AVAILABLE}")
 print(f"Environment: {'Production' if is_production() else 'Development'}")
 print(f"Base URL: {get_base_url()}")
-print(f"Blob storage: {'ENABLED' if _vercel_blob_client is not None else 'DISABLED (using filesystem)'}")
 
 # Default settings
 DEFAULT_SETTINGS = {
@@ -1052,16 +652,11 @@ authorized_face_rfids = set()
 FACE_SCAN_ALLOW_DIRECT_DTR = False
 
 # ============================================================================
-# MYSQL SYNC STATE
+# POSTGRESQL STORAGE SNAPSHOT STATE
 # ============================================================================
-# The JSON files remain the primary working store for the running app.
-# A background job pushes everything to MySQL once per day at 00:00
-# (local time). This keeps the app snappy while giving us a durable
-# relational copy for reporting / analytics.
-#
-# _last_mysql_sync_date guards the job so it runs at most once per day.
-# Call run_mysql_sync() manually from a route or shell to force a sync.
-_last_mysql_sync_date = None
+# The filesystem storage tree is authoritative. PostgreSQL receives a full
+# byte-for-byte snapshot of its files once per midnight rollover.
+_last_postgres_sync_date = None
 
 # ============================================================================
 # DAILY STATS HELPERS - PERSISTENT DAILY COUNTERS
@@ -1103,7 +698,7 @@ def load_daily_stats():
     """
     today = datetime.now().date().isoformat()
 
-    if not _storage_exists(DAILY_STATS_FILE):
+    if not os.path.exists(DAILY_STATS_FILE):
         stats = _empty_daily_stats(today)
         _write_daily_stats(stats)
         return stats
@@ -1211,25 +806,20 @@ def reset_daily_stats_if_needed():
     return load_daily_stats()
 
 # ============================================================================
-# MYSQL SYNC — RUNS EVERY MIDNIGHT
+# POSTGRESQL SNAPSHOT — RUNS EVERY MIDNIGHT
 # ============================================================================
-# Pulls every JSON file from storage and pushes it into MySQL. The
-# operation is idempotent: tables are truncated and re-populated from the
-# current JSON state, so running it twice produces the same result.
+# Mirrors every file under storage/ into PostgreSQL. Each path is stored
+# alongside its exact bytes and MIME type; removed files are removed from the
+# snapshot as well. The replacement is atomic within one database transaction.
 #
 # Called from:
 #   • the scheduler thread when the local date changes at 00:00
-#   • POST /api/mysql/sync  (manual trigger, useful for testing)
-#   • GET  /api/mysql/sync  (Vercel Cron — cron only sends GET)
-#   • app startup (only if the last sync is more than 24h old)
-#
-# All work happens inside a single transaction per logical group so a
-# partial failure can't leave the DB half-written.
+# Database writes are intentionally not performed by ordinary API requests.
 # ============================================================================
 
 def _mysql_sync_users():
     """Copy users.json -> users table."""
-    if not _storage_exists(USER_DATA_FILE):
+    if not os.path.exists(USER_DATA_FILE):
         return 0
     with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1285,7 +875,7 @@ def _mysql_sync_users():
 
 def _mysql_sync_attendance():
     """Copy attendance.json -> attendance_records + dtr_days tables."""
-    if not _storage_exists(ATTENDANCE_DATA_FILE):
+    if not os.path.exists(ATTENDANCE_DATA_FILE):
         return 0, 0
     with open(ATTENDANCE_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1344,7 +934,7 @@ def _mysql_sync_attendance():
 
 def _mysql_sync_work_status():
     """Copy work-status.json -> work_status_requests + work_status_days."""
-    if not _storage_exists(WORK_STATUS_DATA_FILE):
+    if not os.path.exists(WORK_STATUS_DATA_FILE):
         return 0, 0
     with open(WORK_STATUS_DATA_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1402,7 +992,7 @@ def _mysql_sync_scans_and_activities():
     act_count = 0
 
     # scan_feed.json -> scans
-    if _storage_exists(SCAN_FEED_FILE):
+    if os.path.exists(SCAN_FEED_FILE):
         with open(SCAN_FEED_FILE, "r", encoding="utf-8") as f:
             feed = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1429,7 +1019,7 @@ def _mysql_sync_scans_and_activities():
                 scan_count += 1
 
     # scan_events.json -> scan_events
-    if _storage_exists(SCAN_EVENTS_FILE):
+    if os.path.exists(SCAN_EVENTS_FILE):
         with open(SCAN_EVENTS_FILE, "r", encoding="utf-8") as f:
             ev = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1448,7 +1038,7 @@ def _mysql_sync_scans_and_activities():
                 event_count += 1
 
     # activity_feed.json -> activities
-    if _storage_exists(ACTIVITY_FEED_FILE):
+    if os.path.exists(ACTIVITY_FEED_FILE):
         with open(ACTIVITY_FEED_FILE, "r", encoding="utf-8") as f:
             af = json.load(f)
         with get_cursor(commit=True) as cur:
@@ -1473,7 +1063,7 @@ def _mysql_sync_scans_and_activities():
 
 def _mysql_sync_daily_stats():
     """Copy daily_stats.json -> daily_stats + daily_present."""
-    if not _storage_exists(DAILY_STATS_FILE):
+    if not os.path.exists(DAILY_STATS_FILE):
         return 0
     with open(DAILY_STATS_FILE, "r", encoding="utf-8") as f:
         stats = json.load(f)
@@ -1509,10 +1099,10 @@ def _mysql_sync_daily_stats():
 def _mysql_sync_notifications():
     """Copy every storage/notification/<RFID>.json -> notifications."""
     total = 0
-    if not _storage_isdir(NOTIFICATION_STORAGE):
+    if not os.path.isdir(NOTIFICATION_STORAGE):
         return 0
     with get_cursor(commit=True) as cur:
-        for fname in _storage_listdir(NOTIFICATION_STORAGE):
+        for fname in os.listdir(NOTIFICATION_STORAGE):
             if not fname.endswith(".json"):
                 continue
             path = os.path.join(NOTIFICATION_STORAGE, fname)
@@ -1546,7 +1136,7 @@ def _mysql_sync_notifications():
 
 def _mysql_sync_system_settings():
     """Copy settings.json -> system_settings (flat key/value)."""
-    if not _storage_exists(SETTINGS_FILE):
+    if not os.path.exists(SETTINGS_FILE):
         return 0
     with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -1570,74 +1160,62 @@ def _mysql_sync_system_settings():
     return count
 
 
-def run_mysql_sync():
-    """Full JSON -> MySQL sync. Idempotent. Safe to call from any thread.
-
-    Returns a summary dict with per-table counts. On any exception the
-    caller gets {"status": "error", "message": ...} and the DB is left
-    in whatever state the last successful statement committed.
-    """
+def run_postgres_storage_sync():
+    """Atomically mirror all files in storage/ to PostgreSQL."""
     started = datetime.now()
-    print(f"\n[MySQL Sync] Starting at {started.isoformat()}")
-
-    # Health check first — skip the whole job if the DB is unreachable.
-    if not ping():
-        msg = "MySQL is unreachable — sync skipped"
-        print(f"[MySQL Sync] {msg}")
-        return {"status": "error", "message": msg, "started_at": started.isoformat()}
+    storage_root = Path(BASE_DIR) / "storage"
+    print(f"\n[PostgreSQL Snapshot] Starting at {started.isoformat()}")
 
     try:
-        users = _mysql_sync_users()
-        print(f"[MySQL Sync] users: {users}")
+        if not storage_root.is_dir():
+            raise RuntimeError(f"Storage directory does not exist: {storage_root}")
 
-        recs, days = _mysql_sync_attendance()
-        print(f"[MySQL Sync] attendance_records: {recs}, dtr_days: {days}")
+        files = []
+        for path in sorted(storage_root.rglob("*")):
+            if path.is_file() and not path.is_symlink():
+                relative_path = path.relative_to(storage_root).as_posix()
+                content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+                files.append((path, relative_path, content_type))
 
-        reqs, wsd = _mysql_sync_work_status()
-        print(f"[MySQL Sync] work_status_requests: {reqs}, work_status_days: {wsd}")
-
-        scans, events, acts = _mysql_sync_scans_and_activities()
-        print(f"[MySQL Sync] scans: {scans}, scan_events: {events}, activities: {acts}")
-
-        present = _mysql_sync_daily_stats()
-        print(f"[MySQL Sync] daily_present: {present}")
-
-        notifs = _mysql_sync_notifications()
-        print(f"[MySQL Sync] notifications: {notifs}")
-
-        cfg = _mysql_sync_system_settings()
-        print(f"[MySQL Sync] system_settings: {cfg}")
-
-        global _last_mysql_sync_date
-        _last_mysql_sync_date = datetime.now().date()
+        storage_bytes = 0
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tapin_storage_documents (
+                        path TEXT PRIMARY KEY,
+                        content BYTEA NOT NULL,
+                        content_type TEXT NOT NULL,
+                        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute("DELETE FROM tapin_storage_documents")
+                for path, relative_path, content_type in files:
+                    content = path.read_bytes()
+                    storage_bytes += len(content)
+                    cur.execute("""
+                        INSERT INTO tapin_storage_documents
+                            (path, content, content_type, synced_at)
+                        VALUES (%s, %s, %s, NOW())
+                    """, (relative_path, content, content_type))
 
         finished = datetime.now()
+        global _last_postgres_sync_date
+        _last_postgres_sync_date = finished.date()
         elapsed = (finished - started).total_seconds()
-        print(f"[MySQL Sync] Done in {elapsed:.2f}s\n")
+        print(f"[PostgreSQL Snapshot] Saved {len(files)} files in {elapsed:.2f}s\n")
 
         return {
             "status": "success",
             "started_at": started.isoformat(),
             "finished_at": finished.isoformat(),
             "elapsed_seconds": round(elapsed, 2),
-            "counts": {
-                "users": users,
-                "attendance_records": recs,
-                "dtr_days": days,
-                "work_status_requests": reqs,
-                "work_status_days": wsd,
-                "scans": scans,
-                "scan_events": events,
-                "activities": acts,
-                "daily_present": present,
-                "notifications": notifs,
-                "system_settings": cfg,
-            }
+            "storage_files": len(files),
+            "storage_bytes": storage_bytes,
         }
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"[MySQL Sync] FAILED: {e}")
+        print(f"[PostgreSQL Snapshot] FAILED: {e}")
         return {"status": "error", "message": str(e), "started_at": started.isoformat()}
 
 
@@ -1767,11 +1345,11 @@ def start_nightly_wipe_scheduler():
     It ALSO checks every 30 seconds whether the calendar date has changed,
     and if so, resets the daily present/scan counters.
 
-    It ALSO fires the JSON → MySQL sync once per day at 00:00 local time.
+    It ALSO mirrors storage/ to PostgreSQL once per day at 00:00 local time.
 
     This runs regardless of whether any API route is hit, so the feeds are
     always cleared at Sunday 23:30 local time, the daily counters always
-    flip over at midnight, and MySQL gets a fresh snapshot every night.
+    flip over at midnight, and PostgreSQL gets a fresh snapshot every night.
 
     Runs as a daemon thread — it shuts down automatically when the app exits.
     """
@@ -1781,6 +1359,7 @@ def start_nightly_wipe_scheduler():
 
     # Track which date we last reset the daily stats for, so we only reset once.
     last_daily_reset_date = {"value": datetime.now().date().isoformat()}
+    pending_snapshot_date = {"value": None}
 
     def _scheduler_loop():
         print("[Scheduler] Nightly feed wipe scheduler started (checks every 30s)")
@@ -1798,7 +1377,7 @@ def start_nightly_wipe_scheduler():
                 # If the calendar date has changed since the last check, reset
                 # the daily present/scan counters so they start fresh.
                 #
-                # This is also the moment we fire the MySQL sync — the
+                # This is also the moment we snapshot storage/ into PostgreSQL —
                 # calendar has just rolled over, so the previous day's
                 # JSON files are complete and stable.
                 current_date = now.date().isoformat()
@@ -1806,16 +1385,17 @@ def start_nightly_wipe_scheduler():
                     print(f"[Scheduler] Date changed to {current_date} — resetting daily counters")
                     reset_daily_stats_if_needed()
                     last_daily_reset_date["value"] = current_date
+                    pending_snapshot_date["value"] = now.date()
 
-                    # --- MIDNIGHT MYSQL SYNC -----------------------------
-                    # Guarded by _last_mysql_sync_date so a slow/retried loop
-                    # can never fire two syncs for the same calendar day.
-                    if _last_mysql_sync_date != now.date():
-                        print(f"[Scheduler] Midnight sync triggered for {current_date}")
-                        try:
-                            run_mysql_sync()
-                        except Exception as sync_err:
-                            print(f"[Scheduler] MySQL sync failed: {sync_err}")
+                # Retry after a midnight failure, but never sync outside the
+                # date rollover that scheduled this snapshot.
+                if (pending_snapshot_date["value"] == now.date()
+                        and _last_postgres_sync_date != now.date()):
+                    result = run_postgres_storage_sync()
+                    if result.get("status") == "success":
+                        pending_snapshot_date["value"] = None
+                    else:
+                        print(f"[Scheduler] PostgreSQL snapshot will retry: {result.get('message')}")
             except Exception as e:
                 print(f"[Scheduler] Error in scheduler loop: {e}")
             # Sleep 30 seconds before checking again.
@@ -1823,7 +1403,7 @@ def start_nightly_wipe_scheduler():
 
     scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True, name="nightly-wipe")
     scheduler_thread.start()
-    print("✅ Nightly wipe scheduler thread launched (weekly on Sunday at 23:30, daily counter reset at midnight, MySQL sync at 00:00)")
+    print("✅ Nightly wipe scheduler thread launched (weekly on Sunday at 23:30, daily counter reset and PostgreSQL snapshot at midnight)")
 
 ## Functions ------------------------------------
 # Image compression function
@@ -1847,7 +1427,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
         rfid_filename = secure_filename(rfid)
         os.makedirs(PROFILE_STORAGE, exist_ok=True)
         filename = rfid_filename + extension
-        _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
+        image_file.save(os.path.join(PROFILE_STORAGE, filename))
         return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
     try:
@@ -1884,7 +1464,8 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 size_kb = len(buffer.getvalue()) / 1024
 
                 if size_kb <= max_size_kb:
-                    _storage_save_image(img, filepath, format='JPEG', quality=current_quality, optimize=True)
+                    # Save to file
+                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"Image compressed to {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
@@ -1892,7 +1473,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 current_quality -= 5
 
             # If still too large, save with minimum quality
-            _storage_save_image(img, filepath, format='JPEG', quality=10, optimize=True)
+            img.save(filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         elif extension in ['.png']:
@@ -1908,20 +1489,20 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
                 size_kb = len(buffer.getvalue()) / 1024
 
                 if size_kb <= max_size_kb:
-                    _storage_save_image(img, filepath, format='JPEG', quality=current_quality, optimize=True)
+                    img.save(filepath, format='JPEG', quality=current_quality, optimize=True)
                     print(f"PNG compressed to JPEG {size_kb:.1f}KB (quality: {current_quality})")
                     return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
                 current_quality -= 5
 
-            _storage_save_image(img, filepath, format='JPEG', quality=10, optimize=True)
+            img.save(filepath, format='JPEG', quality=10, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         else:
             # For other formats, try to save as JPEG
             filename = rfid_filename + '.jpg'
             filepath = os.path.join(PROFILE_STORAGE, filename)
-            _storage_save_image(img, filepath, format='JPEG', quality=quality, optimize=True)
+            img.save(filepath, format='JPEG', quality=quality, optimize=True)
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
     except Exception as e:
@@ -1932,7 +1513,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
             rfid_filename = secure_filename(rfid)
             os.makedirs(PROFILE_STORAGE, exist_ok=True)
             filename = rfid_filename + extension
-            _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
+            image_file.save(os.path.join(PROFILE_STORAGE, filename))
             return os.path.join("storage", "profiles", filename).replace(os.sep, "/")
         except:
             return None
@@ -1940,7 +1521,7 @@ def compress_and_save_image(image_file, rfid, max_size_kb=100, quality=85, max_d
 # Load settings
 def load_settings():
     """Load settings from JSON file"""
-    if not _storage_exists(SETTINGS_FILE):
+    if not os.path.exists(SETTINGS_FILE):
         # Create default settings file
         save_settings(DEFAULT_SETTINGS)
         return DEFAULT_SETTINGS.copy()
@@ -2119,7 +1700,7 @@ def load_notifications(rfid, uid=None, fullname=None, role=None):
     if not path:
         return _empty_notification_doc(rfid, uid, fullname, role)
 
-    if not _storage_exists(path):
+    if not os.path.exists(path):
         doc = _empty_notification_doc(rfid, uid, fullname, role)
         # Persist the empty doc so the user has a real file going forward.
         try:
@@ -2168,7 +1749,7 @@ def save_notifications(rfid, doc, backup=True):
         return False
 
     existing = None
-    if _storage_exists(path):
+    if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
@@ -2411,7 +1992,7 @@ def load_employee_settings(rfid, uid=None, fullname=None, role=None):
     if not path:
         return _empty_employee_settings_doc(rfid, uid, fullname, role)
 
-    if not _storage_exists(path):
+    if not os.path.exists(path):
         doc = _empty_employee_settings_doc(rfid, uid, fullname, role)
         # Persist the empty doc so the employee has a real file going forward.
         try:
@@ -2457,7 +2038,7 @@ def save_employee_settings(rfid, doc, backup=True):
         return False
 
     existing = None
-    if _storage_exists(path):
+    if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 existing = json.load(f)
@@ -2555,7 +2136,7 @@ def load_work_status_data():
 
     Structure matches the feed: {requests, approved, rejected}.
     """
-    if not _storage_exists(WORK_STATUS_DATA_FILE):
+    if not os.path.exists(WORK_STATUS_DATA_FILE):
         default_data = _empty_work_status()
         with open(WORK_STATUS_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2584,7 +2165,7 @@ def load_work_status_feed_data():
 
     Structure matches the persistent file: {requests, approved, rejected}.
     """
-    if not _storage_exists(WORK_STATUS_FEED_FILE):
+    if not os.path.exists(WORK_STATUS_FEED_FILE):
         default_data = _empty_work_status()
         with open(WORK_STATUS_FEED_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2642,7 +2223,7 @@ if not work_status_feed_data.get("requests") and not work_status_feed_data.get("
 # Load activity feed data
 def load_activity_feed():
     """Load activity feed data from JSON file"""
-    if not _storage_exists(ACTIVITY_FEED_FILE):
+    if not os.path.exists(ACTIVITY_FEED_FILE):
         default_data = {
             "activities": [],
             "total_activities": 0,
@@ -2717,7 +2298,7 @@ def add_activity(action, details, user=None, activity_type="system"):
 
 # Load scan events
 def load_scan_events():
-    if not _storage_exists(SCAN_EVENTS_FILE):
+    if not os.path.exists(SCAN_EVENTS_FILE):
         default_data = {"scan_events": []}
         with open(SCAN_EVENTS_FILE, "w", encoding="utf-8") as f:
             json.dump(default_data, f, indent=4)
@@ -2748,7 +2329,7 @@ def load_attendance_data():
     # Ensure the directory exists
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 
-    if not _storage_exists(ATTENDANCE_DATA_FILE):
+    if not os.path.exists(ATTENDANCE_DATA_FILE):
         # Create empty file with proper structure
         default_data = {"records": []}
         with open(ATTENDANCE_DATA_FILE, "w", encoding="utf-8") as f:
@@ -2768,10 +2349,10 @@ def load_attendance_data():
             return data
     except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"Error reading attendance file: {e}")
-        if _storage_exists(ATTENDANCE_DATA_FILE):
+        if os.path.exists(ATTENDANCE_DATA_FILE):
             backup_file = ATTENDANCE_DATA_FILE + ".backup"
             try:
-                _storage_replace(ATTENDANCE_DATA_FILE, backup_file)
+                os.rename(ATTENDANCE_DATA_FILE, backup_file)
                 print(f"Corrupted file backed up to: {backup_file}")
             except:
                 pass
@@ -2780,7 +2361,7 @@ def load_attendance_data():
 # Load scan feed data
 def load_scan_feed():
     """Load scan feed data from JSON file"""
-    if not _storage_exists(SCAN_FEED_FILE):
+    if not os.path.exists(SCAN_FEED_FILE):
         default_data = {
             "scans": [],
             "total_scans": 0,
@@ -2905,11 +2486,11 @@ def save_attendance_data():
     """Save attendance records to attendance.json file - ONLY records, no scan events"""
     os.makedirs(os.path.dirname(ATTENDANCE_DATA_FILE), exist_ok=True)
 
-    if _storage_exists(ATTENDANCE_DATA_FILE):
+    if os.path.exists(ATTENDANCE_DATA_FILE):
         backup_file = ATTENDANCE_DATA_FILE + ".backup"
         try:
             import shutil
-            _storage_copy(ATTENDANCE_DATA_FILE, backup_file)
+            shutil.copy2(ATTENDANCE_DATA_FILE, backup_file)
         except:
             pass
 
@@ -3549,7 +3130,7 @@ def initialize_attendance_records():
 def load_employee_database():
     os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-    if not _storage_exists(USER_DATA_FILE):
+    if not os.path.exists(USER_DATA_FILE):
         print("File not found: storage/database/users.json - database is empty")
         default_data = {"admin": [], "hr": [], "employees": []}
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
@@ -3562,10 +3143,10 @@ def load_employee_database():
             data = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         print("Error reading storage/database/users.json:", str(e))
-        if _storage_exists(USER_DATA_FILE):
+        if os.path.exists(USER_DATA_FILE):
             backup_file = USER_DATA_FILE + ".backup"
             try:
-                _storage_replace(USER_DATA_FILE, backup_file)
+                os.rename(USER_DATA_FILE, backup_file)
                 print(f"Corrupted users.json backed up to: {backup_file}")
             except:
                 pass
@@ -3681,7 +3262,7 @@ def get_dashboard_statistics():
         os.makedirs(PROFILE_STORAGE, exist_ok=True)
         _allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
         profile_images = sum(
-            1 for f in _storage_listdir(PROFILE_STORAGE)
+            1 for f in os.listdir(PROFILE_STORAGE)
             if os.path.splitext(f)[1].lower() in _allowed_exts
         )
     except Exception:
@@ -4489,74 +4070,16 @@ def get_work_status_types():
     }), 200
 
 # ============================================================================
-# MYSQL SYNC ROUTES
+# POSTGRESQL STATUS
 # ============================================================================
-# Manual trigger for the JSON → MySQL sync. Two flavors:
-#   • POST /api/mysql/sync  — for manual/ad-hoc calls and testing
-#   • GET  /api/mysql/sync  — for Vercel Cron, which only sends GET requests
-#
-# Both call the same run_mysql_sync() helper, so they are functionally
-# identical. If you only ever hit the API by hand, POST is the one to use.
-# If you wire up a Vercel Cron in vercel.json, the GET route is the one it
-# will hit.
-
-@app.route("/api/mysql/sync", methods=["POST"])
-def mysql_sync_route():
-    """Force an immediate JSON → MySQL sync. Returns per-table counts.
-
-    This is the manual/testing trigger. Use GET /api/mysql/sync for the
-    Vercel Cron variant.
-    """
-    try:
-        result = run_mysql_sync()
-        if result.get("status") == "success":
-            return jsonify(result), 200
-        return jsonify(result), 500
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route("/api/mysql/sync", methods=["GET"])
-def mysql_sync_route_get():
-    """GET variant of the MySQL sync, for Vercel Cron.
-
-    Vercel Cron only sends GET requests, so a POST-only route can never
-    be scheduled. This route calls exactly the same run_mysql_sync()
-    helper as the POST route, so the JSON→MySQL push happens the same way.
-
-    To schedule it, add this to vercel.json:
-
-        "crons": [
-          { "path": "/api/mysql/sync", "schedule": "0 16 * * *" }
-        ]
-
-    The schedule "0 16 * * *" runs the job at 16:00 UTC daily, which is
-    00:00 Philippine Time (UTC+8) — matching the app's intent of syncing
-    at midnight.
-    """
-    try:
-        result = run_mysql_sync()
-        if result.get("status") == "success":
-            return jsonify(result), 200
-        return jsonify(result), 500
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route("/api/mysql/status", methods=["GET"])
-def mysql_status_route():
-    """Check MySQL connectivity and report the last sync date.
-
-    NOTE: `last_sync_date` is stored in a module-level variable, which is
-    per-Lambda-instance and resets whenever Vercel spins up a fresh
-    instance. A value of null does NOT mean the sync failed — it just
-    means this particular instance has not run a sync yet. The MySQL
-    database itself is the source of truth. To verify a sync happened,
-    hit the sync route and check the `counts` object in its response.
-    """
+@app.route("/api/postgres/status", methods=["GET"])
+def postgres_status_route():
+    """Check PostgreSQL connectivity and report the last snapshot date."""
     reachable = ping()
     return jsonify({
         "status": "success" if reachable else "error",
         "reachable": reachable,
-        "last_sync_date": _last_mysql_sync_date.isoformat() if _last_mysql_sync_date else None,
+        "last_sync_date": _last_postgres_sync_date.isoformat() if _last_postgres_sync_date else None,
     }), 200 if reachable else 503
 
 # ============================================================================
@@ -4672,7 +4195,7 @@ def delete_single_notification(rfid, notification_id):
 
 def load_calendar_events():
     """Load persistent, organization-wide calendar events."""
-    if not _storage_exists(CALENDAR_EVENTS_FILE):
+    if not os.path.exists(CALENDAR_EVENTS_FILE):
         return []
     with open(CALENDAR_EVENTS_FILE, "r", encoding="utf-8") as f:
         events = json.load(f)
@@ -4691,7 +4214,7 @@ def save_calendar_events(events):
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(events, f, indent=2)
         f.write("\n")
-    _storage_replace(temp_path, CALENDAR_EVENTS_FILE)
+    os.replace(temp_path, CALENDAR_EVENTS_FILE)
 
 
 def get_calendar_request_user():
@@ -5609,7 +5132,7 @@ def request_work_status():
                 file_path = os.path.join(employee_work_status_dir, filename)
 
                 # Save the file
-                _storage_save_upload(file_path, attachment_file)
+                attachment_file.save(file_path)
 
                 # Store relative path for web access
                 attachment_path = os.path.join("storage", "work-status", rfid, filename).replace(os.sep, "/")
@@ -5854,11 +5377,11 @@ def get_work_status_attachment_meta(rfid, filename):
 
     file_path = os.path.join(WORK_STATUS_REQUEST_STORAGE, safe_rfid, safe_filename)
 
-    if not _storage_exists(file_path) or not _storage_isfile(file_path):
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
         return jsonify({"status": "error", "message": "File not found"}), 404
 
     try:
-        size = _storage_getsize(file_path)
+        size = os.path.getsize(file_path)
     except Exception:
         size = 0
 
@@ -6597,18 +6120,13 @@ def serve_js(filename):
 # Serve profile images from storage folder (outside app)
 @app.route('/storage/profiles/<filename>')
 def serve_profile_image(filename):
-    if secure_filename(filename) != filename:
-        return jsonify({"status": "error", "message": "File not found"}), 404
-    return _storage_serve_file(os.path.join(PROFILE_STORAGE, filename))
+    return send_from_directory(PROFILE_STORAGE, filename)
 
 # Serve assets (logo, etc.)
 @app.route('/storage/assets/<path:filename>')
 def serve_asset(filename):
     assets_dir = os.path.join(BASE_DIR, "storage", "assets")
-    safe_path = os.path.abspath(os.path.join(assets_dir, filename))
-    if os.path.commonpath((os.path.abspath(assets_dir), safe_path)) != os.path.abspath(assets_dir):
-        return jsonify({"status": "error", "message": "File not found"}), 404
-    return _storage_serve_file(safe_path)
+    return send_from_directory(assets_dir, filename)
 
 # Serve work status request attachments from storage folder.
 #
@@ -6620,13 +6138,9 @@ def serve_asset(filename):
 def serve_work_status_attachment(filename):
     inline = request.args.get("inline") in ("1", "true", "yes")
 
-    # Keep the stored object path confined to this employee's attachment folder.
-    safe_path = os.path.abspath(os.path.join(WORK_STATUS_REQUEST_STORAGE, filename))
-    if os.path.commonpath(
-        (os.path.abspath(WORK_STATUS_REQUEST_STORAGE), safe_path)
-    ) != os.path.abspath(WORK_STATUS_REQUEST_STORAGE):
-        return jsonify({"status": "error", "message": "File not found"}), 404
-    response = _storage_serve_file(safe_path, download_name=os.path.basename(filename))
+    # send_from_directory handles path traversal safely and returns the
+    # correct Content-Type based on the file extension.
+    response = send_from_directory(WORK_STATUS_REQUEST_STORAGE, filename)
 
     # Set explicit Content-Disposition so the caller controls download vs
     # preview. We keep the original filename so a "Save as…" still works.
@@ -6644,7 +6158,7 @@ def serve_work_status_attachment(filename):
 # FACE SCANNER API — /api/faces/*
 # ============================================================================
 # Called by the standalone face-scanner page (faces.html/faces.js/faces.css)
-# deployed on Vercel. Face detection and matching happen entirely in the
+# hosted separately. Face detection and matching happen entirely in the
 # browser with face-api.js; this server only supplies the profile-image
 # templates to match against and records attendance once a match is sent
 # back here. No RFID tap is required — a confident face match is enough.
@@ -6660,7 +6174,7 @@ def _face_list_profile_images():
     os.makedirs(PROFILE_STORAGE, exist_ok=True)
     allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
     return sorted(
-        f for f in _storage_listdir(PROFILE_STORAGE)
+        f for f in os.listdir(PROFILE_STORAGE)
         if os.path.splitext(f)[1].lower() in allowed_exts
     )
 
@@ -6673,10 +6187,10 @@ def _face_find_profile_image_for_rfid(rfid):
     allowed_exts = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
     for ext in allowed_exts:
         candidate = os.path.join(PROFILE_STORAGE, f"{rfid_clean}{ext}")
-        if _storage_exists(candidate):
+        if os.path.exists(candidate):
             return candidate
     try:
-        for filename in _storage_listdir(PROFILE_STORAGE):
+        for filename in os.listdir(PROFILE_STORAGE):
             name, ext = os.path.splitext(filename)
             if name.upper() == rfid_clean and ext.lower() in allowed_exts:
                 return os.path.join(PROFILE_STORAGE, filename)
@@ -6748,9 +6262,9 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
     }
     os.makedirs(os.path.dirname(FACE_SCAN_LOG_FILE), exist_ok=True)
     source_path = FACE_SCAN_LOG_FILE
-    if not _storage_exists(source_path) and _storage_exists(LEGACY_FACE_SCAN_LOG_FILE):
+    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
         source_path = LEGACY_FACE_SCAN_LOG_FILE
-    if _storage_exists(source_path):
+    if os.path.exists(source_path):
         with open(source_path, "r", encoding="utf-8") as f:
             log_data = json.load(f)
         if not isinstance(log_data, list):
@@ -6764,7 +6278,7 @@ def _face_log_scan(rfid, employee, confidence, status, scan_type="face_verificat
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(log_data, f, indent=2)
         f.write("\n")
-    _storage_replace(temp_path, FACE_SCAN_LOG_FILE)
+    os.replace(temp_path, FACE_SCAN_LOG_FILE)
     return log_entry
 
 
@@ -6942,7 +6456,7 @@ def faces_record():
 def faces_dashboard_stats():
     """Return dashboard statistics for the face scanner interface.
     This is a public endpoint that doesn't require authentication,
-    as it's used by the standalone face scanner hosted on Vercel.
+    as it's used by the standalone face scanner frontend.
     """
     try:
         stats = get_dashboard_statistics()
@@ -6974,10 +6488,10 @@ def faces_scan_log():
     limit = min(max(request.args.get("limit", default=20, type=int) or 20, 1), 100)
     offset = max(request.args.get("offset", default=0, type=int) or 0, 0)
     source_path = FACE_SCAN_LOG_FILE
-    if not _storage_exists(source_path) and _storage_exists(LEGACY_FACE_SCAN_LOG_FILE):
+    if not os.path.exists(source_path) and os.path.exists(LEGACY_FACE_SCAN_LOG_FILE):
         source_path = LEGACY_FACE_SCAN_LOG_FILE
     try:
-        if _storage_exists(source_path):
+        if os.path.exists(source_path):
             with open(source_path, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
             if not isinstance(log_data, list):
@@ -7345,7 +6859,7 @@ def change_password():
             }), 400
 
         # ---- 4) Load users.json ------------------------------------------
-        if not _storage_exists(USER_DATA_FILE):
+        if not os.path.exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "User database not found"
@@ -7384,7 +6898,7 @@ def change_password():
         # ---- 6) Backup + save --------------------------------------------
         import shutil
         try:
-            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
         except Exception as e:
             print(f"Warning: could not back up users.json: {e}")
 
@@ -7656,7 +7170,7 @@ def forgot_password_verify_code():
         updated = False
         new_hash = hashlib.md5(new_password.encode("utf-8")).hexdigest()
 
-        if not _storage_exists(USER_DATA_FILE):
+        if not os.path.exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "User database not found"
@@ -7686,7 +7200,7 @@ def forgot_password_verify_code():
         # Backup and save
         import shutil
         try:
-            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
         except Exception as e:
             print(f"Warning: could not back up users.json: {e}")
 
@@ -7752,7 +7266,7 @@ def register_employee():
 
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-        if _storage_exists(USER_DATA_FILE):
+        if os.path.exists(USER_DATA_FILE):
             with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
                 database = json.load(f)
         else:
@@ -7795,7 +7309,7 @@ def register_employee():
                 rfid_filename = secure_filename(rfid)
                 os.makedirs(PROFILE_STORAGE, exist_ok=True)
                 filename = rfid_filename + extension
-                _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
+                image_file.save(os.path.join(PROFILE_STORAGE, filename))
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
 
         employee = {
@@ -7822,9 +7336,9 @@ def register_employee():
         }
         database.setdefault(category, []).append(employee)
 
-        if _storage_exists(USER_DATA_FILE):
+        if os.path.exists(USER_DATA_FILE):
             import shutil
-            _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+            shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
 
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(database, f, indent=4)
@@ -7876,7 +7390,7 @@ def update_employee(rfid):
 
         os.makedirs(os.path.dirname(USER_DATA_FILE), exist_ok=True)
 
-        if not _storage_exists(USER_DATA_FILE):
+        if not os.path.exists(USER_DATA_FILE):
             return jsonify({
                 "status": "error",
                 "message": "Database file not found"
@@ -7978,9 +7492,9 @@ def update_employee(rfid):
             old_image = updated_employee.get("image")
             if old_image:
                 old_image_path = os.path.join(BASE_DIR, old_image)
-                if _storage_exists(old_image_path):
+                if os.path.exists(old_image_path):
                     try:
-                        _storage_delete(old_image_path)
+                        os.remove(old_image_path)
                         print(f"Deleted old image: {old_image_path}")
                     except Exception as e:
                         print(f"Error deleting old image: {e}")
@@ -7996,7 +7510,7 @@ def update_employee(rfid):
                 rfid_filename = secure_filename(rfid)
                 os.makedirs(PROFILE_STORAGE, exist_ok=True)
                 filename = rfid_filename + extension
-                _storage_save_upload(os.path.join(PROFILE_STORAGE, filename), image_file)
+                image_file.save(os.path.join(PROFILE_STORAGE, filename))
                 image_path = os.path.join("storage", "profiles", filename).replace(os.sep, "/")
                 updated_employee["image"] = image_path
                 print(f"New image saved (fallback): {image_path}")
@@ -8041,7 +7555,7 @@ def update_employee(rfid):
 
         # Create backup
         import shutil
-        _storage_copy(USER_DATA_FILE, USER_DATA_FILE + ".backup")
+        shutil.copy2(USER_DATA_FILE, USER_DATA_FILE + ".backup")
 
         # Save to file
         with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
@@ -8232,7 +7746,7 @@ def get_latest_rfid():
                     image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
                     for ext in image_extensions:
                         image_path = os.path.join(PROFILE_STORAGE, rfid_filename + ext)
-                        if _storage_exists(image_path):
+                        if os.path.exists(image_path):
                             image_url = f"{request.host_url}storage/profiles/{rfid_filename}{ext}"
                             break
 
@@ -8530,8 +8044,7 @@ def page_not_found(e):
 @app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/<notification_id>", methods=["OPTIONS"])
 @app.route("/api/work-status-attachment/meta/<rfid>/<filename>", methods=["OPTIONS"])
-@app.route("/api/mysql/sync", methods=["OPTIONS"])
-@app.route("/api/mysql/status", methods=["OPTIONS"])
+@app.route("/api/postgres/status", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
     origin = request.headers.get("Origin")
@@ -8545,8 +8058,8 @@ def handle_options():
 # ============================================================================
 # FACE SCANNER OPTIONS HANDLERS
 # ============================================================================
-# Add OPTIONS handlers for the /api/faces/* routes the Vercel-hosted scanner
-# page calls (CORS preflight).
+# Add OPTIONS handlers for the /api/faces/* routes the scanner page calls
+# (CORS preflight).
 @app.route("/api/faces/status", methods=["OPTIONS"])
 @app.route("/api/faces/employees", methods=["OPTIONS"])
 @app.route("/api/faces/record", methods=["OPTIONS"])
@@ -8564,63 +8077,6 @@ def handle_scanner_options():
     return response, 200
 
 # ============================================================================
-# TEMPORARY DEBUG ROUTE — remove after verifying Blob is working
-# ============================================================================
-# Hit GET /api/_debug_blob on your deployment to see exactly what's happening
-# with the Vercel Blob wiring. Reports:
-#   • whether the token is visible to the running function
-#   • whether the BlobClient initialized successfully
-#   • what Blob key the app would compute for users.json
-#   • whether that key actually exists in the store
-#   • a sample of real keys in the store so a prefix mismatch is obvious
-@app.route("/api/_debug_blob", methods=["GET"])
-def debug_blob():
-    import os as _os
-
-    token_present = bool(_os.getenv("BLOB_READ_WRITE_TOKEN"))
-    store_id_env = _os.getenv("BLOB_STORE_ID") or _os.getenv("storage_STORE_ID")
-    client_ok = _vercel_blob_client is not None
-
-    # Compute the exact Blob key the app would use for users.json
-    computed_key = _storage_blob_path(USER_DATA_FILE)
-
-    users_exists = None
-    sample_keys = []
-    sample_error = None
-
-    if client_ok:
-        try:
-            from vercel.blob import BlobNotFoundError
-            try:
-                _vercel_blob_client.head(computed_key)
-                users_exists = True
-            except BlobNotFoundError:
-                users_exists = False
-
-            # Walk the store so we can see the real layout
-            for i, item in enumerate(_vercel_blob_client.iter_objects(prefix="")):
-                sample_keys.append(item.pathname)
-                if i >= 30:
-                    break
-        except Exception as e:
-            sample_error = f"{type(e).__name__}: {e}"
-
-    return jsonify({
-        "is_vercel": IS_VERCEL,
-        "base_dir": BASE_DIR,
-        "storage_blob_prefix": STORAGE_BLOB_PREFIX,
-        "token_present": token_present,
-        "token_preview": ((_os.getenv("BLOB_READ_WRITE_TOKEN") or "")[:24] + "...")
-                         if token_present else None,
-        "blob_store_id_env": store_id_env,
-        "blob_client_initialized": client_ok,
-        "computed_key_for_users_json": computed_key,
-        "users_json_exists_in_blob": users_exists,
-        "sample_blob_keys": sample_keys,
-        "sample_error": sample_error,
-    }), 200
-
-# ============================================================================
 # START BACKGROUND SCHEDULERS + IMMEDIATE CATCH-UP WIPE
 # ============================================================================
 # This block runs at module import time, which means it executes on WSGI
@@ -8629,15 +8085,7 @@ def debug_blob():
 # block never runs — the WSGI server just imports the module — so the
 # scheduler must be started here to guarantee the midnight wipe fires.
 try:
-    if IS_VERCEL:
-        print(
-            "[Scheduler] Background scheduler disabled on Vercel.\n"
-            "            The daily stats reset and MySQL sync will NOT run automatically.\n"
-            "            To enable them, add a Vercel Cron in vercel.json pointing at\n"
-            "            GET /api/mysql/sync — see the route's docstring for the schedule."
-        )
-    else:
-        start_nightly_wipe_scheduler()
+    start_nightly_wipe_scheduler()
 except Exception as e:
     print(f"⚠️ Could not start nightly wipe scheduler: {e}")
 
@@ -8657,17 +8105,17 @@ try:
 except Exception as e:
     print(f"⚠️ Daily stats init error: {e}")
 
-# Verify the MySQL connection is reachable at boot so failures are loud
-# and obvious in the logs. The app itself never depends on MySQL being up —
+# Verify the PostgreSQL connection is reachable at boot so failures are loud
+# and obvious in the logs. The app itself never depends on PostgreSQL being up —
 # every route keeps reading from the JSON files — so a DB outage simply
-# means the next midnight sync will be skipped (and retried the day after).
+# means the midnight snapshot will be retried on a later date.
 try:
     if ping():
-        print("[Boot] MySQL connection OK.")
+        print("[Boot] PostgreSQL connection OK.")
     else:
-        print("[Boot] ⚠️ MySQL is unreachable — midnight sync will be skipped until it recovers.")
+        print("[Boot] ⚠️ PostgreSQL is unreachable — midnight snapshot cannot be saved.")
 except Exception as e:
-    print(f"[Boot] ⚠️ MySQL ping error: {e}")
+    print(f"[Boot] ⚠️ PostgreSQL ping error: {e}")
 
 ## Main ------------------------------------
 if __name__ == "__main__":
@@ -8703,11 +8151,7 @@ if __name__ == "__main__":
     print(f"🚀 Starting TapIn API Server")
     print(f"📍 Environment: {'Production' if is_production() else 'Development'}")
     print(f"🔗 Base URL: {get_base_url()}")
-    print(
-        f"📁 Storage: private Vercel Blob ({STORAGE_BLOB_PREFIX})"
-        if _vercel_blob_client is not None
-        else f"📁 Storage: {BASE_DIR}/storage"
-    )
+    print(f"📁 Storage: {BASE_DIR}/storage")
     print(f"🌐 Port: {port}")
     print(f"{'='*60}\n")
 

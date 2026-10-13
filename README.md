@@ -76,7 +76,6 @@ tapin-rfid-attendance-system/
 │   ├── database/
 │   ├── app.py
 │   ├── requirements.txt
-│   └── vercel.json
 │
 ├── database/
 │   └── tapin-employee-table.sql
@@ -97,8 +96,7 @@ tapin-rfid-attendance-system/
 │   ├── pages/
 │   ├── index.html
 │   ├── login.html
-│   ├── package.json
-│   └── vercel.json
+│   └── package.json
 │
 ├── LICENSE
 └── version.txt
@@ -197,17 +195,13 @@ Configure these environment variables in the API hosting environment to enable B
 
 Do not put SMTP keys in source code. After configuring variables on the host, restart/reload the API. The first recovery-code request sends the email and starts the 60-second resend cooldown.
 
-## MySQL Database
+## PostgreSQL Database
 
-The API continues to use JSON files under `storage/` as its working storage. Application requests read and write those files; they do not write JSON documents to MySQL. At the scheduled midnight sync, the API copies the JSON files into `tapin_storage_documents` and refreshes the relational MySQL tables. The database account must be allowed to create tables and read/write data.
+The files under `api/storage/` remain the primary working store. Application requests continue to read and write those files; ordinary requests do not write to PostgreSQL. At midnight, the API mirrors the complete storage tree into the `tapin_storage_documents` table. Each row contains the relative file path, exact file bytes, MIME type, and snapshot timestamp. This preserves JSON files and binary uploads in the same directory structure. Files removed from storage are removed from the next snapshot.
 
-On Vercel, configure `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and `DB_CA_CONTENT` as environment variables. Local development loads these settings from `api/config.env`.
+Configure PostgreSQL with `DATABASE_URL` or the standard `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, and `PGDATABASE` variables. `PGSSLMODE` can set TLS behavior (for example, `require`). Local development loads these settings from `api/config.env`; on Railway, configure them as service environment variables. The database role needs permission to create and update `tapin_storage_documents`.
 
-Vercel Cron triggers the sync daily at 00:00 UTC+08:00 (16:00 UTC). Set a strong `CRON_SECRET` environment variable so the scheduled endpoint can authenticate. The local scheduler runs the sync at local midnight. The sync endpoint is not exposed as a manual write route.
-
-On Vercel, all application data under `storage/` is read directly from and written directly to the connected private Vercel Blob store, using object names such as `storage/database/users.json` and `storage/profiles/<rfid>.jpg`. This includes employee records, settings, attendance and feed JSON, profile images, and work-status attachments. The API does not hydrate or sync a local storage copy. Configure a Blob read/write token as `BLOB_READ_WRITE_TOKEN` (also accepted: `VERCEL_BLOB_READ_WRITE_TOKEN` or `storage_READ_WRITE_TOKEN`). The store ID and webhook public key alone do not grant permission to read or write blobs. The midnight MySQL sync reads the JSON documents directly from Blob.
-
-Blob object writes are durable, but a read-modify-write operation is not transactional: simultaneous requests updating the same JSON object can overwrite each other's changes. Local development continues to use the local `storage/` directory and does not require a Blob token.
+The API's background scheduler triggers the snapshot at local midnight and retries it every 30 seconds until it succeeds. PostgreSQL status is available at `GET /api/postgres/status`; there is no manual sync route, so normal API activity never writes the snapshot early.
 
 The database-related files are located in:
 

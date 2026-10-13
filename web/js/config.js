@@ -1,1 +1,1 @@
-window.TAPIN_API_URL = 'https://lolenseu.pythonanywhere.com/';
+window.TAPIN_API_URL = 'https://tapin-api.up.railway.app/';
