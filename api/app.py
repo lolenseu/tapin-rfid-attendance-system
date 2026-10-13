@@ -8467,6 +8467,63 @@ def handle_scanner_options():
     return response, 200
 
 # ============================================================================
+# TEMPORARY DEBUG ROUTE — remove after verifying Blob is working
+# ============================================================================
+# Hit GET /api/_debug_blob on your deployment to see exactly what's happening
+# with the Vercel Blob wiring. Reports:
+#   • whether the token is visible to the running function
+#   • whether the BlobClient initialized successfully
+#   • what Blob key the app would compute for users.json
+#   • whether that key actually exists in the store
+#   • a sample of real keys in the store so a prefix mismatch is obvious
+@app.route("/api/_debug_blob", methods=["GET"])
+def debug_blob():
+    import os as _os
+
+    token_present = bool(_os.getenv("BLOB_READ_WRITE_TOKEN"))
+    store_id_env = _os.getenv("BLOB_STORE_ID")
+    client_ok = _vercel_blob_client is not None
+
+    # Compute the exact Blob key the app would use for users.json
+    computed_key = _storage_blob_path(USER_DATA_FILE)
+
+    users_exists = None
+    sample_keys = []
+    sample_error = None
+
+    if client_ok:
+        try:
+            from vercel.blob import BlobNotFoundError
+            try:
+                _vercel_blob_client.head(computed_key)
+                users_exists = True
+            except BlobNotFoundError:
+                users_exists = False
+
+            # Walk the store so we can see the real layout
+            for i, item in enumerate(_vercel_blob_client.iter_objects(prefix="")):
+                sample_keys.append(item.pathname)
+                if i >= 30:
+                    break
+        except Exception as e:
+            sample_error = f"{type(e).__name__}: {e}"
+
+    return jsonify({
+        "is_vercel": IS_VERCEL,
+        "base_dir": BASE_DIR,
+        "storage_blob_prefix": STORAGE_BLOB_PREFIX,
+        "token_present": token_present,
+        "token_preview": ((_os.getenv("BLOB_READ_WRITE_TOKEN") or "")[:24] + "...")
+                         if token_present else None,
+        "blob_store_id_env": store_id_env,
+        "blob_client_initialized": client_ok,
+        "computed_key_for_users_json": computed_key,
+        "users_json_exists_in_blob": users_exists,
+        "sample_blob_keys": sample_keys,
+        "sample_error": sample_error,
+    }), 200
+
+# ============================================================================
 # START BACKGROUND SCHEDULERS + IMMEDIATE CATCH-UP WIPE
 # ============================================================================
 # This block runs at module import time, which means it executes on WSGI
