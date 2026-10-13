@@ -4531,10 +4531,98 @@ function updateSystemStatus(data) {
             ? '<i class="fa-solid fa-circle-check"></i> Online'
             : '<i class="fa-solid fa-circle-xmark"></i> Offline';
     }
-    
-    // Database status - always online if API responds
-    // Server status - always online if API responds
-    // Network status - always online if API responds
+}
+
+function setSystemStatus(name, state, message) {
+    const indicator = document.getElementById(`${name}StatusIndicator`);
+    const statusText = document.getElementById(`${name}StatusText`);
+    const statusClass = state === 'online' ? 'online' : state === 'offline' ? 'offline' : 'unknown';
+    const icon = state === 'online'
+        ? 'fa-circle-check'
+        : state === 'offline'
+            ? 'fa-circle-xmark'
+            : 'fa-circle-question';
+
+    if (indicator) indicator.className = `status-indicator status-${statusClass}`;
+    if (statusText) {
+        statusText.className = `status-text text-${statusClass}`;
+        statusText.innerHTML = `<i class="fa-solid ${icon}"></i> ${escapeHtml(message)}`;
+    }
+}
+
+async function checkSystemStatus() {
+    if (!navigator.onLine) {
+        setSystemStatus('network', 'offline', 'Wi-Fi/Internet offline');
+        setSystemStatus('server', 'offline', 'Unreachable');
+        setSystemStatus('database', 'unknown', 'Unknown (offline)');
+        return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const [serverResult, databaseResult] = await Promise.allSettled([
+            fetch(`${dashboardApiBaseUrl}/api/health`, {
+                method: 'GET',
+                cache: 'no-store',
+                signal: controller.signal
+            }),
+            fetch(`${dashboardApiBaseUrl}/api/postgres/status`, {
+                method: 'GET',
+                cache: 'no-store',
+                signal: controller.signal
+            })
+        ]);
+
+        const serverResponse = serverResult.status === 'fulfilled' ? serverResult.value : null;
+        let serverRunning = false;
+        if (serverResponse && serverResponse.ok) {
+            try {
+                serverRunning = (await serverResponse.json()).status === 'ok';
+            } catch (error) {
+                console.warn('Could not parse API health response:', error);
+            }
+        }
+
+        if (serverRunning) {
+            setSystemStatus('server', 'online', 'Running');
+            setSystemStatus('network', 'online', 'Stable');
+        } else {
+            setSystemStatus('server', 'offline', 'Unavailable');
+            setSystemStatus('network', 'offline', 'API unreachable');
+        }
+
+        if (!serverRunning) {
+            setSystemStatus('database', 'unknown', 'Unknown (server unreachable)');
+            return;
+        }
+
+        const databaseResponse = databaseResult.status === 'fulfilled'
+            ? databaseResult.value
+            : null;
+        let databaseConnected = false;
+        if (databaseResponse && databaseResponse.ok) {
+            try {
+                const databaseStatus = await databaseResponse.json();
+                databaseConnected = databaseStatus.status === 'success'
+                    && databaseStatus.reachable === true;
+            } catch (error) {
+                console.warn('Could not parse database health response:', error);
+            }
+        }
+        setSystemStatus(
+            'database',
+            databaseConnected ? 'online' : 'offline',
+            databaseConnected ? 'Connected' : 'Disconnected'
+        );
+    } catch (error) {
+        const offline = !navigator.onLine;
+        setSystemStatus('network', 'offline', offline ? 'Wi-Fi/Internet offline' : 'API unreachable');
+        setSystemStatus('server', 'offline', 'Unreachable');
+        setSystemStatus('database', 'unknown', 'Unknown (server unreachable)');
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 // ============ PROFILE MODAL FUNCTIONS ============
@@ -6510,6 +6598,7 @@ if (logoutConfirmYes) {
 window.addEventListener('pageshow', verifyDashboardSession);
 setInterval(updateClock, 1000);
 setInterval(loadDashboardData, 5000);
+setInterval(checkSystemStatus, 15000);
 setInterval(loadFaceScanFeed, 5000);
 setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds
 
@@ -6521,6 +6610,9 @@ setInterval(loadActivityFeed, 10000); // Refresh activity feed every 10 seconds
 setInterval(loadDailyStats, 3000);
 
 updateClock();
+checkSystemStatus();
+window.addEventListener('online', checkSystemStatus);
+window.addEventListener('offline', checkSystemStatus);
 
 // Remove the old employee card collapse function since we have a new one
 // The new functions handle everything

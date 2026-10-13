@@ -687,16 +687,16 @@
               <div id="readerStatusText" class="status-text text-offline"><i class="fa-solid fa-circle-xmark"></i> Offline</div>
             </div>
             <div class="status-item">
-              <div class="status-item-label"><div class="status-indicator status-online"></div> Database</div>
-              <div class="status-text text-online"><i class="fa-solid fa-circle-check"></i> Connected</div>
+              <div class="status-item-label"><div id="databaseStatusIndicator" class="status-indicator status-unknown"></div> Database</div>
+              <div id="databaseStatusText" class="status-text text-unknown"><i class="fa-solid fa-circle-question"></i> Checking</div>
             </div>
             <div class="status-item">
-              <div class="status-item-label"><div class="status-indicator status-online"></div> Server</div>
-              <div class="status-text text-online"><i class="fa-solid fa-circle-check"></i> Running</div>
+              <div class="status-item-label"><div id="serverStatusIndicator" class="status-indicator status-unknown"></div> Server</div>
+              <div id="serverStatusText" class="status-text text-unknown"><i class="fa-solid fa-circle-question"></i> Checking</div>
             </div>
             <div class="status-item">
-              <div class="status-item-label"><div class="status-indicator status-online"></div> Network</div>
-              <div class="status-text text-online"><i class="fa-solid fa-circle-check"></i> Stable</div>
+              <div class="status-item-label"><div id="networkStatusIndicator" class="status-indicator status-unknown"></div> Network</div>
+              <div id="networkStatusText" class="status-text text-unknown"><i class="fa-solid fa-circle-question"></i> Checking</div>
             </div>
             <div class="status-item">
               <div class="status-item-label" style="color:var(--text-muted);font-size:12px;">Last RFID Scan</div>

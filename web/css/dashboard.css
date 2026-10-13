@@ -2225,6 +2225,7 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 
 .status-online { background: var(--success); }
 .status-offline { background: var(--danger); }
+.status-unknown { background: var(--text-muted); }
 .status-warning { background: var(--warning); }
 
 .status-online::after {
@@ -2245,6 +2246,7 @@ body.sidebar-collapsed .nav-item.active .nav-icon {
 .status-text { font-size: 12px; font-weight: 600; }
 .text-online { color: var(--success); }
 .text-offline { color: var(--danger); }
+.text-unknown { color: var(--text-muted); }
 
 /* ===== TIMELINE ===== */
 .timeline { position: relative; padding-left: 24px; }

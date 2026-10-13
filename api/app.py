@@ -28,13 +28,15 @@ try:
 except OSError as exc:
     print(f"[app] Could not load {CONFIG_ENV_PATH.name}; using process environment variables: {exc}")
 
-# PostgreSQL configuration. Prefer Railway's private URL in Railway and the
-# public URL for local development when both are available.
-_railway_runtime = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID"))
+_database_private_url = os.getenv("DATABASE_URL", "").strip()
+_database_public_url = os.getenv("DATABASE_PUBLIC_URL", "").strip()
+_running_on_railway = bool(
+    os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_SERVICE_ID")
+)
 DATABASE_URL = (
-    os.getenv("DATABASE_URL", "").strip()
-    if _railway_runtime
-    else (os.getenv("DATABASE_PUBLIC_URL") or os.getenv("DATABASE_URL", "")).strip()
+    (_database_private_url or _database_public_url)
+    if _running_on_railway
+    else (_database_public_url or _database_private_url)
 )
 DB_HOST = os.getenv("PGHOST", os.getenv("DB_HOST", "")).strip()
 DB_PORT = int(os.getenv("PGPORT", os.getenv("DB_PORT", "5432")))
@@ -2902,12 +2904,16 @@ def record_attendance_scan(employee, scanned_at, source="rfid"):
     """Record attendance scan - handles creating records for new employees and months"""
     scan_time = parse_scan_time(scanned_at)
     rfid = employee.get("rfid")
+    day_date = scan_time.strftime("%Y-%m-%d")
+
+    if is_holiday_date(day_date):
+        print(f"Scan blocked for {rfid} on holiday {day_date} - DTR entry skipped")
+        return None, "holiday"
 
     # Get or create the record for this user and month
     record = get_attendance_record(employee, scan_time)
 
     # Find the day record in DTR
-    day_date = scan_time.strftime("%Y-%m-%d")
     day_data = None
     date_key = None
 
@@ -4154,6 +4160,15 @@ def get_work_status_types():
 # ============================================================================
 # POSTGRESQL STATUS
 # ============================================================================
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    """Return a lightweight liveness response for dashboard monitoring."""
+    return jsonify({
+        "status": "ok",
+        "server": "running",
+        "timestamp": datetime.now().isoformat(),
+    }), 200
+
 @app.route("/api/postgres/status", methods=["GET"])
 def postgres_status_route():
     """Check PostgreSQL connectivity and report the last snapshot date."""
@@ -4287,6 +4302,15 @@ def load_calendar_events():
     ):
         raise ValueError("Calendar events file contains invalid data")
     return events
+
+
+def is_holiday_date(event_date):
+    """Return whether the calendar marks this date as a holiday."""
+    return any(
+        event.get("date") == event_date
+        and str(event.get("event_type", "")).strip().lower() == "holiday"
+        for event in load_calendar_events()
+    )
 
 
 def save_calendar_events(events):
@@ -6471,7 +6495,8 @@ def faces_record():
         # Original behavior: face scan writes directly to DTR
         try:
             record, result = record_attendance_scan(employee, scanned_at, source="face")
-            save_attendance_data()
+            if result != "holiday":
+                save_attendance_data()
 
             # Record the daily stats (present + face scan counts) so the counters
             # are updated even when no dashboard is open. The "face" source
@@ -8082,6 +8107,11 @@ def receive_rfid():
                 except Exception as e:
                     print(f"Warning: failed to refresh RFID presence count: {e}")
 
+            if result == "holiday":
+                if not FACE_SCAN_ALLOW_DIRECT_DTR:
+                    authorized_face_rfids.discard(rfid)
+                return "OK: holiday - DTR entry blocked", 200
+
             # In two-factor mode, remove RFID from authorized list after successful recording
             if not FACE_SCAN_ALLOW_DIRECT_DTR:
                 authorized_face_rfids.discard(rfid)
@@ -8154,6 +8184,7 @@ def page_not_found(e):
 @app.route("/api/notifications/<rfid>/read-all", methods=["OPTIONS"])
 @app.route("/api/notifications/<rfid>/<notification_id>", methods=["OPTIONS"])
 @app.route("/api/work-status-attachment/meta/<rfid>/<filename>", methods=["OPTIONS"])
+@app.route("/api/health", methods=["OPTIONS"])
 @app.route("/api/postgres/status", methods=["OPTIONS"])
 def handle_options():
     response = jsonify({"status": "ok"})
