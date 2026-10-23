@@ -72,6 +72,17 @@
       </div>
     </div>
 
+    <!-- Lockout modal for account/IP lock after 5 failures in 10 minutes -->
+    <div class="lockout-modal-overlay" id="lockoutModal" aria-hidden="true">
+      <div class="lockout-modal" role="dialog" aria-modal="true" aria-labelledby="lockoutTitle">
+        <div class="lockout-icon"><i class="fa-solid fa-lock"></i></div>
+        <h2 id="lockoutTitle">Account and IP Temporarily Locked</h2>
+        <p id="lockoutMessage">Too many failed login attempts. Please try again in 15 minutes.</p>
+        <div class="lockout-timer" id="lockoutTimer">15:00</div>
+        <button type="button" class="btn-primary" id="lockoutCloseBtn">OK</button>
+      </div>
+    </div>
+
     <!-- Logos outside the login card - positioned at top left of the page -->
     <div class="top-logos-container">
       <img src="./assets/ispsc_logo.png" alt="ISPSC Logo" class="top-logo">

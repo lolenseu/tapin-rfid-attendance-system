@@ -12,7 +12,27 @@ const closeForgotPasswordModal = document.getElementById('closeForgotPasswordMod
 const forgotPasswordOk = document.getElementById('forgotPasswordOk');
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
+// Lockout modal elements
+const lockoutModal = document.getElementById('lockoutModal');
+const lockoutTimer = document.getElementById('lockoutTimer');
+const lockoutMessage = document.getElementById('lockoutMessage');
+const lockoutCloseBtn = document.getElementById('lockoutCloseBtn');
+
 let versionData = null;
+
+// Login attempt tracking for account/IP lockout
+// Stores timestamps of failed attempts per username and per IP (simulated via localStorage)
+const FAILED_ATTEMPTS_KEY = 'tapin_failed_attempts';
+const LOCKOUT_KEY = 'tapin_lockout_until';
+const IP_ATTEMPTS_KEY = 'tapin_ip_attempts';
+
+// Configuration
+const MAX_ATTEMPTS = 5;          // Maximum failures allowed
+const ATTEMPT_WINDOW_MS = 10 * 60 * 1000;  // 10 minutes window
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes lockout
+const SUSPICIOUS_THRESHOLD = 3;  // Alert if success follows 3+ failures
+
+let lockoutCountdownInterval = null;
 
 // Mobile breakpoint — screens at or below this width get the mobile employee dashboard
 const MOBILE_BREAKPOINT = 768;
@@ -40,6 +60,248 @@ function resolveRedirect(role, serverRedirect) {
     }
     return 'pages/employee-dashboard.html';
 }
+
+// ========================
+// LOCKOUT & SECURITY FUNCTIONS
+// ========================
+
+// Get failed attempts from localStorage
+function getFailedAttempts() {
+    try {
+        const data = localStorage.getItem(FAILED_ATTEMPTS_KEY);
+        return data ? JSON.parse(data) : {};
+    } catch {
+        return {};
+    }
+}
+
+// Save failed attempts to localStorage
+function saveFailedAttempts(attempts) {
+    localStorage.setItem(FAILED_ATTEMPTS_KEY, JSON.stringify(attempts));
+}
+
+// Get lockout expiry timestamp
+function getLockoutUntil() {
+    const until = localStorage.getItem(LOCKOUT_KEY);
+    return until ? parseInt(until, 10) : 0;
+}
+
+// Set lockout expiry timestamp
+function setLockoutUntil(timestamp) {
+    localStorage.setItem(LOCKOUT_KEY, timestamp.toString());
+}
+
+// Clear lockout
+function clearLockout() {
+    localStorage.removeItem(LOCKOUT_KEY);
+}
+
+// Check if currently locked out
+function isLockedOut() {
+    const until = getLockoutUntil();
+    return until > Date.now();
+}
+
+// Get remaining lockout time in ms
+function getRemainingLockoutMs() {
+    const until = getLockoutUntil();
+    const remaining = until - Date.now();
+    return remaining > 0 ? remaining : 0;
+}
+
+// Format time for display (MM:SS)
+function formatTime(ms) {
+    const totalSeconds = Math.ceil(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+// Show lockout modal with countdown
+function showLockoutModal() {
+    if (!lockoutModal) return;
+
+    // Update message
+    if (lockoutMessage) {
+        lockoutMessage.textContent = 'Too many failed login attempts. Please try again in 15 minutes.';
+    }
+
+    // Show modal
+    lockoutModal.classList.add('show');
+    lockoutModal.setAttribute('aria-hidden', 'false');
+
+    // Start countdown
+    startLockoutCountdown();
+}
+
+// Hide lockout modal
+function hideLockoutModal() {
+    if (!lockoutModal) return;
+    lockoutModal.classList.remove('show');
+    lockoutModal.setAttribute('aria-hidden', 'true');
+
+    // Stop countdown
+    if (lockoutCountdownInterval) {
+        clearInterval(lockoutCountdownInterval);
+        lockoutCountdownInterval = null;
+    }
+}
+
+// Start lockout countdown timer
+function startLockoutCountdown() {
+    if (lockoutCountdownInterval) {
+        clearInterval(lockoutCountdownInterval);
+    }
+
+    const updateTimer = () => {
+        const remaining = getRemainingLockoutMs();
+        if (remaining <= 0) {
+            // Lockout expired
+            clearLockout();
+            hideLockoutModal();
+            if (lockoutTimer) {
+                lockoutTimer.textContent = '00:00';
+            }
+            // Re-enable form
+            if (submitButton) {
+                submitButton.disabled = false;
+                submitButton.classList.remove('is-loading');
+                submitButton.removeAttribute('aria-busy');
+            }
+            if (message) {
+                message.textContent = 'Lockout expired. You may try again.';
+                message.className = 'form-message success';
+            }
+            return;
+        }
+
+        if (lockoutTimer) {
+            lockoutTimer.textContent = formatTime(remaining);
+        }
+    };
+
+    // Update immediately
+    updateTimer();
+
+    // Update every second
+    lockoutCountdownInterval = setInterval(updateTimer, 1000);
+}
+
+// Record a failed attempt for the given username
+function recordFailedAttempt(username) {
+    const now = Date.now();
+    const attempts = getFailedAttempts();
+
+    // Initialize attempts array for this username if not exists
+    if (!attempts[username]) {
+        attempts[username] = [];
+    }
+
+    // Add current timestamp
+    attempts[username].push(now);
+
+    // Remove old attempts outside the window
+    attempts[username] = attempts[username].filter(
+        ts => now - ts <= ATTEMPT_WINDOW_MS
+    );
+
+    // Save
+    saveFailedAttempts(attempts);
+
+    return attempts[username].length;
+}
+
+// Clear failed attempts for username (on successful login)
+function clearFailedAttempts(username) {
+    const attempts = getFailedAttempts();
+    delete attempts[username];
+    saveFailedAttempts(attempts);
+}
+
+// Get count of recent failed attempts for username
+function getRecentFailedCount(username) {
+    const now = Date.now();
+    const attempts = getFailedAttempts();
+    const userAttempts = attempts[username] || [];
+
+    // Filter to only recent attempts
+    const recent = userAttempts.filter(ts => now - ts <= ATTEMPT_WINDOW_MS);
+
+    // Update stored attempts to only recent
+    if (recent.length !== userAttempts.length) {
+        if (recent.length > 0) {
+            attempts[username] = recent;
+        } else {
+            delete attempts[username];
+        }
+        saveFailedAttempts(attempts);
+    }
+
+    return recent.length;
+}
+
+// Get recent failed attempts for IP (simulated using localStorage)
+function getIPFailedCount() {
+    try {
+        const data = localStorage.getItem(IP_ATTEMPTS_KEY);
+        if (!data) return 0;
+
+        const ipAttempts = JSON.parse(data);
+        const now = Date.now();
+
+        // Filter to only recent attempts
+        const recent = (ipAttempts.timestamps || []).filter(
+            ts => now - ts <= ATTEMPT_WINDOW_MS
+        );
+
+        // Save filtered
+        if (recent.length !== (ipAttempts.timestamps || []).length) {
+            localStorage.setItem(IP_ATTEMPTS_KEY, JSON.stringify({ timestamps: recent }));
+        }
+
+        return recent.length;
+    } catch {
+        return 0;
+    }
+}
+
+// Record a failed attempt for IP
+function recordIPFailedAttempt() {
+    const now = Date.now();
+    let ipAttempts = { timestamps: [] };
+
+    try {
+        const data = localStorage.getItem(IP_ATTEMPTS_KEY);
+        if (data) {
+            ipAttempts = JSON.parse(data);
+        }
+    } catch {
+        ipAttempts = { timestamps: [] };
+    }
+
+    // Add current timestamp
+    if (!ipAttempts.timestamps) ipAttempts.timestamps = [];
+    ipAttempts.timestamps.push(now);
+
+    // Remove old attempts
+    ipAttempts.timestamps = ipAttempts.timestamps.filter(
+        ts => now - ts <= ATTEMPT_WINDOW_MS
+    );
+
+    // Save
+    localStorage.setItem(IP_ATTEMPTS_KEY, JSON.stringify(ipAttempts));
+
+    return ipAttempts.timestamps.length;
+}
+
+// Clear IP failed attempts
+function clearIPFailedAttempts() {
+    localStorage.removeItem(IP_ATTEMPTS_KEY);
+}
+
+// ========================
+// VERSION NOTIFICATION
+// ========================
 
 function createVersionNotification() {
     if (document.getElementById('versionNotification')) {
@@ -545,6 +807,47 @@ if (resendCodeButton) {
     });
 }
 
+// ========================
+// LOCKOUT MODAL EVENTS
+// ========================
+
+if (lockoutCloseBtn) {
+    lockoutCloseBtn.addEventListener('click', () => {
+        hideLockoutModal();
+        // Keep form disabled if still locked out
+        if (isLockedOut()) {
+            if (submitButton) {
+                submitButton.disabled = true;
+            }
+            if (message) {
+                message.textContent = `Account locked. Try again in ${formatTime(getRemainingLockoutMs())}.`;
+                message.className = 'form-message error';
+            }
+        }
+    });
+}
+
+if (lockoutModal) {
+    lockoutModal.addEventListener('click', (event) => {
+        if (event.target === lockoutModal) {
+            hideLockoutModal();
+            if (isLockedOut()) {
+                if (submitButton) {
+                    submitButton.disabled = true;
+                }
+                if (message) {
+                    message.textContent = `Account locked. Try again in ${formatTime(getRemainingLockoutMs())}.`;
+                    message.className = 'form-message error';
+                }
+            }
+        }
+    });
+}
+
+// ========================
+// MAIN LOGIN FORM
+// ========================
+
 if (form) {
     passwordToggle.addEventListener('click', () => {
         const showingPassword = passwordInput.type === 'text';
@@ -567,10 +870,28 @@ if (form) {
         if (rememberInput) rememberInput.checked = true;
     }
 
+    // Check lockout status on page load
+    if (isLockedOut()) {
+        showLockoutModal();
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+        if (message) {
+            message.textContent = `Account locked. Try again in ${formatTime(getRemainingLockoutMs())}.`;
+            message.className = 'form-message error';
+        }
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = form.username.value.trim();
         const pass = passwordInput.value;
+
+        // Check lockout first
+        if (isLockedOut()) {
+            showLockoutModal();
+            return;
+        }
 
         if (!username || !pass) {
             message.textContent = 'Please enter both username and password.';
@@ -594,8 +915,61 @@ if (form) {
             const result = await response.json();
 
             if (!response.ok || result.status !== 'success') {
-                throw new Error(result.message || 'Username or password is incorrect.');
+                // ====== FAILED LOGIN ======
+                // Record failed attempt for this username
+                const failedCount = recordFailedAttempt(username);
+
+                // Record failed attempt for IP (simulated)
+                recordIPFailedAttempt();
+                const ipFailedCount = getIPFailedCount();
+
+                // Check if lockout threshold reached
+                if (failedCount >= MAX_ATTEMPTS || ipFailedCount >= MAX_ATTEMPTS) {
+                    // Set lockout for 15 minutes
+                    setLockoutUntil(Date.now() + LOCKOUT_DURATION_MS);
+                    showLockoutModal();
+
+                    // Clear failed attempts after lockout is set
+                    clearFailedAttempts(username);
+                    clearIPFailedAttempts();
+
+                    throw new Error('Too many failed attempts. Account locked for 15 minutes.');
+                }
+
+                // Show remaining attempts
+                const remaining = MAX_ATTEMPTS - Math.max(failedCount, ipFailedCount);
+                throw new Error(
+                    result.message ||
+                    `Username or password is incorrect. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`
+                );
             }
+
+            // ====== SUCCESSFUL LOGIN ======
+            // Check if there were prior failures (suspicious pattern)
+            const priorFailures = getRecentFailedCount(username);
+            if (priorFailures >= SUSPICIOUS_THRESHOLD) {
+                // Raise alert - suspicious login pattern
+                const alertMsg = `⚠️ SECURITY ALERT: Successful login for "${username}" after ${priorFailures} failed attempts within 10 minutes.`;
+
+                // Show browser alert
+                setTimeout(() => {
+                    alert(alertMsg);
+                }, 100);
+
+                // Log to console
+                console.warn(alertMsg);
+
+                // Also show in form message area as warning
+                if (message) {
+                    message.textContent = `⚠️ Suspicious activity detected. ${priorFailures} failed attempts before this login.`;
+                    message.className = 'form-message warning';
+                }
+            }
+
+            // Clear failed attempts on success
+            clearFailedAttempts(username);
+            clearIPFailedAttempts();
+            clearLockout();
 
             // Prevent admin/hr from logging in on mobile
             const userRole = result.user?.role || '';

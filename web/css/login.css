@@ -956,3 +956,120 @@ input[type="text"][inputmode="numeric"]::-webkit-inner-spin-button {
 .form-message.success {
     color: #22C55E;
 }
+
+/* ========================
+   LOCKOUT MODAL STYLES
+   ======================== */
+
+.lockout-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.lockout-modal-overlay.show {
+    display: flex;
+}
+
+.lockout-modal {
+    background: #ffffff;
+    border-radius: 24px;
+    padding: 40px 32px;
+    max-width: 400px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.25);
+    animation: lockoutPopIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes lockoutPopIn {
+    from {
+        opacity: 0;
+        transform: scale(0.9) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+.lockout-icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 20px;
+    background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid #fecaca;
+}
+
+.lockout-icon i {
+    font-size: 32px;
+    color: #dc2626;
+}
+
+.lockout-modal h2 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 12px;
+}
+
+.lockout-modal p {
+    font-size: 14px;
+    color: #64748b;
+    line-height: 1.6;
+    margin-bottom: 24px;
+}
+
+.lockout-timer {
+    font-size: 48px;
+    font-weight: 800;
+    color: #dc2626;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 2px;
+    margin-bottom: 24px;
+    padding: 16px;
+    background: #fef2f2;
+    border-radius: 16px;
+    border: 2px solid #fecaca;
+}
+
+.lockout-modal .btn-primary {
+    width: 100%;
+    padding: 14px;
+    font-size: 16px;
+    font-weight: 600;
+    border-radius: 12px;
+    background: #dc2626;
+    color: #ffffff;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.lockout-modal .btn-primary:hover {
+    background: #b91c1c;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+/* Warning message style for suspicious activity */
+.form-message.warning {
+    color: #d97706;
+    background: #fffbeb;
+    border-color: #fde68a;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid;
+    font-weight: 500;
+}
