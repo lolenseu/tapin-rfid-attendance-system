@@ -1,4 +1,4 @@
-## network configuration
+## network_config.py
 
 ## Primary WiFi
 SSID = "tapin"
