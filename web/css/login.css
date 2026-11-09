@@ -962,9 +962,9 @@ input[type="text"][inputmode="numeric"]::-webkit-inner-spin-button {
 }
 
 /* ========================
-   LOCKOUT MODAL STYLES
+   LOCKOUT MODAL STYLES - TEMPORARILY DISABLED
    ======================== */
-
+/*
 .lockout-modal-overlay {
     display: none;
     position: fixed;
@@ -1066,6 +1066,7 @@ input[type="text"][inputmode="numeric"]::-webkit-inner-spin-button {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
 }
+*/
 
 /* Warning message style for suspicious activity */
 .form-message.warning {

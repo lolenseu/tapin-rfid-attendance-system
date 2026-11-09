@@ -13,11 +13,11 @@ const passwordToggleIcon = passwordToggle ? passwordToggle.querySelector('i') : 
 // const forgotPasswordOk = document.getElementById('forgotPasswordOk');
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
-// Lockout modal elements
-const lockoutModal = document.getElementById('lockoutModal');
-const lockoutTimer = document.getElementById('lockoutTimer');
-const lockoutMessage = document.getElementById('lockoutMessage');
-const lockoutCloseBtn = document.getElementById('lockoutCloseBtn');
+// Lockout modal elements - TEMPORARILY DISABLED
+// const lockoutModal = document.getElementById('lockoutModal');
+// const lockoutTimer = document.getElementById('lockoutTimer');
+// const lockoutMessage = document.getElementById('lockoutMessage');
+// const lockoutCloseBtn = document.getElementById('lockoutCloseBtn');
 
 let versionData = null;
 
@@ -63,9 +63,9 @@ function resolveRedirect(role, serverRedirect) {
 }
 
 // ========================
-// LOCKOUT & SECURITY FUNCTIONS
+// LOCKOUT & SECURITY FUNCTIONS - TEMPORARILY DISABLED
 // ========================
-
+/*
 // Get failed attempts from localStorage
 function getFailedAttempts() {
     try {
@@ -299,6 +299,7 @@ function recordIPFailedAttempt() {
 function clearIPFailedAttempts() {
     localStorage.removeItem(IP_ATTEMPTS_KEY);
 }
+*/
 
 // ========================
 // VERSION NOTIFICATION
@@ -815,9 +816,9 @@ if (resendCodeButton) {
 // END FORGOT PASSWORD - TEMPORARILY DISABLED
 
 // ========================
-// LOCKOUT MODAL EVENTS
+// LOCKOUT MODAL EVENTS - TEMPORARILY DISABLED
 // ========================
-
+/*
 if (lockoutCloseBtn) {
     lockoutCloseBtn.addEventListener('click', () => {
         hideLockoutModal();
@@ -850,6 +851,7 @@ if (lockoutModal) {
         }
     });
 }
+*/
 
 // ========================
 // MAIN LOGIN FORM
@@ -877,7 +879,8 @@ if (form) {
         if (rememberInput) rememberInput.checked = true;
     }
 
-    // Check lockout status on page load
+    // Check lockout status on page load - TEMPORARILY DISABLED
+    /*
     if (isLockedOut()) {
         showLockoutModal();
         if (submitButton) {
@@ -888,17 +891,20 @@ if (form) {
             message.className = 'form-message error';
         }
     }
+    */
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = form.username.value.trim();
         const pass = passwordInput.value;
 
-        // Check lockout first
+        // Check lockout first - TEMPORARILY DISABLED
+        /*
         if (isLockedOut()) {
             showLockoutModal();
             return;
         }
+        */
 
         if (!username || !pass) {
             message.textContent = 'Please enter both username and password.';
@@ -923,7 +929,8 @@ if (form) {
 
             if (!response.ok || result.status !== 'success') {
                 // ====== FAILED LOGIN ======
-                // Record failed attempt for this username
+                // Record failed attempt for this username - TEMPORARILY DISABLED
+                /*
                 const failedCount = recordFailedAttempt(username);
 
                 // Record failed attempt for IP (simulated)
@@ -949,10 +956,13 @@ if (form) {
                     result.message ||
                     `Username or password is incorrect. ${remaining} attempt${remaining !== 1 ? 's' : ''} remaining.`
                 );
+                */
+                throw new Error(result.message || 'Username or password is incorrect.');
             }
 
             // ====== SUCCESSFUL LOGIN ======
-            // Check if there were prior failures (suspicious pattern)
+            // Check if there were prior failures (suspicious pattern) - TEMPORARILY DISABLED
+            /*
             const priorFailures = getRecentFailedCount(username);
             if (priorFailures >= SUSPICIOUS_THRESHOLD) {
                 // Raise alert - suspicious login pattern
@@ -972,11 +982,14 @@ if (form) {
                     message.className = 'form-message warning';
                 }
             }
+            */
 
-            // Clear failed attempts on success
+            // Clear failed attempts on success - TEMPORARILY DISABLED
+            /*
             clearFailedAttempts(username);
             clearIPFailedAttempts();
             clearLockout();
+            */
 
             // Prevent admin/hr from logging in on mobile
             const userRole = result.user?.role || '';
