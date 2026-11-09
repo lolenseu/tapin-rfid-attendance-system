@@ -302,9 +302,9 @@ function clearIPFailedAttempts() {
 */
 
 // ========================
-// VERSION NOTIFICATION
+// VERSION NOTIFICATION - TEMPORARILY DISABLED
 // ========================
-
+/*
 function createVersionNotification() {
     if (document.getElementById('versionNotification')) {
         return;
@@ -413,6 +413,7 @@ async function fetchVersion() {
 
     createVersionNotification();
 }
+*/
 
 async function checkAlreadyLoggedIn() {
     const token = localStorage.getItem('tapinToken');
@@ -1024,7 +1025,7 @@ if (form) {
         }
     });
 
-    // Fetch version once when page loads
-    fetchVersion();
+    // Fetch version once when page loads - TEMPORARILY DISABLED
+    // fetchVersion();
     checkAlreadyLoggedIn();
 }
