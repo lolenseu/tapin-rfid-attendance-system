@@ -6,10 +6,11 @@ const rememberInput = form ? form.querySelector('input[name="remember"]') : null
 const passwordInput = form ? form.querySelector('input[name="password"]') : null;
 const passwordToggle = form ? document.getElementById('passwordToggle') : null;
 const passwordToggleIcon = passwordToggle ? passwordToggle.querySelector('i') : null;
-const forgotPasswordLink = document.getElementById('forgotPasswordLink');
-const forgotPasswordModal = document.getElementById('forgotPasswordModal');
-const closeForgotPasswordModal = document.getElementById('closeForgotPasswordModal');
-const forgotPasswordOk = document.getElementById('forgotPasswordOk');
+// FORGOT PASSWORD - TEMPORARILY DISABLED
+// const forgotPasswordLink = document.getElementById('forgotPasswordLink');
+// const forgotPasswordModal = document.getElementById('forgotPasswordModal');
+// const closeForgotPasswordModal = document.getElementById('closeForgotPasswordModal');
+// const forgotPasswordOk = document.getElementById('forgotPasswordOk');
 const VERSION_URL = 'https://raw.githubusercontent.com/lolenseu/tapin-rfid-attendance-system/refs/heads/main/version.txt';
 
 // Lockout modal elements
@@ -440,6 +441,10 @@ async function checkAlreadyLoggedIn() {
     }
 }
 
+// ========================
+// FORGOT PASSWORD - TEMPORARILY DISABLED
+// ========================
+/*
 if (forgotPasswordLink && forgotPasswordModal) {
     forgotPasswordLink.addEventListener('click', (event) => {
         event.preventDefault();
@@ -806,6 +811,8 @@ if (resendCodeButton) {
         }
     });
 }
+*/
+// END FORGOT PASSWORD - TEMPORARILY DISABLED
 
 // ========================
 // LOCKOUT MODAL EVENTS
